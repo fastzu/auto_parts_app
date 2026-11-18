@@ -12,6 +12,7 @@ import '../dashboard/super_admin_dashboard_screen.dart';
 import '../dashboard/towing_dashboard_screen.dart';
 import '../dashboard/workshop_emergency_dashboard.dart';
 import 'add_product_screen.dart';
+import '../mobile/chat_screen.dart';
 import 'customer_appointments_screen.dart';
 import 'customer_subscriptions_screen.dart';
 import 'emergency_screen.dart';
@@ -103,19 +104,22 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
               TextField(
                 controller: currentPassCtrl,
                 obscureText: true,
-                decoration: const InputDecoration(labelText: 'كلمة المرور الحالية'),
+                decoration:
+                    const InputDecoration(labelText: 'كلمة المرور الحالية'),
               ),
               const SizedBox(height: 10),
               TextField(
                 controller: newPassCtrl,
                 obscureText: true,
-                decoration: const InputDecoration(labelText: 'كلمة المرور الجديدة'),
+                decoration:
+                    const InputDecoration(labelText: 'كلمة المرور الجديدة'),
               ),
               const SizedBox(height: 10),
               TextField(
                 controller: confirmPassCtrl,
                 obscureText: true,
-                decoration: const InputDecoration(labelText: 'تأكيد كلمة المرور الجديدة'),
+                decoration: const InputDecoration(
+                    labelText: 'تأكيد كلمة المرور الجديدة'),
               ),
             ],
           ),
@@ -133,11 +137,13 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
                   ? null
                   : () async {
                       if (newPassCtrl.text.length < 6) {
-                        setD(() => alertMsg = 'كلمة المرور الجديدة يجب أن تكون 6 أحرف على الأقل.');
+                        setD(() => alertMsg =
+                            'كلمة المرور الجديدة يجب أن تكون 6 أحرف على الأقل.');
                         return;
                       }
                       if (newPassCtrl.text != confirmPassCtrl.text) {
-                        setD(() => alertMsg = 'كلمة المرور الجديدة وتأكيدها غير متطابقتين.');
+                        setD(() => alertMsg =
+                            'كلمة المرور الجديدة وتأكيدها غير متطابقتين.');
                         return;
                       }
                       setD(() {
@@ -145,7 +151,8 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
                         alertMsg = null;
                       });
                       try {
-                        final email = widget.profile?.email ?? _db.auth.currentUser?.email;
+                        final email = widget.profile?.email ??
+                            _db.auth.currentUser?.email;
                         if (email == null) {
                           throw Exception('البريد غير متوفر');
                         }
@@ -153,7 +160,8 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
                           email: email,
                           password: currentPassCtrl.text,
                         );
-                        await _db.auth.updateUser(UserAttributes(password: newPassCtrl.text));
+                        await _db.auth.updateUser(
+                            UserAttributes(password: newPassCtrl.text));
                         if (ctx.mounted) {
                           Navigator.pop(ctx);
                         }
@@ -168,7 +176,8 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
                       } catch (_) {
                         setD(() {
                           saving = false;
-                          alertMsg = 'تنبيه أمني: كلمة المرور الحالية غير صحيحة!';
+                          alertMsg =
+                              'تنبيه أمني: كلمة المرور الحالية غير صحيحة!';
                         });
                       }
                     },
@@ -176,7 +185,8 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
                   ? const SizedBox(
                       width: 18,
                       height: 18,
-                      child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
+                      child: CircularProgressIndicator(
+                          color: Colors.white, strokeWidth: 2),
                     )
                   : const Text('حفظ كلمة المرور'),
             ),
@@ -222,7 +232,8 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
               backgroundColor: AppColors.orange,
               foregroundColor: Colors.white,
               shape: const CircleBorder(),
-              onPressed: () => Navigator.push(context, animatedRoute(const AddProductScreen())),
+              onPressed: () => Navigator.push(
+                  context, animatedRoute(const AddProductScreen())),
               child: const Icon(Icons.add, size: 28),
             )
           : null,
@@ -287,7 +298,8 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
                 if (isLoggedIn) ...[
                   const SizedBox(height: 8),
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
                     decoration: BoxDecoration(
                       color: AppColors.orange,
                       borderRadius: BorderRadius.circular(12),
@@ -309,18 +321,21 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
             Padding(
               padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
               child: ListTile(
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14)),
                 tileColor: AppColors.orangeLight,
                 leading: const Icon(Icons.dashboard, color: AppColors.orange),
                 title: const Text(
                   'لوحة التحكم',
-                  style: TextStyle(fontWeight: FontWeight.bold, color: AppColors.orange),
+                  style: TextStyle(
+                      fontWeight: FontWeight.bold, color: AppColors.orange),
                 ),
                 subtitle: Text(
                   _roleDashboardSubtitle(isAdmin ? 'admin' : role),
                   style: const TextStyle(fontSize: 11, color: AppColors.navy),
                 ),
-                trailing: const Icon(Icons.arrow_forward_ios, size: 15, color: AppColors.orange),
+                trailing: const Icon(Icons.arrow_forward_ios,
+                    size: 15, color: AppColors.orange),
                 onTap: () {
                   Navigator.pop(context);
                   _openDashboardForRole(p);
@@ -357,7 +372,8 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
             const Divider(),
             if (showPayments)
               ListTile(
-                leading: const Icon(Icons.account_balance_wallet_outlined, color: AppColors.navy),
+                leading: const Icon(Icons.account_balance_wallet_outlined,
+                    color: AppColors.navy),
                 title: const Text('محفظة التاجر والأرباح'),
                 onTap: () {
                   Navigator.pop(context);
@@ -371,16 +387,27 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
                 },
               ),
             ListTile(
-              leading: const Icon(Icons.add_box_outlined, color: AppColors.orange),
+              leading:
+                  const Icon(Icons.add_box_outlined, color: AppColors.orange),
               title: const Text('إضافة منشور قطعة غيار'),
               onTap: () {
                 Navigator.pop(context);
-                Navigator.push(context, animatedRoute(const AddProductScreen()));
+                Navigator.push(
+                    context, animatedRoute(const AddProductScreen()));
               },
             ),
           ],
           if (isLoggedIn) ...[
             const Divider(),
+            ListTile(
+              leading:
+                  const Icon(Icons.chat_bubble_outline, color: AppColors.navy),
+              title: const Text('الدردشات'),
+              onTap: () {
+                Navigator.pop(context);
+                Navigator.push(context, animatedRoute(const ChatsListScreen()));
+              },
+            ),
             ListTile(
               leading: const Icon(Icons.notifications_none),
               title: const Text('الإشعارات'),
@@ -394,23 +421,27 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
           if (!isLoggedIn) ...[
             ListTile(
               leading: const Icon(Icons.login, color: AppColors.orange),
-              title: const Text('تسجيل الدخول', style: TextStyle(fontWeight: FontWeight.bold)),
+              title: const Text('تسجيل الدخول',
+                  style: TextStyle(fontWeight: FontWeight.bold)),
               onTap: () {
                 Navigator.pop(context);
                 Navigator.push(
                   context,
-                  animatedRoute(LoginScreen(onAuthenticated: widget.onRefreshProfile)),
+                  animatedRoute(
+                      LoginScreen(onAuthenticated: widget.onRefreshProfile)),
                 );
               },
             ),
             ListTile(
-              leading: const Icon(Icons.person_add_alt_1, color: AppColors.navy),
+              leading:
+                  const Icon(Icons.person_add_alt_1, color: AppColors.navy),
               title: const Text('إنشاء حساب جديد'),
               onTap: () {
                 Navigator.pop(context);
                 Navigator.push(
                   context,
-                  animatedRoute(SignUpScreen(onAuthenticated: widget.onRefreshProfile)),
+                  animatedRoute(
+                      SignUpScreen(onAuthenticated: widget.onRefreshProfile)),
                 );
               },
             ),
@@ -458,17 +489,21 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
           children: [
             const Icon(Icons.lock_outline, size: 52, color: AppColors.navy),
             const SizedBox(height: 12),
-            Text(msg, textAlign: TextAlign.center, style: const TextStyle(fontSize: 15)),
+            Text(msg,
+                textAlign: TextAlign.center,
+                style: const TextStyle(fontSize: 15)),
             const SizedBox(height: 16),
             ElevatedButton(
               style: ElevatedButton.styleFrom(
                 backgroundColor: AppColors.orange,
                 foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 14),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 28, vertical: 14),
               ),
               onPressed: () => Navigator.push(
                 context,
-                animatedRoute(LoginScreen(onAuthenticated: widget.onRefreshProfile)),
+                animatedRoute(
+                    LoginScreen(onAuthenticated: widget.onRefreshProfile)),
               ),
               child: const Text('تسجيل الدخول / إنشاء حساب'),
             ),
@@ -487,7 +522,9 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, color: active ? AppColors.orange : AppColors.textSecondary, size: 22),
+            Icon(icon,
+                color: active ? AppColors.orange : AppColors.textSecondary,
+                size: 22),
             Text(
               label,
               style: TextStyle(
@@ -549,10 +586,13 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
             ...txs.map((t) => Card(
                   child: ListTile(
                     title: Text(t.transactionType),
-                    subtitle: Text('قبل العمولة: ${t.grossAmount} · عمولة: -${t.commissionAmount}'),
+                    subtitle: Text(
+                        'قبل العمولة: ${t.grossAmount} · عمولة: -${t.commissionAmount}'),
                     trailing: Text(
                       '+${t.netAmount.toStringAsFixed(2)} د.أ',
-                      style: const TextStyle(color: AppColors.success, fontWeight: FontWeight.bold),
+                      style: const TextStyle(
+                          color: AppColors.success,
+                          fontWeight: FontWeight.bold),
                     ),
                   ),
                 )),
@@ -580,17 +620,18 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
               ),
               title: Text(widget.profile!.fullName ?? 'المستخدم',
                   style: const TextStyle(fontWeight: FontWeight.bold)),
-              subtitle: Text('@${widget.profile!.username ?? ""} · ${widget.profile!.phone ?? ""}'),
+              subtitle: Text(
+                  '@${widget.profile!.username ?? ""} · ${widget.profile!.phone ?? ""}'),
             ),
           ),
           const SizedBox(height: 12),
-
-          // خيار البروفايل لعرض وتعديل معلومات المستخدم كاملة
           Card(
             child: ListTile(
-              leading: const Icon(Icons.badge_outlined, color: AppColors.orange),
+              leading:
+                  const Icon(Icons.badge_outlined, color: AppColors.orange),
               title: const Text('البروفايل (معلوماتي الشخصية)'),
-              subtitle: const Text('عرض وتعديل الاسم، الهاتف، البريد، ومعلومات النشاط'),
+              subtitle: const Text(
+                  'عرض وتعديل الاسم، الهاتف، البريد، ومعلومات النشاط'),
               trailing: const Icon(Icons.arrow_forward_ios, size: 16),
               onTap: () {
                 Navigator.push(
@@ -603,13 +644,15 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
               },
             ),
           ),
-
           if (showPayments) ...[
             const SizedBox(height: 12),
             Card(
               child: ListTile(
-                leading: const Icon(Icons.workspace_premium, color: AppColors.orange),
-                title: Text(isProvider ? 'باقات واشتراكات المزودين' : 'اشتراك المستخدم العادي (البرو)'),
+                leading: const Icon(Icons.workspace_premium,
+                    color: AppColors.orange),
+                title: Text(isProvider
+                    ? 'باقات واشتراكات المزودين'
+                    : 'اشتراك المستخدم العادي (البرو)'),
                 trailing: const Icon(Icons.arrow_forward_ios, size: 16),
                 onTap: () {
                   Navigator.push(
@@ -656,9 +699,6 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
   }
 }
 
-// ============================================================================
-// شاشة البروفايل (معلومات المستخدم كاملة مع إمكانية التعديل)
-// ============================================================================
 class UserProfileScreen extends StatefulWidget {
   final CustomerProfile profile;
   final VoidCallback onSaved;
@@ -687,7 +727,8 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     super.initState();
     _nameCtrl = TextEditingController(text: widget.profile.fullName ?? '');
     _phoneCtrl = TextEditingController(text: widget.profile.phone ?? '');
-    _addressCtrl = TextEditingController(text: widget.profile.workshopAddress ?? '');
+    _addressCtrl =
+        TextEditingController(text: widget.profile.workshopAddress ?? '');
     _loadExtraFields();
   }
 
@@ -719,7 +760,8 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
       await _db.from('customers').update({
         'full_name': _nameCtrl.text.trim(),
         'phone': _phoneCtrl.text.trim(),
-        if (widget.profile.role == 'mechanic') 'workshop_address': _addressCtrl.text.trim(),
+        if (widget.profile.role == 'mechanic')
+          'workshop_address': _addressCtrl.text.trim(),
       }).eq('id', widget.profile.id);
       widget.onSaved();
       if (mounted) {
@@ -734,7 +776,8 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('تعذر التحديث: $e'), backgroundColor: Colors.red),
+          SnackBar(
+              content: Text('تعذر التحديث: $e'), backgroundColor: Colors.red),
         );
       }
     } finally {
@@ -761,16 +804,27 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(p.fullName ?? 'المستخدم',
-                    style: const TextStyle(
-                        color: Colors.white, fontSize: 19, fontWeight: FontWeight.bold)),
+                Text(
+                  p.fullName ?? 'المستخدم',
+                  style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 19,
+                      fontWeight: FontWeight.bold),
+                ),
                 const SizedBox(height: 4),
-                Text('اسم المستخدم: @${p.username ?? "-"}',
-                    style: const TextStyle(color: Colors.white70, fontSize: 13)),
-                Text('البريد الإلكتروني: ${p.email ?? "-"}',
-                    style: const TextStyle(color: Colors.white70, fontSize: 13)),
-                Text('نوع الحساب: ${p.role}',
-                    style: const TextStyle(color: AppColors.orange, fontWeight: FontWeight.bold)),
+                Text(
+                  'اسم المستخدم: @${p.username ?? "-"}',
+                  style: const TextStyle(color: Colors.white70, fontSize: 13),
+                ),
+                Text(
+                  'البريد الإلكتروني: ${p.email ?? "-"}',
+                  style: const TextStyle(color: Colors.white70, fontSize: 13),
+                ),
+                Text(
+                  'نوع الحساب: ${p.role}',
+                  style: const TextStyle(
+                      color: AppColors.orange, fontWeight: FontWeight.bold),
+                ),
                 if (_country != null || _age != null)
                   Text(
                     'الدولة: ${_country ?? "-"}  |  العمر: ${_age ?? "-"}',
@@ -786,7 +840,8 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
               labelText: 'الاسم الكامل',
               filled: true,
               fillColor: AppColors.surface,
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+              border:
+                  OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
             ),
           ),
           const SizedBox(height: 12),
@@ -797,7 +852,8 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
               labelText: 'رقم الهاتف',
               filled: true,
               fillColor: AppColors.surface,
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+              border:
+                  OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
             ),
           ),
           if (p.role == 'mechanic') ...[
@@ -808,12 +864,16 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                 labelText: 'عنوان الورشة',
                 filled: true,
                 fillColor: AppColors.surface,
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+                border:
+                    OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
               ),
             ),
             const SizedBox(height: 8),
-            Text('ساعات الدوام: ${p.openingHours} · السعة: ${p.maxCarCapacity} سيارة/يوم',
-                style: const TextStyle(color: AppColors.textSecondary, fontSize: 12)),
+            Text(
+              'ساعات الدوام: ${p.openingHours} · السعة: ${p.maxCarCapacity} سيارة/يوم',
+              style:
+                  const TextStyle(color: AppColors.textSecondary, fontSize: 12),
+            ),
           ],
           const SizedBox(height: 22),
           ElevatedButton(
@@ -821,12 +881,14 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
               backgroundColor: AppColors.orange,
               foregroundColor: Colors.white,
               padding: const EdgeInsets.symmetric(vertical: 15),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14)),
             ),
             onPressed: _saving ? null : _saveProfile,
             child: _saving
                 ? const CircularProgressIndicator(color: Colors.white)
-                : const Text('حفظ التعديلات', style: TextStyle(fontWeight: FontWeight.bold)),
+                : const Text('حفظ التعديلات',
+                    style: TextStyle(fontWeight: FontWeight.bold)),
           ),
         ],
       ),

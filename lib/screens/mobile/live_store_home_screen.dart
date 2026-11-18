@@ -6,6 +6,7 @@ import '../../theme/app_theme.dart';
 import '../../widgets/animations.dart';
 import '../../widgets/home_ad_banner.dart';
 import 'book_workshop_screen.dart';
+import '../mobile/chat_screen.dart';
 import 'parts_catalog_screen.dart';
 
 class LiveStoreHomeScreen extends StatefulWidget {
@@ -318,17 +319,43 @@ class _LiveStoreHomeScreenState extends State<LiveStoreHomeScreen> {
                 child: Padding(
                   padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
                   child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      IconButton(
-                        onPressed: widget.onOpenDrawer,
-                        icon: const Icon(Icons.menu, size: 26),
+                      Row(
+                        children: [
+                          IconButton(
+                            onPressed: widget.onOpenDrawer,
+                            icon: const Icon(Icons.menu, size: 26),
+                          ),
+                          const SizedBox(width: 6),
+                          const Text(
+                            'أوتو بارتس برو',
+                            style: TextStyle(
+                                fontSize: 21, fontWeight: FontWeight.w800),
+                          ),
+                        ],
                       ),
-                      const SizedBox(width: 6),
-                      const Text(
-                        'أوتو بارتس برو',
-                        style: TextStyle(
-                            fontSize: 21, fontWeight: FontWeight.w800),
-                      ),
+                      if (widget.profile != null)
+                        BounceTap(
+                          onTap: () => Navigator.push(
+                            context,
+                            animatedRoute(const ChatsListScreen()),
+                          ),
+                          child: Container(
+                            width: 42,
+                            height: 42,
+                            decoration: BoxDecoration(
+                              color: AppColors.surface,
+                              shape: BoxShape.circle,
+                              border: Border.all(color: AppColors.border),
+                            ),
+                            child: const Icon(
+                              Icons.chat_bubble_outline,
+                              size: 20,
+                              color: AppColors.navy,
+                            ),
+                          ),
+                        ),
                     ],
                   ),
                 ),
@@ -455,16 +482,21 @@ class _LiveStoreHomeScreenState extends State<LiveStoreHomeScreen> {
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      const Text('الأكثر مبيعاً',
-                          style: TextStyle(
-                              fontSize: 16, fontWeight: FontWeight.bold)),
+                      const Text(
+                        'الأكثر مبيعاً',
+                        style: TextStyle(
+                            fontSize: 16, fontWeight: FontWeight.bold),
+                      ),
                       GestureDetector(
                         onTap: _openCatalog,
-                        child: const Text('عرض الكل',
-                            style: TextStyle(
-                                color: AppColors.orange,
-                                fontWeight: FontWeight.w600,
-                                fontSize: 13)),
+                        child: const Text(
+                          'عرض الكل',
+                          style: TextStyle(
+                            color: AppColors.orange,
+                            fontWeight: FontWeight.w600,
+                            fontSize: 13,
+                          ),
+                        ),
                       ),
                     ],
                   ),
@@ -498,16 +530,21 @@ class _LiveStoreHomeScreenState extends State<LiveStoreHomeScreen> {
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      const Text('وصل حديثاً',
-                          style: TextStyle(
-                              fontSize: 16, fontWeight: FontWeight.bold)),
+                      const Text(
+                        'وصل حديثاً',
+                        style: TextStyle(
+                            fontSize: 16, fontWeight: FontWeight.bold),
+                      ),
                       GestureDetector(
                         onTap: _openCatalog,
-                        child: const Text('عرض الكل',
-                            style: TextStyle(
-                                color: AppColors.orange,
-                                fontWeight: FontWeight.w600,
-                                fontSize: 13)),
+                        child: const Text(
+                          'عرض الكل',
+                          style: TextStyle(
+                            color: AppColors.orange,
+                            fontWeight: FontWeight.w600,
+                            fontSize: 13,
+                          ),
+                        ),
                       ),
                     ],
                   ),
@@ -529,8 +566,6 @@ class _LiveStoreHomeScreenState extends State<LiveStoreHomeScreen> {
                   ),
                 ),
               ),
-
-              // خيار تركيب في ورشة موجود مباشرة في الصفحة الرئيسية
               SliverToBoxAdapter(
                 child: Padding(
                   padding: const EdgeInsets.fromLTRB(16, 4, 16, 32),
@@ -617,8 +652,11 @@ class _LiveStoreHomeScreenState extends State<LiveStoreHomeScreen> {
                         : null,
                   ),
                   child: imgs.isEmpty
-                      ? const Icon(Icons.settings_outlined,
-                          color: AppColors.textSecondary, size: 32)
+                      ? const Icon(
+                          Icons.settings_outlined,
+                          color: AppColors.textSecondary,
+                          size: 32,
+                        )
                       : null,
                 ),
                 Positioned(
@@ -631,33 +669,41 @@ class _LiveStoreHomeScreenState extends State<LiveStoreHomeScreen> {
                       color: AppColors.orange,
                       borderRadius: BorderRadius.circular(12),
                     ),
-                    child: Text(badge,
-                        style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 10,
-                            fontWeight: FontWeight.bold)),
+                    child: Text(
+                      badge,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 10,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
                   ),
                 ),
               ],
             ),
             const SizedBox(height: 8),
-            Text(p['title'] ?? '',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style:
-                    const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-            Text('${p['car_name']} · ${p['car_model']}',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                    color: AppColors.textSecondary, fontSize: 11)),
+            Text(
+              p['title'] ?? '',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+            ),
+            Text(
+              '${p['car_name']} · ${p['car_model']}',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style:
+                  const TextStyle(color: AppColors.textSecondary, fontSize: 11),
+            ),
             const Spacer(),
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text('${p['price']} د.أ',
-                    style: const TextStyle(
-                        fontWeight: FontWeight.w800, fontSize: 14)),
+                Text(
+                  '${p['price']} د.أ',
+                  style: const TextStyle(
+                      fontWeight: FontWeight.w800, fontSize: 14),
+                ),
                 Container(
                   padding:
                       const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
@@ -665,11 +711,14 @@ class _LiveStoreHomeScreenState extends State<LiveStoreHomeScreen> {
                     color: AppColors.navy,
                     borderRadius: BorderRadius.circular(10),
                   ),
-                  child: const Text('التفاصيل',
-                      style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 11,
-                          fontWeight: FontWeight.bold)),
+                  child: const Text(
+                    'التفاصيل',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 11,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
                 ),
               ],
             ),
@@ -680,10 +729,6 @@ class _LiveStoreHomeScreenState extends State<LiveStoreHomeScreen> {
   }
 }
 
-// ============================================================================
-// صفحة تفاصيل المنشور الكاملة (بدلاً من القائمة المنبثقة من الأسفل)
-// تحتوي على: تفاصيل القطعة، تركيب في ورشة، بروفايل التاجر، ومعلومات التواصل
-// ============================================================================
 class ProductDetailsScreen extends StatefulWidget {
   final Map<String, dynamic> product;
   final CustomerProfile? viewerProfile;
@@ -761,8 +806,10 @@ class _ProductDetailsScreenState extends State<ProductDetailsScreen> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('اختر ورشة لتركيب القطعة',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            const Text(
+              'اختر ورشة لتركيب القطعة',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            ),
             const SizedBox(height: 10),
             if (workshops.isEmpty)
               const Padding(
@@ -851,7 +898,6 @@ class _ProductDetailsScreenState extends State<ProductDetailsScreen> {
                   size: 54, color: AppColors.textSecondary),
             ),
           const SizedBox(height: 16),
-
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
@@ -903,8 +949,6 @@ class _ProductDetailsScreenState extends State<ProductDetailsScreen> {
             child: Text(p['description'] ?? ''),
           ),
           const SizedBox(height: 16),
-
-          // خيار تركيب في ورشة
           Container(
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
@@ -915,13 +959,16 @@ class _ProductDetailsScreenState extends State<ProductDetailsScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text('تركيب في ورشة؟',
-                    style:
-                        TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+                const Text(
+                  'تركيب في ورشة؟',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                ),
                 const SizedBox(height: 4),
-                const Text('احجز موعد تركيب هذه القطعة في ورشة معتمدة',
-                    style: TextStyle(
-                        color: AppColors.textSecondary, fontSize: 12)),
+                const Text(
+                  'احجز موعد تركيب هذه القطعة في ورشة معتمدة',
+                  style:
+                      TextStyle(color: AppColors.textSecondary, fontSize: 12),
+                ),
                 const SizedBox(height: 10),
                 SizedBox(
                   width: double.infinity,
@@ -933,18 +980,17 @@ class _ProductDetailsScreenState extends State<ProductDetailsScreen> {
                       shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(12)),
                     ),
-                    child: const Text('اختيار ورشة وموعد',
-                        style: TextStyle(
-                            color: AppColors.navy,
-                            fontWeight: FontWeight.bold)),
+                    child: const Text(
+                      'اختيار ورشة وموعد',
+                      style: TextStyle(
+                          color: AppColors.navy, fontWeight: FontWeight.bold),
+                    ),
                   ),
                 ),
               ],
             ),
           ),
           const SizedBox(height: 16),
-
-          // بطاقة بروفايل التاجر وجميع منشوراته ومعلومات التواصل
           Container(
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
@@ -957,9 +1003,11 @@ class _ProductDetailsScreenState extends State<ProductDetailsScreen> {
                 : Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text('معلومات البائع والتاجر',
-                          style: TextStyle(
-                              fontWeight: FontWeight.bold, fontSize: 15)),
+                      const Text(
+                        'معلومات البائع والتاجر',
+                        style: TextStyle(
+                            fontWeight: FontWeight.bold, fontSize: 15),
+                      ),
                       const SizedBox(height: 10),
                       Row(
                         children: [
@@ -977,8 +1025,9 @@ class _ProductDetailsScreenState extends State<ProductDetailsScreen> {
                                     Text(
                                       _seller?.fullName ?? 'التاجر',
                                       style: const TextStyle(
-                                          fontWeight: FontWeight.bold,
-                                          fontSize: 15),
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 15,
+                                      ),
                                     ),
                                     if (_seller?.isTrustedMerchant == true) ...[
                                       const SizedBox(width: 6),
@@ -990,15 +1039,17 @@ class _ProductDetailsScreenState extends State<ProductDetailsScreen> {
                                 Text(
                                   'الهاتف: ${_seller?.phone ?? "غير متوفر"}',
                                   style: const TextStyle(
-                                      color: AppColors.orange,
-                                      fontWeight: FontWeight.bold),
+                                    color: AppColors.orange,
+                                    fontWeight: FontWeight.bold,
+                                  ),
                                 ),
                                 if (_seller?.workshopAddress != null)
                                   Text(
                                     _seller!.workshopAddress!,
                                     style: const TextStyle(
-                                        color: AppColors.textSecondary,
-                                        fontSize: 12),
+                                      color: AppColors.textSecondary,
+                                      fontSize: 12,
+                                    ),
                                   ),
                               ],
                             ),
@@ -1006,7 +1057,7 @@ class _ProductDetailsScreenState extends State<ProductDetailsScreen> {
                         ],
                       ),
                       const SizedBox(height: 12),
-                      if (_seller != null)
+                      if (_seller != null) ...[
                         SizedBox(
                           width: double.infinity,
                           child: ElevatedButton.icon(
@@ -1030,6 +1081,45 @@ class _ProductDetailsScreenState extends State<ProductDetailsScreen> {
                                 const Text('عرض بروفايل التاجر وجميع منشوراته'),
                           ),
                         ),
+                        if (widget.viewerProfile != null &&
+                            widget.viewerProfile!.id != p['user_id']) ...[
+                          const SizedBox(height: 8),
+                          SizedBox(
+                            width: double.infinity,
+                            child: OutlinedButton.icon(
+                              style: OutlinedButton.styleFrom(
+                                side: const BorderSide(color: AppColors.orange),
+                                padding:
+                                    const EdgeInsets.symmetric(vertical: 12),
+                              ),
+                              onPressed: () {
+                                Navigator.push(
+                                  context,
+                                  animatedRoute(ChatConversationScreen(
+                                    otherUserId: _seller!.id,
+                                    otherUserName:
+                                        _seller!.fullName ?? 'التاجر',
+                                    otherUserPhone: _seller!.phone,
+                                    productId: p['id'] as String?,
+                                    productTitle: p['title'] as String?,
+                                    productPrice:
+                                        (p['price'] as num?)?.toDouble(),
+                                  )),
+                                );
+                              },
+                              icon: const Icon(Icons.chat,
+                                  color: AppColors.orange),
+                              label: const Text(
+                                'فتح الدردشة المباشرة',
+                                style: TextStyle(
+                                  color: AppColors.orange,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ],
                       if (widget.viewerProfile != null &&
                           widget.viewerProfile!.id != p['user_id']) ...[
                         const Divider(height: 24),
@@ -1039,13 +1129,14 @@ class _ProductDetailsScreenState extends State<ProductDetailsScreen> {
                               child: TextField(
                                 controller: _msgCtrl,
                                 decoration: InputDecoration(
-                                  hintText: 'أرسل رسالة مباشرة للتاجر...',
+                                  hintText: 'أو أرسل رسالة سريعة للتاجر...',
                                   filled: true,
                                   fillColor: AppColors.background,
                                   contentPadding: const EdgeInsets.symmetric(
                                       horizontal: 14, vertical: 10),
                                   border: OutlineInputBorder(
-                                      borderRadius: BorderRadius.circular(12)),
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
                                 ),
                               ),
                             ),
@@ -1072,9 +1163,6 @@ class _ProductDetailsScreenState extends State<ProductDetailsScreen> {
   }
 }
 
-// ============================================================================
-// صفحة بروفايل التاجر العامة مع جميع منشوراته ومعلومات التواصل
-// ============================================================================
 class MerchantPublicProfileScreen extends StatelessWidget {
   final CustomerProfile seller;
   final CustomerProfile? viewerProfile;
@@ -1121,9 +1209,10 @@ class MerchantPublicProfileScreen extends StatelessWidget {
                               Text(
                                 seller.fullName ?? 'التاجر',
                                 style: const TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 18,
-                                    fontWeight: FontWeight.bold),
+                                  color: Colors.white,
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.bold,
+                                ),
                               ),
                               if (seller.isTrustedMerchant) ...[
                                 const SizedBox(width: 6),
@@ -1132,32 +1221,65 @@ class MerchantPublicProfileScreen extends StatelessWidget {
                               ],
                             ],
                           ),
-                          Text('@${seller.username ?? ""}',
-                              style: const TextStyle(
-                                  color: Colors.white70, fontSize: 12)),
+                          Text(
+                            '@${seller.username ?? ""}',
+                            style: const TextStyle(
+                                color: Colors.white70, fontSize: 12),
+                          ),
                         ],
                       ),
                     ),
                   ],
                 ),
                 const Divider(color: Colors.white24, height: 22),
-                Text('رقم الهاتف للتواصل: ${seller.phone ?? "غير متوفر"}',
-                    style: const TextStyle(
-                        color: Colors.white, fontWeight: FontWeight.bold)),
+                Text(
+                  'رقم الهاتف للتواصل: ${seller.phone ?? "غير متوفر"}',
+                  style: const TextStyle(
+                      color: Colors.white, fontWeight: FontWeight.bold),
+                ),
                 if (seller.email != null)
-                  Text('البريد: ${seller.email}',
-                      style:
-                          const TextStyle(color: Colors.white70, fontSize: 12)),
+                  Text(
+                    'البريد: ${seller.email}',
+                    style: const TextStyle(color: Colors.white70, fontSize: 12),
+                  ),
                 if (seller.workshopAddress != null)
-                  Text('العنوان: ${seller.workshopAddress}',
-                      style:
-                          const TextStyle(color: Colors.white70, fontSize: 12)),
+                  Text(
+                    'العنوان: ${seller.workshopAddress}',
+                    style: const TextStyle(color: Colors.white70, fontSize: 12),
+                  ),
+                if (viewerProfile != null &&
+                    viewerProfile!.id != seller.id) ...[
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.orange,
+                        foregroundColor: Colors.white,
+                      ),
+                      onPressed: () {
+                        Navigator.push(
+                          context,
+                          animatedRoute(ChatConversationScreen(
+                            otherUserId: seller.id,
+                            otherUserName: seller.fullName ?? 'التاجر',
+                            otherUserPhone: seller.phone,
+                          )),
+                        );
+                      },
+                      icon: const Icon(Icons.chat),
+                      label: const Text('مراسلة التاجر الآن'),
+                    ),
+                  ),
+                ],
               ],
             ),
           ),
           const SizedBox(height: 18),
-          const Text('جميع منشورات التاجر',
-              style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
+          const Text(
+            'جميع منشورات التاجر',
+            style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
+          ),
           const SizedBox(height: 10),
           StreamBuilder<List<Map<String, dynamic>>>(
             stream: db
@@ -1220,32 +1342,41 @@ class MerchantPublicProfileScreen extends StatelessWidget {
                               image: imgs.isNotEmpty
                                   ? DecorationImage(
                                       image: NetworkImage(imgs.first),
-                                      fit: BoxFit.cover)
+                                      fit: BoxFit.cover,
+                                    )
                                   : null,
                             ),
                             child: imgs.isEmpty
-                                ? const Icon(Icons.settings_outlined,
-                                    color: AppColors.textSecondary)
+                                ? const Icon(
+                                    Icons.settings_outlined,
+                                    color: AppColors.textSecondary,
+                                  )
                                 : null,
                           ),
                           const SizedBox(height: 8),
-                          Text(p['title'] ?? '',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                  fontWeight: FontWeight.bold, fontSize: 13)),
-                          Text('${p['car_name']} · ${p['car_model']}',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                  color: AppColors.textSecondary,
-                                  fontSize: 11)),
+                          Text(
+                            p['title'] ?? '',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                                fontWeight: FontWeight.bold, fontSize: 13),
+                          ),
+                          Text(
+                            '${p['car_name']} · ${p['car_model']}',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                                color: AppColors.textSecondary, fontSize: 11),
+                          ),
                           const Spacer(),
-                          Text('${p['price']} د.أ',
-                              style: const TextStyle(
-                                  fontWeight: FontWeight.w800,
-                                  fontSize: 14,
-                                  color: AppColors.orange)),
+                          Text(
+                            '${p['price']} د.أ',
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w800,
+                              fontSize: 14,
+                              color: AppColors.orange,
+                            ),
+                          ),
                         ],
                       ),
                     ),
