@@ -1,0 +1,32 @@
+name: auto_parts_app
+description: تطبيق قطع غيار السيارات وطلب المساعدة الطارئة ولوحة تحكم الورشة.
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.3.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  google_fonts: 9.0.0
+  cupertino_icons: ^1.0.8
+  supabase_flutter: ^2.18.3
+  http: ^1.2.2
+  geolocator: ^14.1.1
+  geocoding: ^5.0.0
+  flutter_map: ^8.3.2
+  latlong2: ^0.9.1
+  webview_flutter: ^4.13.1
+  image_picker: ^1.2.1
+  video_player: ^2.14.1
+  material_ui: ^1.11.0
+  url_launcher: ^6.3.3
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true
