@@ -1,8 +1,13 @@
+import 'package:flutter_map/flutter_map.dart';
+import 'package:geolocator/geolocator.dart';
+import 'package:latlong2/latlong.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../config/env_config.dart';
 import '../../models/db_models.dart';
 import '../../services/live_progress_tracker.dart';
+import '../../services/location_service.dart';
 import '../../services/notifications_service.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/animations.dart';
@@ -29,9 +34,66 @@ class TowingDashboardScreen extends StatefulWidget {
 
 class _TowingDashboardScreenState extends State<TowingDashboardScreen> {
   final _db = Supabase.instance.client;
-  final _tracker = LiveProgressTracker();
+  final _tracker = LiveProgressTracker.instance;
   final _notifs = NotificationsService();
+  final _locationService = LocationService();
   late int _tab = widget.initialTab;
+  late bool _isAvailable = widget.profile.isAvailable;
+  late double? _myLat = widget.profile.latitude;
+  late double? _myLng = widget.profile.longitude;
+  final double _maxRadiusKm = 15.0;
+
+  @override
+  void initState() {
+    super.initState();
+    _syncGps();
+  }
+
+  Future<void> _syncGps() async {
+    try {
+      final res = await _locationService.getCurrentLocation();
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _myLat = res.coordinates.latitude;
+        _myLng = res.coordinates.longitude;
+      });
+      await _db.from('customers').update({'latitude': _myLat, 'longitude': _myLng}).eq('id', widget.profile.id);
+    } catch (_) {}
+  }
+
+  Future<void> _toggleAvailability(bool val) async {
+    setState(() => _isAvailable = val);
+    await _db.from('customers').update({'is_available': val}).eq('id', widget.profile.id);
+    widget.onRefreshProfile();
+  }
+
+  double? _distanceTo(DbMechanicRequest r) {
+    if (_myLat == null || _myLng == null || r.pickupLatitude == null || r.pickupLongitude == null) {
+      return null;
+    }
+    return Geolocator.distanceBetween(_myLat!, _myLng!, r.pickupLatitude!, r.pickupLongitude!) / 1000.0;
+  }
+
+  bool _isVisibleToMe(DbMechanicRequest r) {
+    if (r.mechanicId == widget.profile.id) {
+      return true;
+    }
+    if (!_isAvailable || r.status != 'pending') {
+      return false;
+    }
+    if (r.broadcastAll) {
+      return true;
+    }
+    final dist = _distanceTo(r);
+    return dist == null || dist <= _maxRadiusKm;
+  }
+
+  Future<void> _openGpsNav(double lat, double lng) async {
+    final url = Uri.parse('https://www.google.com/maps/dir/?api=1&destination=$lat,$lng&travelmode=driving');
+    await launchUrl(url, mode: LaunchMode.externalApplication);
+  }
 
   @override
   void dispose() {
@@ -43,14 +105,7 @@ class _TowingDashboardScreenState extends State<TowingDashboardScreen> {
     if (Navigator.canPop(context)) {
       Navigator.popUntil(context, (r) => r.isFirst);
     } else {
-      Navigator.pushReplacement(
-        context,
-        animatedRoute(LiveMobileShell(
-          profile: widget.profile,
-          onRefreshProfile: widget.onRefreshProfile,
-          onSignedOut: widget.onSignedOut,
-        )),
-      );
+      Navigator.pushReplacement(context, animatedRoute(LiveMobileShell(profile: widget.profile, onRefreshProfile: widget.onRefreshProfile, onSignedOut: widget.onSignedOut)));
     }
   }
 
@@ -60,35 +115,18 @@ class _TowingDashboardScreenState extends State<TowingDashboardScreen> {
     if (!showPayments) {
       _tab = 0;
     }
-
     return Scaffold(
       appBar: AppBar(
         backgroundColor: AppColors.navy,
         foregroundColor: Colors.white,
-        title: Text(
-          'ونش الطوارئ · ${widget.profile.fullName ?? ""}',
-          style: const TextStyle(color: Colors.white, fontSize: 16),
-        ),
+        title: Text('ونش الطوارئ · ${widget.profile.fullName ?? ""}', style: const TextStyle(color: Colors.white, fontSize: 16)),
         actions: [
-          IconButton(
-            tooltip: 'العودة للرئيسية',
-            icon: const Icon(Icons.storefront),
-            onPressed: _goHome,
-          ),
-          IconButton(
-            icon: const Icon(Icons.notifications_none),
-            onPressed: () => _notifs.openNotificationsSheet(context),
-          ),
+          IconButton(tooltip: 'العودة للرئيسية', icon: const Icon(Icons.storefront), onPressed: _goHome),
+          const NotificationBellButton(),
           if (showPayments)
             IconButton(
               icon: const Icon(Icons.workspace_premium, color: AppColors.orange),
-              onPressed: () => Navigator.push(
-                context,
-                animatedRoute(ProviderSubscriptionsScreen(
-                  currentPlanCode: widget.profile.subscriptionPlan,
-                  onSubscribed: widget.onRefreshProfile,
-                )),
-              ),
+              onPressed: () => Navigator.push(context, animatedRoute(ProviderSubscriptionsScreen(currentPlanCode: widget.profile.subscriptionPlan, onSubscribed: widget.onRefreshProfile))),
             ),
           IconButton(
             icon: const Icon(Icons.logout),
@@ -102,9 +140,19 @@ class _TowingDashboardScreenState extends State<TowingDashboardScreen> {
           ),
         ],
       ),
-      body: AnimatedSwitcher(
-        duration: const Duration(milliseconds: 260),
-        child: _tab == 0 ? _towingOrdersTab(showPayments) : _towingWalletTab(),
+      body: Column(
+        children: [
+          Container(
+            color: _isAvailable ? AppColors.success.withValues(alpha: 0.12) : Colors.red.withValues(alpha: 0.10),
+            child: SwitchListTile(
+              title: Text(_isAvailable ? 'حالتي: متاح لاستقبال الطلبات' : 'حالتي: غير متاح حالياً', style: TextStyle(fontWeight: FontWeight.bold, color: _isAvailable ? AppColors.success : Colors.red, fontSize: 14)),
+              value: _isAvailable,
+              activeTrackColor: AppColors.success,
+              onChanged: _toggleAvailability,
+            ),
+          ),
+          Expanded(child: _tab == 0 ? _towingOrdersTab(showPayments) : _towingWalletTab()),
+        ],
       ),
       bottomNavigationBar: showPayments
           ? BottomNavigationBar(
@@ -113,10 +161,7 @@ class _TowingDashboardScreenState extends State<TowingDashboardScreen> {
               onTap: (i) => setState(() => _tab = i),
               items: const [
                 BottomNavigationBarItem(icon: Icon(Icons.local_shipping), label: 'طلبات الونش'),
-                BottomNavigationBarItem(
-                  icon: Icon(Icons.account_balance_wallet),
-                  label: 'المحفظة',
-                ),
+                BottomNavigationBarItem(icon: Icon(Icons.account_balance_wallet), label: 'المحفظة'),
               ],
             )
           : null,
@@ -125,29 +170,26 @@ class _TowingDashboardScreenState extends State<TowingDashboardScreen> {
 
   Widget _towingOrdersTab(bool showPayments) {
     return StreamBuilder<List<Map<String, dynamic>>>(
-      stream: _db
-          .from('mechanic_requests')
-          .stream(primaryKey: ['id'])
-          .eq('service_type', 'winch')
-          .order('created_at', ascending: false),
+      stream: _db.from('mechanic_requests').stream(primaryKey: ['id']).eq('service_type', 'winch').order('created_at', ascending: false),
       builder: (context, snap) {
         if (!snap.hasData) {
           return const Center(child: CircularProgressIndicator());
         }
-        final orders = snap.data!.map(DbMechanicRequest.fromMap).toList();
+        final orders = snap.data!.map(DbMechanicRequest.fromMap).where(_isVisibleToMe).toList();
         if (orders.isEmpty) {
-          return const Center(child: Text('لا توجد طلبات ونش حالياً'));
+          return Center(child: Text(_isAvailable ? 'لا توجد طلبات ونش متاحة حالياً' : 'أنت في وضع غير متاح — فعّل التوفر لاستقبال الطلبات'));
         }
-
         return ListView.builder(
           padding: const EdgeInsets.all(16),
           itemCount: orders.length,
           itemBuilder: (_, i) {
             final o = orders[i];
+            final d = _distanceTo(o);
+            final hasCoords = o.pickupLatitude != null && o.pickupLongitude != null;
             return FadeSlideIn(
               index: i,
               child: Card(
-                margin: const EdgeInsets.only(bottom: 12),
+                margin: const EdgeInsets.only(bottom: 14),
                 child: Padding(
                   padding: const EdgeInsets.all(16),
                   child: Column(
@@ -156,50 +198,51 @@ class _TowingDashboardScreenState extends State<TowingDashboardScreen> {
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          Text(
-                            'طلب سحب · ${o.carDetails}',
-                            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
-                          ),
-                          Chip(label: Text(o.progressStep)),
+                          Expanded(child: Text('طلب سحب · ${o.carDetails}', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15))),
+                          if (d != null)
+                            Chip(backgroundColor: AppColors.orangeLight, label: Text('يبعد ${d.toStringAsFixed(1)} كم', style: const TextStyle(color: AppColors.orange, fontWeight: FontWeight.bold, fontSize: 11))),
                         ],
                       ),
-                      const SizedBox(height: 6),
-                      Text(
-                        'Pickup: ${o.pickupLatitude?.toStringAsFixed(4)}, ${o.pickupLongitude?.toStringAsFixed(4)}',
-                        style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
-                      ),
-                      Text(
-                        'Drop-off: ${o.dropoffAddress ?? "محددة على الخريطة"}',
-                        style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
-                      ),
-                      if (showPayments) ...[
-                        const SizedBox(height: 6),
-                        Text(
-                          'الأجرة: ${o.totalAmount} د.أ',
-                          style: const TextStyle(
-                            fontWeight: FontWeight.bold,
-                            color: AppColors.orange,
-                          ),
-                        ),
-                      ],
+                      Text('المشكلة: ${o.description ?? "-"} · الهاتف: ${o.phone ?? "-"}'),
+                      Text('الوجهة: ${o.dropoffAddress ?? "محددة على الخريطة"}', style: const TextStyle(fontSize: 12, color: AppColors.textSecondary)),
+                      if (showPayments) Text('الأجرة: ${o.totalAmount} د.أ', style: const TextStyle(fontWeight: FontWeight.bold, color: AppColors.orange)),
                       const SizedBox(height: 10),
-                      if (o.status == 'pending')
-                        ElevatedButton(
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: AppColors.orange,
-                            foregroundColor: Colors.white,
+                      if (hasCoords) ...[
+                        SizedBox(
+                          height: 140,
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(12),
+                            child: FlutterMap(
+                              options: MapOptions(initialCenter: LatLng(o.pickupLatitude!, o.pickupLongitude!), initialZoom: 14),
+                              children: [
+                                TileLayer(urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png', userAgentPackageName: 'com.autoparts.app'),
+                                MarkerLayer(markers: [Marker(point: LatLng(o.pickupLatitude!, o.pickupLongitude!), width: 44, height: 44, child: const Icon(Icons.location_on, color: AppColors.orange, size: 38))]),
+                              ],
+                            ),
                           ),
-                          onPressed: () => _acceptWinch(o),
-                          child: const Text('قبول الطلب والانطلاق للعميل'),
                         ),
-                      if (o.status == 'accepted' && o.mechanicId == widget.profile.id)
-                        ElevatedButton(
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: AppColors.success,
-                            foregroundColor: Colors.white,
+                        const SizedBox(height: 10),
+                        SizedBox(
+                          width: double.infinity,
+                          child: OutlinedButton.icon(
+                            style: OutlinedButton.styleFrom(side: const BorderSide(color: AppColors.navy)),
+                            onPressed: () => _openGpsNav(o.pickupLatitude!, o.pickupLongitude!),
+                            icon: const Icon(Icons.navigation, color: AppColors.navy),
+                            label: const Text('توجيه GPS لموقع العميل', style: TextStyle(color: AppColors.navy, fontWeight: FontWeight.bold)),
                           ),
-                          onPressed: () => _completeWinch(o, showPayments),
-                          child: const Text('تأكيد تسليم السيارة وإكمال الطلب'),
+                        ),
+                        const SizedBox(height: 8),
+                      ],
+                      if (o.status == 'pending')
+                        SizedBox(width: double.infinity, child: ElevatedButton(style: ElevatedButton.styleFrom(backgroundColor: AppColors.orange, foregroundColor: Colors.white), onPressed: () => _acceptWinch(o), child: const Text('قبول الطلب والانطلاق للعميل'))),
+                      if (o.status == 'accepted' && o.mechanicId == widget.profile.id)
+                        Wrap(
+                          spacing: 8,
+                          children: [
+                            if (o.progressStep == 'on_the_way')
+                              ElevatedButton(style: ElevatedButton.styleFrom(backgroundColor: AppColors.navy, foregroundColor: Colors.white), onPressed: () { if (o.userId != null) { _tracker.markEmergencyArrived(requestId: o.id, customerUserId: o.userId!, serviceType: 'winch'); } }, child: const Text('تأكيد الوصول للعميل')),
+                            ElevatedButton(style: ElevatedButton.styleFrom(backgroundColor: AppColors.success, foregroundColor: Colors.white), onPressed: () => _completeWinch(o, showPayments), child: const Text('تأكيد التسليم وإنهاء الطلب')),
+                          ],
                         ),
                     ],
                   ),
@@ -213,28 +256,11 @@ class _TowingDashboardScreenState extends State<TowingDashboardScreen> {
   }
 
   Future<void> _acceptWinch(DbMechanicRequest o) async {
-    await _db.from('mechanic_requests').update({
-      'status': 'accepted',
-      'progress_step': 'on_the_way',
-      'mechanic_id': widget.profile.id,
-    }).eq('id', o.id);
-
+    await _db.from('mechanic_requests').update({'status': 'accepted', 'progress_step': 'on_the_way', 'mechanic_id': widget.profile.id}).eq('id', o.id);
     if (o.userId != null) {
-      await _notifs.sendNotification(
-        targetUserId: o.userId!,
-        title: 'ونش الطوارئ في طريقه إليك',
-        body: 'تم قبول طلبك، السائق يتحرك الآن نحو موقعك.',
-        type: 'order_accepted',
-        referenceId: o.id,
-      );
+      await _notifs.sendNotification(targetUserId: o.userId!, title: 'ونش الطوارئ في طريقه إليك', body: 'تم قبول طلبك، السائق يتحرك الآن نحو موقعك.', type: 'order_accepted', referenceId: o.id);
       if (o.pickupLatitude != null && o.pickupLongitude != null) {
-        _tracker.startTrackingEmergencyArrival(
-          requestId: o.id,
-          customerUserId: o.userId!,
-          serviceType: 'winch',
-          pickupLat: o.pickupLatitude!,
-          pickupLng: o.pickupLongitude!,
-        );
+        await _tracker.startTrackingEmergencyArrival(requestId: o.id, customerUserId: o.userId!, serviceType: 'winch', pickupLat: o.pickupLatitude!, pickupLng: o.pickupLongitude!);
       }
     }
   }
@@ -243,88 +269,38 @@ class _TowingDashboardScreenState extends State<TowingDashboardScreen> {
     final rate = widget.profile.commissionRate;
     final comm = showPayments ? o.totalAmount * rate : 0.0;
     final net = showPayments ? o.totalAmount - comm : 0.0;
-
-    await _db.from('mechanic_requests').update({
-      'status': 'completed',
-      'progress_step': 'completed',
-      'commission_amount': comm,
-      'payment_status': 'paid',
-    }).eq('id', o.id);
-
+    await _db.from('mechanic_requests').update({'status': 'completed', 'progress_step': 'completed', 'commission_amount': comm, 'payment_status': 'paid'}).eq('id', o.id);
     if (showPayments) {
-      await _db.from('wallet_transactions').insert({
-        'provider_id': widget.profile.id,
-        'customer_id': o.userId,
-        'reference_id': o.id,
-        'transaction_type': 'winch_towing',
-        'payment_method': 'cash',
-        'gross_amount': o.totalAmount,
-        'commission_rate': rate,
-        'commission_amount': comm,
-        'net_amount': net,
-        'status': 'completed',
-      });
+      await _db.from('wallet_transactions').insert({'provider_id': widget.profile.id, 'customer_id': o.userId, 'reference_id': o.id, 'transaction_type': 'winch_towing', 'payment_method': 'cash', 'gross_amount': o.totalAmount, 'commission_rate': rate, 'commission_amount': comm, 'net_amount': net, 'status': 'completed'});
     }
   }
 
   Widget _towingWalletTab() {
     return StreamBuilder<List<Map<String, dynamic>>>(
-      stream: _db
-          .from('wallet_transactions')
-          .stream(primaryKey: ['id'])
-          .eq('provider_id', widget.profile.id)
-          .order('created_at', ascending: false),
+      stream: _db.from('wallet_transactions').stream(primaryKey: ['id']).eq('provider_id', widget.profile.id).order('created_at', ascending: false),
       builder: (context, snap) {
         final txs = (snap.data ?? []).map(DbWalletTransaction.fromMap).toList();
         final net = txs.fold(0.0, (s, t) => s + t.netAmount);
         final gross = txs.fold(0.0, (s, t) => s + t.grossAmount);
         final comm = txs.fold(0.0, (s, t) => s + t.commissionAmount);
-
         return ListView(
           padding: const EdgeInsets.all(16),
           children: [
             Container(
               padding: const EdgeInsets.all(18),
-              decoration: BoxDecoration(
-                color: AppColors.navy,
-                borderRadius: BorderRadius.circular(16),
-              ),
+              decoration: BoxDecoration(color: AppColors.navy, borderRadius: BorderRadius.circular(16)),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   const Text('صافي محفظة الونش', style: TextStyle(color: Colors.white70)),
-                  Text(
-                    '${net.toStringAsFixed(2)} د.أ',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 26,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
+                  Text('${net.toStringAsFixed(2)} د.أ', style: const TextStyle(color: Colors.white, fontSize: 26, fontWeight: FontWeight.bold)),
                   const SizedBox(height: 6),
-                  Text(
-                    'قبل العمولة: ${gross.toStringAsFixed(2)} | العمولة: ${comm.toStringAsFixed(2)} د.أ',
-                    style: const TextStyle(color: Colors.white70, fontSize: 12),
-                  ),
+                  Text('قبل العمولة: ${gross.toStringAsFixed(2)} | العمولة: ${comm.toStringAsFixed(2)} د.أ', style: const TextStyle(color: Colors.white70, fontSize: 12)),
                 ],
               ),
             ),
             const SizedBox(height: 14),
-            ...txs.map((t) => Card(
-                  child: ListTile(
-                    title: Text('رحلة ونش #${t.referenceId?.substring(0, 6) ?? ""}'),
-                    subtitle: Text(
-                      'قبل العمولة: ${t.grossAmount} · العمولة: -${t.commissionAmount.toStringAsFixed(2)}',
-                    ),
-                    trailing: Text(
-                      '+${t.netAmount.toStringAsFixed(2)} د.أ',
-                      style: const TextStyle(
-                        color: AppColors.success,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ),
-                )),
+            ...txs.map((t) => Card(child: ListTile(title: Text('رحلة ونش #${t.referenceId?.substring(0, 6) ?? ""}'), subtitle: Text('قبل العمولة: ${t.grossAmount} · العمولة: -${t.commissionAmount.toStringAsFixed(2)}'), trailing: Text('+${t.netAmount.toStringAsFixed(2)} د.أ', style: const TextStyle(color: AppColors.success, fontWeight: FontWeight.bold))))),
           ],
         );
       },

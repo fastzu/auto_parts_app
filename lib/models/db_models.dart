@@ -7,6 +7,7 @@ class CustomerProfile {
   final String role;
   final bool isAdmin;
   final bool hasTowing;
+  final bool isAvailable;
   final double? latitude;
   final double? longitude;
   final double? workshopLatitude;
@@ -36,6 +37,7 @@ class CustomerProfile {
     this.role = 'user',
     this.isAdmin = false,
     this.hasTowing = false,
+    this.isAvailable = true,
     this.latitude,
     this.longitude,
     this.workshopLatitude,
@@ -67,6 +69,7 @@ class CustomerProfile {
       role: (map['role'] as String?) ?? 'user',
       isAdmin: (map['is_admin'] as bool?) ?? false,
       hasTowing: (map['has_towing'] as bool?) ?? false,
+      isAvailable: (map['is_available'] as bool?) ?? true,
       latitude: (map['latitude'] as num?)?.toDouble(),
       longitude: (map['longitude'] as num?)?.toDouble(),
       workshopLatitude: (map['workshop_latitude'] as num?)?.toDouble(),
@@ -82,8 +85,7 @@ class CustomerProfile {
       commissionRate: (map['commission_rate'] as num?)?.toDouble() ?? 0.15,
       isTrustedMerchant: (map['is_trusted_merchant'] as bool?) ?? false,
       walletBalance: (map['wallet_balance'] as num?)?.toDouble() ?? 0.0,
-      pendingCommissionDebt:
-          (map['pending_commission_debt'] as num?)?.toDouble() ?? 0.0,
+      pendingCommissionDebt: (map['pending_commission_debt'] as num?)?.toDouble() ?? 0.0,
       isOwnerWinchDriver: (map['is_owner_winch_driver'] as bool?) ?? true,
       winchDriverName: map['winch_driver_name'] as String?,
       winchDriverPhone: map['winch_driver_phone'] as String?,
@@ -169,6 +171,7 @@ class DbMechanicRequest {
   final double? dropoffLongitude;
   final String? dropoffAddress;
   final String? estimatedTime;
+  final bool broadcastAll;
 
   DbMechanicRequest({
     required this.id,
@@ -189,6 +192,7 @@ class DbMechanicRequest {
     this.dropoffLongitude,
     this.dropoffAddress,
     this.estimatedTime,
+    this.broadcastAll = false,
   });
 
   factory DbMechanicRequest.fromMap(Map<String, dynamic> map) {
@@ -205,14 +209,13 @@ class DbMechanicRequest {
       totalAmount: (map['total_amount'] as num?)?.toDouble() ?? 0.0,
       commissionAmount: (map['commission_amount'] as num?)?.toDouble() ?? 0.0,
       paymentStatus: (map['payment_status'] as String?) ?? 'unpaid',
-      pickupLatitude: (map['pickup_latitude'] as num?)?.toDouble() ??
-          (map['latitude'] as num?)?.toDouble(),
-      pickupLongitude: (map['pickup_longitude'] as num?)?.toDouble() ??
-          (map['longitude'] as num?)?.toDouble(),
+      pickupLatitude: (map['pickup_latitude'] as num?)?.toDouble() ?? (map['latitude'] as num?)?.toDouble(),
+      pickupLongitude: (map['pickup_longitude'] as num?)?.toDouble() ?? (map['longitude'] as num?)?.toDouble(),
       dropoffLatitude: (map['dropoff_latitude'] as num?)?.toDouble(),
       dropoffLongitude: (map['dropoff_longitude'] as num?)?.toDouble(),
       dropoffAddress: map['dropoff_address'] as String?,
       estimatedTime: map['estimated_time'] as String?,
+      broadcastAll: (map['broadcast_all'] as bool?) ?? false,
     );
   }
 }
@@ -259,8 +262,7 @@ class DbWalletTransaction {
       commissionAmount: (map['commission_amount'] as num?)?.toDouble() ?? 0.0,
       netAmount: (map['net_amount'] as num?)?.toDouble() ?? 0.0,
       status: (map['status'] as String?) ?? 'completed',
-      createdAt: DateTime.tryParse((map['created_at'] as String?) ?? '') ??
-          DateTime.now(),
+      createdAt: DateTime.tryParse((map['created_at'] as String?) ?? '') ?? DateTime.now(),
     );
   }
 }
@@ -305,8 +307,7 @@ class DbWorkshopAppointment {
       status: (map['status'] as String?) ?? 'pending',
       progressStep: (map['progress_step'] as String?) ?? 'pending',
       totalAmount: (map['total_amount'] as num?)?.toDouble() ?? 0.0,
-      platformCommission:
-          (map['platform_commission'] as num?)?.toDouble() ?? 0.0,
+      platformCommission: (map['platform_commission'] as num?)?.toDouble() ?? 0.0,
       paymentMethod: (map['payment_method'] as String?) ?? 'cash',
       paymentStatus: (map['payment_status'] as String?) ?? 'unpaid',
     );
