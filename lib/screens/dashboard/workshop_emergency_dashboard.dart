@@ -26,15 +26,13 @@ class WorkshopEmergencyDashboard extends StatefulWidget {
   });
 
   @override
-  State<WorkshopEmergencyDashboard> createState() =>
-      _WorkshopEmergencyDashboardState();
+  State<WorkshopEmergencyDashboard> createState() => _WorkshopEmergencyDashboardState();
 }
 
-class _WorkshopEmergencyDashboardState
-    extends State<WorkshopEmergencyDashboard> {
+class _WorkshopEmergencyDashboardState extends State<WorkshopEmergencyDashboard> {
   final _db = Supabase.instance.client;
   final _notifs = NotificationsService();
-  final _tracker = LiveProgressTracker();
+  final _tracker = LiveProgressTracker.instance;
   late int _tab = widget.initialTab;
 
   List<({int id, String label})> get _menuItems {
@@ -118,8 +116,7 @@ class _WorkshopEmergencyDashboardState
       drawer: isWide ? null : Drawer(child: _buildSidebar(isDrawer: true)),
       body: Row(
         children: [
-          if (isWide)
-            SizedBox(width: 240, child: _buildSidebar(isDrawer: false)),
+          if (isWide) SizedBox(width: 240, child: _buildSidebar(isDrawer: false)),
           Expanded(
             child: AnimatedSwitcher(
               duration: const Duration(milliseconds: 240),
@@ -204,8 +201,7 @@ class _WorkshopEmergencyDashboardState
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 200),
                   width: double.infinity,
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                   decoration: BoxDecoration(
                     color: active ? AppColors.orange : Colors.transparent,
                     borderRadius: BorderRadius.circular(12),
@@ -233,14 +229,14 @@ class _WorkshopEmergencyDashboardState
     return StreamBuilder<List<Map<String, dynamic>>>(
       stream: _db
           .from('mechanic_requests')
-          .stream(primaryKey: ['id']).order('created_at', ascending: false),
+          .stream(primaryKey: ['id'])
+          .order('created_at', ascending: false),
       builder: (context, reqSnap) {
         final reqs = (reqSnap.data ?? [])
             .map(DbMechanicRequest.fromMap)
             .where((r) => showWinch || r.serviceType != 'winch')
             .toList();
-        final activeEmergencies =
-            reqs.where((r) => r.status != 'completed').length;
+        final activeEmergencies = reqs.where((r) => r.status != 'completed').length;
 
         return StreamBuilder<List<Map<String, dynamic>>>(
           stream: _db
@@ -261,16 +257,15 @@ class _WorkshopEmergencyDashboardState
                     children: [
                       const Text(
                         'نظرة عامة على اليوم',
-                        style: TextStyle(
-                            fontSize: 22, fontWeight: FontWeight.bold),
+                        style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
                       ),
                       ElevatedButton.icon(
                         style: ElevatedButton.styleFrom(
                           backgroundColor: AppColors.orange,
                           foregroundColor: Colors.white,
                         ),
-                        onPressed: () => Navigator.push(
-                            context, animatedRoute(const AddProductScreen())),
+                        onPressed: () =>
+                            Navigator.push(context, animatedRoute(const AddProductScreen())),
                         icon: const Icon(Icons.add, size: 18),
                         label: const Text('إضافة قطعة'),
                       ),
@@ -279,9 +274,7 @@ class _WorkshopEmergencyDashboardState
                   const SizedBox(height: 18),
                   LayoutBuilder(
                     builder: (context, constraints) {
-                      final cols = constraints.maxWidth > 700
-                          ? (showPayments ? 4 : 3)
-                          : 2;
+                      final cols = constraints.maxWidth > 700 ? (showPayments ? 4 : 3) : 2;
                       return GridView.count(
                         crossAxisCount: cols,
                         shrinkWrap: true,
@@ -292,8 +285,7 @@ class _WorkshopEmergencyDashboardState
                         children: [
                           _kpiCard('طلبات طوارئ نشطة', '$activeEmergencies'),
                           _kpiCard('حجوزات الورشة اليوم', '${appts.length}'),
-                          _kpiCard('سعة الورشة القصوى',
-                              '${widget.profile.maxCarCapacity}'),
+                          _kpiCard('سعة الورشة القصوى', '${widget.profile.maxCarCapacity}'),
                           if (showPayments)
                             _kpiCard(
                               'رصيد المحفظة (د.أ)',
@@ -317,8 +309,7 @@ class _WorkshopEmergencyDashboardState
                       children: [
                         const Text(
                           'طلبات الطوارئ المباشرة',
-                          style: TextStyle(
-                              fontSize: 16, fontWeight: FontWeight.bold),
+                          style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                         ),
                         const SizedBox(height: 12),
                         SingleChildScrollView(
@@ -328,8 +319,7 @@ class _WorkshopEmergencyDashboardState
                               const DataColumn(label: Text('الطلب')),
                               const DataColumn(label: Text('النوع')),
                               const DataColumn(label: Text('الموقع')),
-                              if (showPayments)
-                                const DataColumn(label: Text('المبلغ')),
+                              if (showPayments) const DataColumn(label: Text('المبلغ')),
                               const DataColumn(label: Text('الحالة')),
                             ],
                             rows: reqs.take(5).map((r) {
@@ -337,17 +327,12 @@ class _WorkshopEmergencyDashboardState
                                 DataCell(
                                   Text(
                                     '#${r.id.substring(0, 5)}',
-                                    style: const TextStyle(
-                                        fontWeight: FontWeight.bold),
+                                    style: const TextStyle(fontWeight: FontWeight.bold),
                                   ),
                                 ),
-                                DataCell(Text(r.serviceType == 'winch'
-                                    ? 'ونش'
-                                    : 'ميكانيكي')),
-                                DataCell(
-                                    Text(r.dropoffAddress ?? 'موقع العميل')),
-                                if (showPayments)
-                                  DataCell(Text('${r.totalAmount} د.أ')),
+                                DataCell(Text(r.serviceType == 'winch' ? 'ونش' : 'ميكانيكي')),
+                                DataCell(Text(r.dropoffAddress ?? 'موقع العميل')),
+                                if (showPayments) DataCell(Text('${r.totalAmount} د.أ')),
                                 DataCell(_statusBadge(r.status)),
                               ]);
                             }).toList(),
@@ -364,21 +349,17 @@ class _WorkshopEmergencyDashboardState
                         : appts
                             .take(4)
                             .map((a) => Padding(
-                                  padding:
-                                      const EdgeInsets.symmetric(vertical: 6),
+                                  padding: const EdgeInsets.symmetric(vertical: 6),
                                   child: Row(
-                                    mainAxisAlignment:
-                                        MainAxisAlignment.spaceBetween,
+                                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                     children: [
                                       Text(
                                         '${a['appointment_time']} · ${a['appointment_date']}',
-                                        style: const TextStyle(
-                                            fontWeight: FontWeight.w600),
+                                        style: const TextStyle(fontWeight: FontWeight.w600),
                                       ),
                                       Text(
                                         a['service_description'] ?? '',
-                                        style: const TextStyle(
-                                            color: AppColors.textSecondary),
+                                        style: const TextStyle(color: AppColors.textSecondary),
                                       ),
                                     ],
                                   ),
@@ -406,13 +387,9 @@ class _WorkshopEmergencyDashboardState
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Text(title,
-              style: const TextStyle(
-                  color: AppColors.textSecondary, fontSize: 12)),
+          Text(title, style: const TextStyle(color: AppColors.textSecondary, fontSize: 12)),
           const SizedBox(height: 8),
-          Text(val,
-              style:
-                  const TextStyle(fontSize: 22, fontWeight: FontWeight.w800)),
+          Text(val, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800)),
         ],
       ),
     );
@@ -422,12 +399,10 @@ class _WorkshopEmergencyDashboardState
     if (status == 'accepted') {
       return Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
-        decoration: BoxDecoration(
-            color: AppColors.navy, borderRadius: BorderRadius.circular(20)),
+        decoration: BoxDecoration(color: AppColors.navy, borderRadius: BorderRadius.circular(20)),
         child: const Text(
           'في الطريق',
-          style: TextStyle(
-              color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
+          style: TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
         ),
       );
     }
@@ -441,24 +416,18 @@ class _WorkshopEmergencyDashboardState
         ),
         child: const Text(
           'بانتظار التعيين',
-          style: TextStyle(
-              color: AppColors.orange,
-              fontSize: 11,
-              fontWeight: FontWeight.bold),
+          style: TextStyle(color: AppColors.orange, fontSize: 11, fontWeight: FontWeight.bold),
         ),
       );
     }
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
-      decoration: BoxDecoration(
-          color: AppColors.placeholder,
-          borderRadius: BorderRadius.circular(20)),
+      decoration:
+          BoxDecoration(color: AppColors.placeholder, borderRadius: BorderRadius.circular(20)),
       child: const Text(
         'مكتمل',
         style: TextStyle(
-            color: AppColors.textSecondary,
-            fontSize: 11,
-            fontWeight: FontWeight.bold),
+            color: AppColors.textSecondary, fontSize: 11, fontWeight: FontWeight.bold),
       ),
     );
   }
@@ -475,9 +444,7 @@ class _WorkshopEmergencyDashboardState
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(title,
-              style:
-                  const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+          Text(title, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
           const SizedBox(height: 12),
           ...children,
         ],
@@ -492,14 +459,14 @@ class _WorkshopEmergencyDashboardState
     return StreamBuilder<List<Map<String, dynamic>>>(
       stream: _db
           .from('mechanic_requests')
-          .stream(primaryKey: ['id']).order('created_at', ascending: false),
+          .stream(primaryKey: ['id'])
+          .order('created_at', ascending: false),
       builder: (context, snap) {
         if (!snap.hasData) {
           return const Center(child: CircularProgressIndicator());
         }
         final reqs = snap.data!.map(DbMechanicRequest.fromMap).where((r) {
-          if (r.serviceType == 'winch' &&
-              (!showWinch || !widget.profile.hasTowing)) {
+          if (r.serviceType == 'winch' && (!showWinch || !widget.profile.hasTowing)) {
             return false;
           }
           return true;
@@ -525,16 +492,15 @@ class _WorkshopEmergencyDashboardState
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
                         Text(
-                          r.serviceType == 'winch'
-                              ? 'طلب ونش'
-                              : 'ميكانيكي طوارئ',
-                          style: const TextStyle(
-                              fontWeight: FontWeight.bold, fontSize: 15),
+                          r.serviceType == 'winch' ? 'طلب ونش' : 'ميكانيكي طوارئ',
+                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
                         ),
                         _statusBadge(r.status),
                       ],
                     ),
                     Text('الوجهة: ${r.dropoffAddress ?? "لوكيشن العميل"}'),
+                    Text('المرحلة: ${r.progressStep}',
+                        style: const TextStyle(color: AppColors.textSecondary, fontSize: 12)),
                     if (showPayments) Text('المبلغ: ${r.totalAmount} د.أ'),
                     const SizedBox(height: 10),
                     if (r.status == 'pending')
@@ -545,6 +511,43 @@ class _WorkshopEmergencyDashboardState
                         ),
                         onPressed: () => _acceptEmergency(r),
                         child: const Text('قبول الطلب والانطلاق'),
+                      ),
+                    if (r.status == 'accepted' && r.mechanicId == widget.profile.id)
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          if (r.progressStep == 'on_the_way')
+                            ElevatedButton(
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: AppColors.navy,
+                                foregroundColor: Colors.white,
+                              ),
+                              onPressed: () {
+                                if (r.userId != null) {
+                                  _tracker.markEmergencyArrived(
+                                    requestId: r.id,
+                                    customerUserId: r.userId!,
+                                    serviceType: r.serviceType,
+                                  );
+                                }
+                              },
+                              child: const Text('تأكيد الوصول للعميل'),
+                            ),
+                          ElevatedButton(
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: AppColors.success,
+                              foregroundColor: Colors.white,
+                            ),
+                            onPressed: () async {
+                              await _db.from('mechanic_requests').update({
+                                'status': 'completed',
+                                'progress_step': 'completed',
+                              }).eq('id', r.id);
+                            },
+                            child: const Text('إنهاء الطلب'),
+                          ),
+                        ],
                       ),
                   ],
                 ),
@@ -569,8 +572,7 @@ class _WorkshopEmergencyDashboardState
         context: context,
         builder: (ctx) => AlertDialog(
           title: const Text('وجهة الونش'),
-          content: const Text(
-              'هل تريد الذهاب بالسيارة إلى ورشتك أم إلى لوكيشن العميل (Drop-off)؟'),
+          content: const Text('هل تريد الذهاب بالسيارة إلى ورشتك أم إلى لوكيشن العميل (Drop-off)؟'),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(ctx, false),
@@ -615,7 +617,7 @@ class _WorkshopEmergencyDashboardState
         referenceId: r.id,
       );
       if (r.pickupLatitude != null && r.pickupLongitude != null) {
-        _tracker.startTrackingEmergencyArrival(
+        await _tracker.startTrackingEmergencyArrival(
           requestId: r.id,
           customerUserId: r.userId!,
           serviceType: r.serviceType,
@@ -651,8 +653,7 @@ class _WorkshopEmergencyDashboardState
             final a = list[i];
             final date = a['appointment_date'] as String;
             final acceptedOnDate = list
-                .where((x) =>
-                    x['appointment_date'] == date && x['status'] == 'accepted')
+                .where((x) => x['appointment_date'] == date && x['status'] == 'accepted')
                 .length;
             final isFull = acceptedOnDate >= widget.profile.maxCarCapacity;
             final step = a['progress_step'] as String? ?? 'pending';
@@ -666,14 +667,12 @@ class _WorkshopEmergencyDashboardState
                   children: [
                     Text(
                       '${a['appointment_date']} · ${a['appointment_time']}',
-                      style: const TextStyle(
-                          fontWeight: FontWeight.bold, fontSize: 15),
+                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
                     ),
                     Text(a['service_description'] ?? ''),
                     Text(
                       'الحالة: ${a['status']} | المرحلة: $step',
-                      style: const TextStyle(
-                          color: AppColors.textSecondary, fontSize: 12),
+                      style: const TextStyle(color: AppColors.textSecondary, fontSize: 12),
                     ),
                     const SizedBox(height: 10),
                     if (a['status'] == 'pending')
@@ -714,9 +713,7 @@ class _WorkshopEmergencyDashboardState
                           ActionChip(
                             backgroundColor: AppColors.orange,
                             label: Text(
-                              showPayments
-                                  ? 'جاهزة للتسليم + فاتورة'
-                                  : 'جاهزة للتسليم',
+                              showPayments ? 'جاهزة للتسليم + فاتورة' : 'جاهزة للتسليم',
                               style: const TextStyle(color: Colors.white),
                             ),
                             onPressed: () => _finishAndBill(a),
@@ -740,8 +737,7 @@ class _WorkshopEmergencyDashboardState
       label: Text(label),
       selected: active,
       selectedColor: AppColors.navy,
-      labelStyle:
-          TextStyle(color: active ? Colors.white : AppColors.textPrimary),
+      labelStyle: TextStyle(color: active ? Colors.white : AppColors.textPrimary),
       onSelected: (_) async {
         await _db
             .from('workshop_appointments')
@@ -759,22 +755,14 @@ class _WorkshopEmergencyDashboardState
     await _notifs.sendNotification(
       targetUserId: a['user_id'],
       title: 'تم قبول موعد الورشة',
-      body:
-          'موعدك مؤكد بتاريخ ${a['appointment_date']} الساعة ${a['appointment_time']}.',
+      body: 'موعدك مؤكد بتاريخ ${a['appointment_date']} الساعة ${a['appointment_time']}.',
       type: 'order_accepted',
       referenceId: a['id'],
     );
   }
 
   Future<void> _proposeReschedule(Map<String, dynamic> a) async {
-    final hours = [
-      '09:00 ص',
-      '10:00 ص',
-      '11:00 ص',
-      '01:00 م',
-      '03:00 م',
-      '05:00 م'
-    ];
+    final hours = ['09:00 ص', '10:00 ص', '11:00 ص', '01:00 م', '03:00 م', '05:00 م'];
     String chosenHour = hours.first;
     DateTime chosenDate = DateTime.now().add(const Duration(days: 1));
 
@@ -798,14 +786,11 @@ class _WorkshopEmergencyDashboardState
                     setS(() => chosenDate = d);
                   }
                 },
-                child:
-                    Text('التاريخ: ${chosenDate.toString().split(' ').first}'),
+                child: Text('التاريخ: ${chosenDate.toString().split(' ').first}'),
               ),
               DropdownButton<String>(
                 value: chosenHour,
-                items: hours
-                    .map((h) => DropdownMenuItem(value: h, child: Text(h)))
-                    .toList(),
+                items: hours.map((h) => DropdownMenuItem(value: h, child: Text(h))).toList(),
                 onChanged: (v) => setS(() => chosenHour = v!),
               ),
             ],
@@ -865,8 +850,7 @@ class _WorkshopEmergencyDashboardState
         content: TextField(
           controller: amountCtrl,
           keyboardType: TextInputType.number,
-          decoration:
-              const InputDecoration(labelText: 'أدخل المبلغ المطلوب (د.أ)'),
+          decoration: const InputDecoration(labelText: 'أدخل المبلغ المطلوب (د.أ)'),
         ),
         actions: [
           ElevatedButton(
@@ -888,8 +872,7 @@ class _WorkshopEmergencyDashboardState
               await _notifs.sendNotification(
                 targetUserId: a['user_id'],
                 title: 'سيارتك جاهزة للتسليم!',
-                body:
-                    'انتهى تصليح السيارة، قيمة الفاتورة $amt د.أ. يمكنك الدفع الآن عبر MEPS.',
+                body: 'انتهى تصليح السيارة، قيمة الفاتورة $amt د.أ. يمكنك الدفع الآن عبر MEPS.',
                 type: 'car_ready',
                 referenceId: a['id'],
               );
@@ -943,8 +926,7 @@ class _WorkshopEmergencyDashboardState
                     const SizedBox(height: 10),
                     Text(
                       'إجمالي المبيعات (قبل العمولة): ${gross.toStringAsFixed(2)} د.أ  |  العمولات: ${comm.toStringAsFixed(2)} د.أ',
-                      style:
-                          const TextStyle(color: Colors.white70, fontSize: 12),
+                      style: const TextStyle(color: Colors.white70, fontSize: 12),
                     ),
                   ],
                 ),
