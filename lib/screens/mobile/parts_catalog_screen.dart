@@ -5,6 +5,7 @@ import '../../models/db_models.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/animations.dart';
 import 'book_workshop_screen.dart';
+import 'live_store_home_screen.dart';
 
 class PartsCatalogScreen extends StatefulWidget {
   final String selectedCarName;
@@ -26,77 +27,6 @@ class _PartsCatalogScreenState extends State<PartsCatalogScreen> {
   String _selectedCat = 'الكل';
 
   List<String> get _cats => ['الكل', ...CarPartsCatalogAZ.mainCategories];
-
-  Future<void> _pickWorkshopForInstall() async {
-    final rows = await _db.from('customers').select().eq('role', 'mechanic');
-    final workshops = rows.map<CustomerProfile>(CustomerProfile.fromMap).toList();
-    if (!mounted) {
-      return;
-    }
-
-    showModalBottomSheet(
-      context: context,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (_) => Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('اختر ورشة لتركيب القطعة',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 10),
-            if (workshops.isEmpty)
-              const Padding(
-                padding: EdgeInsets.all(24),
-                child: Center(child: Text('لا توجد ورش مسجلة حالياً')),
-              )
-            else
-              ...workshops.map((w) => ListTile(
-                    leading: const Icon(Icons.build_circle, color: AppColors.orange),
-                    title: Text(w.fullName ?? 'ورشة صيانة'),
-                    subtitle: Text('${w.workshopAddress ?? ""} · ${w.openingHours}'),
-                    onTap: () {
-                      Navigator.pop(context);
-                      Navigator.push(
-                        context,
-                        animatedRoute(BookWorkshopScreen(workshop: w)),
-                      );
-                    },
-                  )),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Future<void> _contactSeller(Map<String, dynamic> p) async {
-    await _db.rpc('increment_product_click', params: {'p_id': p['id']});
-    await _db.rpc('increment_product_view', params: {'p_id': p['id']});
-    final seller = await _db
-        .from('customers')
-        .select('full_name, phone')
-        .eq('id', p['user_id'])
-        .maybeSingle();
-    if (!mounted) return;
-
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(p['title'] ?? ''),
-        content: Text(
-          'البائع: ${seller?['full_name'] ?? 'التاجر'}\n'
-          'رقم الهاتف: ${seller?['phone'] ?? 'غير متوفر'}\n'
-          'السعر: ${p['price']} د.أ',
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('إغلاق')),
-        ],
-      ),
-    );
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -190,8 +120,8 @@ class _PartsCatalogScreenState extends State<PartsCatalogScreen> {
                 GridView.builder(
                   shrinkWrap: true,
                   physics: const NeverScrollableScrollPhysics(),
-                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: 2,
+                  gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+                    maxCrossAxisExtent: 230,
                     mainAxisSpacing: 12,
                     crossAxisSpacing: 12,
                     childAspectRatio: 0.74,
@@ -203,79 +133,85 @@ class _PartsCatalogScreenState extends State<PartsCatalogScreen> {
 
                     return FadeSlideIn(
                       index: i,
-                      child: Container(
-                        padding: const EdgeInsets.all(10),
-                        decoration: BoxDecoration(
-                          color: AppColors.surface,
-                          borderRadius: BorderRadius.circular(16),
-                          border: Border.all(color: AppColors.border),
+                      child: BounceTap(
+                        onTap: () => Navigator.push(
+                          context,
+                          animatedRoute(ProductDetailsScreen(
+                            product: p,
+                            viewerProfile: widget.viewerProfile,
+                          )),
                         ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Container(
-                              height: 92,
-                              width: double.infinity,
-                              decoration: BoxDecoration(
-                                color: AppColors.placeholder,
-                                borderRadius: BorderRadius.circular(12),
-                                image: imgs.isNotEmpty
-                                    ? DecorationImage(
-                                        image: NetworkImage(imgs.first),
-                                        fit: BoxFit.cover,
-                                      )
+                        child: Container(
+                          padding: const EdgeInsets.all(10),
+                          decoration: BoxDecoration(
+                            color: AppColors.surface,
+                            borderRadius: BorderRadius.circular(16),
+                            border: Border.all(color: AppColors.border),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Container(
+                                height: 92,
+                                width: double.infinity,
+                                decoration: BoxDecoration(
+                                  color: AppColors.placeholder,
+                                  borderRadius: BorderRadius.circular(12),
+                                  image: imgs.isNotEmpty
+                                      ? DecorationImage(
+                                          image: NetworkImage(imgs.first),
+                                          fit: BoxFit.cover,
+                                        )
+                                      : null,
+                                ),
+                                child: imgs.isEmpty
+                                    ? const Icon(Icons.settings_outlined,
+                                        color: AppColors.textSecondary, size: 32)
                                     : null,
                               ),
-                              child: imgs.isEmpty
-                                  ? const Icon(Icons.settings_outlined,
-                                      color: AppColors.textSecondary, size: 32)
-                                  : null,
-                            ),
-                            const SizedBox(height: 8),
-                            Text(
-                              p['title'] ?? '',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
-                            ),
-                            Text(
-                              '${p['car_name']} · ${p['car_model']}',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                  color: AppColors.textSecondary, fontSize: 11),
-                            ),
-                            const Spacer(),
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              children: [
-                                Text(
-                                  '${p['price']} د.أ',
-                                  style: const TextStyle(
-                                      fontWeight: FontWeight.bold, fontSize: 14),
-                                ),
-                                BounceTap(
-                                  onTap: () => _contactSeller(p),
-                                  child: Container(
+                              const SizedBox(height: 8),
+                              Text(
+                                p['title'] ?? '',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                              ),
+                              Text(
+                                '${p['car_name']} · ${p['car_model']}',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                    color: AppColors.textSecondary, fontSize: 11),
+                              ),
+                              const Spacer(),
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                children: [
+                                  Text(
+                                    '${p['price']} د.أ',
+                                    style: const TextStyle(
+                                        fontWeight: FontWeight.bold, fontSize: 14),
+                                  ),
+                                  Container(
                                     padding:
-                                        const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+                                        const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                                     decoration: BoxDecoration(
                                       color: AppColors.navy,
                                       borderRadius: BorderRadius.circular(10),
                                     ),
                                     child: const Text(
-                                      'تواصل',
+                                      'التفاصيل',
                                       style: TextStyle(
                                         color: Colors.white,
-                                        fontSize: 12,
+                                        fontSize: 11,
                                         fontWeight: FontWeight.bold,
                                       ),
                                     ),
                                   ),
-                                ),
-                              ],
-                            ),
-                          ],
+                                ],
+                              ),
+                            ],
+                          ),
                         ),
                       ),
                     );
@@ -301,7 +237,14 @@ class _PartsCatalogScreenState extends State<PartsCatalogScreen> {
                     SizedBox(
                       width: double.infinity,
                       child: OutlinedButton(
-                        onPressed: _pickWorkshopForInstall,
+                        onPressed: () {
+                          Navigator.push(
+                            context,
+                            animatedRoute(
+                              SelectWorkshopScreen(viewerProfile: widget.viewerProfile),
+                            ),
+                          );
+                        },
                         style: OutlinedButton.styleFrom(
                           side: const BorderSide(color: AppColors.navy, width: 1.4),
                           padding: const EdgeInsets.symmetric(vertical: 14),

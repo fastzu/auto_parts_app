@@ -57,53 +57,10 @@ class _LiveStoreHomeScreenState extends State<LiveStoreHomeScreen> {
     );
   }
 
-  Future<void> _pickWorkshopForInstall() async {
-    final rows = await _db.from('customers').select().eq('role', 'mechanic');
-    final workshops =
-        rows.map<CustomerProfile>(CustomerProfile.fromMap).toList();
-    if (!mounted) {
-      return;
-    }
-
-    showModalBottomSheet(
-      context: context,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (_) => Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'اختر ورشة لتركيب القطعة',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 10),
-            if (workshops.isEmpty)
-              const Padding(
-                padding: EdgeInsets.all(24),
-                child: Center(child: Text('لا توجد ورش مسجلة حالياً')),
-              )
-            else
-              ...workshops.map((w) => ListTile(
-                    leading:
-                        const Icon(Icons.build_circle, color: AppColors.orange),
-                    title: Text(w.fullName ?? 'ورشة صيانة'),
-                    subtitle:
-                        Text('${w.workshopAddress ?? ""} · ${w.openingHours}'),
-                    onTap: () {
-                      Navigator.pop(context);
-                      Navigator.push(
-                        context,
-                        animatedRoute(BookWorkshopScreen(workshop: w)),
-                      );
-                    },
-                  )),
-          ],
-        ),
-      ),
+  void _openWorkshopSelector() {
+    Navigator.push(
+      context,
+      animatedRoute(SelectWorkshopScreen(viewerProfile: widget.profile)),
     );
   }
 
@@ -131,17 +88,14 @@ class _LiveStoreHomeScreenState extends State<LiveStoreHomeScreen> {
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     const Text('اختر سيارتك',
-                        style: TextStyle(
-                            fontSize: 18, fontWeight: FontWeight.bold)),
+                        style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
                     TextButton(
                       onPressed: () {
                         setState(() => _filterByCar = false);
                         Navigator.pop(ctx);
                       },
                       child: const Text('عرض جميع السيارات',
-                          style: TextStyle(
-                              color: AppColors.orange,
-                              fontWeight: FontWeight.bold)),
+                          style: TextStyle(color: AppColors.orange, fontWeight: FontWeight.bold)),
                     ),
                   ],
                 ),
@@ -153,8 +107,7 @@ class _LiveStoreHomeScreenState extends State<LiveStoreHomeScreen> {
                     labelText: '1. اختر الشركة (جميع شركات الأردن)',
                     filled: true,
                     fillColor: AppColors.background,
-                    border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(14)),
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
                   ),
                   items: JordanCarsCatalog.brands
                       .map((b) => DropdownMenuItem(value: b, child: Text(b)))
@@ -165,8 +118,7 @@ class _LiveStoreHomeScreenState extends State<LiveStoreHomeScreen> {
                     }
                     setModal(() {
                       tempBrand = val;
-                      tempModel =
-                          JordanCarsCatalog.brandsAndModels[tempBrand]!.first;
+                      tempModel = JordanCarsCatalog.brandsAndModels[tempBrand]!.first;
                     });
                   },
                 ),
@@ -179,8 +131,7 @@ class _LiveStoreHomeScreenState extends State<LiveStoreHomeScreen> {
                     labelText: '2. اختر الموديل',
                     filled: true,
                     fillColor: AppColors.background,
-                    border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(14)),
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
                   ),
                   items: models
                       .map((m) => DropdownMenuItem(value: m, child: Text(m)))
@@ -199,8 +150,7 @@ class _LiveStoreHomeScreenState extends State<LiveStoreHomeScreen> {
                     labelText: '3. سنة الصنع',
                     filled: true,
                     fillColor: AppColors.background,
-                    border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(14)),
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
                   ),
                   items: JordanCarsCatalog.years
                       .map((y) => DropdownMenuItem(value: y, child: Text(y)))
@@ -219,8 +169,7 @@ class _LiveStoreHomeScreenState extends State<LiveStoreHomeScreen> {
                       backgroundColor: AppColors.orange,
                       foregroundColor: Colors.white,
                       padding: const EdgeInsets.symmetric(vertical: 14),
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(14)),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                     ),
                     onPressed: () {
                       setState(() {
@@ -267,7 +216,6 @@ class _LiveStoreHomeScreenState extends State<LiveStoreHomeScreen> {
             if (p['is_sold'] == true) {
               return false;
             }
-
             final catOk = _selectedCat == 'الكل' ||
                 (p['main_category'] ?? '').toString().contains(_selectedCat) ||
                 (p['sub_category'] ?? '').toString().contains(_selectedCat);
@@ -278,8 +226,7 @@ class _LiveStoreHomeScreenState extends State<LiveStoreHomeScreen> {
               final model = _selectedModel.toLowerCase();
               final pCar = (p['car_name'] ?? '').toString().toLowerCase();
               final pYear = (p['car_model'] ?? '').toString();
-              final matchesName =
-                  pCar.contains(cleanBrand) && pCar.contains(model);
+              final matchesName = pCar.contains(cleanBrand) && pCar.contains(model);
               final matchesYear = _selectedYear == 'جميع الموديلات' ||
                   pYear == 'جميع الموديلات' ||
                   pYear.contains(_selectedYear);
@@ -290,24 +237,16 @@ class _LiveStoreHomeScreenState extends State<LiveStoreHomeScreen> {
             final searchOk = q.isEmpty ||
                 (p['title'] ?? '').toString().toLowerCase().contains(q) ||
                 (p['car_name'] ?? '').toString().toLowerCase().contains(q) ||
-                (p['sub_category'] ?? '')
-                    .toString()
-                    .toLowerCase()
-                    .contains(q) ||
-                (p['chassis_number'] ?? '')
-                    .toString()
-                    .toLowerCase()
-                    .contains(q);
+                (p['sub_category'] ?? '').toString().toLowerCase().contains(q) ||
+                (p['chassis_number'] ?? '').toString().toLowerCase().contains(q);
 
             return catOk && carOk && searchOk;
           }).toList();
 
           final bestSellers = List<Map<String, dynamic>>.from(all)
             ..sort((a, b) {
-              final scoreA =
-                  ((a['sales_count'] ?? 0) * 10) + (a['clicks_count'] ?? 0);
-              final scoreB =
-                  ((b['sales_count'] ?? 0) * 10) + (b['clicks_count'] ?? 0);
+              final scoreA = ((a['sales_count'] ?? 0) * 10) + (a['clicks_count'] ?? 0);
+              final scoreB = ((b['sales_count'] ?? 0) * 10) + (b['clicks_count'] ?? 0);
               return scoreB.compareTo(scoreA);
             });
 
@@ -330,8 +269,7 @@ class _LiveStoreHomeScreenState extends State<LiveStoreHomeScreen> {
                           const SizedBox(width: 6),
                           const Text(
                             'أوتو بارتس برو',
-                            style: TextStyle(
-                                fontSize: 21, fontWeight: FontWeight.w800),
+                            style: TextStyle(fontSize: 21, fontWeight: FontWeight.w800),
                           ),
                         ],
                       ),
@@ -370,35 +308,28 @@ class _LiveStoreHomeScreenState extends State<LiveStoreHomeScreen> {
                         onChanged: (v) => setState(() => _search = v),
                         decoration: InputDecoration(
                           hintText: 'ابحث باسم القطعة أو رقمها أو السيارة',
-                          hintStyle: const TextStyle(
-                              color: AppColors.textSecondary, fontSize: 13),
+                          hintStyle: const TextStyle(color: AppColors.textSecondary, fontSize: 13),
                           filled: true,
                           fillColor: AppColors.surface,
-                          contentPadding: const EdgeInsets.symmetric(
-                              horizontal: 16, vertical: 14),
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
                           border: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(14),
-                            borderSide:
-                                const BorderSide(color: AppColors.border),
+                            borderSide: const BorderSide(color: AppColors.border),
                           ),
                           enabledBorder: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(14),
-                            borderSide:
-                                const BorderSide(color: AppColors.border),
+                            borderSide: const BorderSide(color: AppColors.border),
                           ),
                         ),
                       ),
                       const SizedBox(height: 10),
                       Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 14, vertical: 12),
+                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
                         decoration: BoxDecoration(
                           color: AppColors.surface,
                           borderRadius: BorderRadius.circular(14),
                           border: Border.all(
-                            color: _filterByCar
-                                ? AppColors.orange
-                                : AppColors.border,
+                            color: _filterByCar ? AppColors.orange : AppColors.border,
                           ),
                         ),
                         child: Row(
@@ -409,9 +340,7 @@ class _LiveStoreHomeScreenState extends State<LiveStoreHomeScreen> {
                                 onTap: _showCarPicker,
                                 child: Text(
                                   'القطع المناسبة لـ $_selectedCarLabel',
-                                  style: const TextStyle(
-                                      fontWeight: FontWeight.w600,
-                                      fontSize: 13),
+                                  style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
                                 ),
                               ),
                             ),
@@ -443,26 +372,19 @@ class _LiveStoreHomeScreenState extends State<LiveStoreHomeScreen> {
                               onTap: () => setState(() => _selectedCat = c),
                               child: AnimatedContainer(
                                 duration: const Duration(milliseconds: 200),
-                                padding:
-                                    const EdgeInsets.symmetric(horizontal: 16),
+                                padding: const EdgeInsets.symmetric(horizontal: 16),
                                 alignment: Alignment.center,
                                 decoration: BoxDecoration(
-                                  color: active
-                                      ? AppColors.navy
-                                      : AppColors.surface,
+                                  color: active ? AppColors.navy : AppColors.surface,
                                   borderRadius: BorderRadius.circular(20),
                                   border: Border.all(
-                                    color: active
-                                        ? AppColors.navy
-                                        : AppColors.border,
+                                    color: active ? AppColors.navy : AppColors.border,
                                   ),
                                 ),
                                 child: Text(
                                   c,
                                   style: TextStyle(
-                                    color: active
-                                        ? Colors.white
-                                        : AppColors.textPrimary,
+                                    color: active ? Colors.white : AppColors.textPrimary,
                                     fontWeight: FontWeight.w600,
                                     fontSize: 12,
                                   ),
@@ -484,8 +406,7 @@ class _LiveStoreHomeScreenState extends State<LiveStoreHomeScreen> {
                     children: [
                       const Text(
                         'الأكثر مبيعاً',
-                        style: TextStyle(
-                            fontSize: 16, fontWeight: FontWeight.bold),
+                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                       ),
                       GestureDetector(
                         onTap: _openCatalog,
@@ -506,14 +427,12 @@ class _LiveStoreHomeScreenState extends State<LiveStoreHomeScreen> {
                 child: SizedBox(
                   height: 230,
                   child: bestSellers.isEmpty
-                      ? const Center(
-                          child: Text('لا توجد قطع حالياً لهذه السيارة'))
+                      ? const Center(child: Text('لا توجد قطع حالياً لهذه السيارة'))
                       : ListView.separated(
                           padding: const EdgeInsets.symmetric(horizontal: 16),
                           scrollDirection: Axis.horizontal,
                           itemCount: bestSellers.take(8).length,
-                          separatorBuilder: (_, __) =>
-                              const SizedBox(width: 12),
+                          separatorBuilder: (_, __) => const SizedBox(width: 12),
                           itemBuilder: (_, i) => SizedBox(
                             width: 164,
                             child: FadeSlideIn(
@@ -532,8 +451,7 @@ class _LiveStoreHomeScreenState extends State<LiveStoreHomeScreen> {
                     children: [
                       const Text(
                         'وصل حديثاً',
-                        style: TextStyle(
-                            fontSize: 16, fontWeight: FontWeight.bold),
+                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                       ),
                       GestureDetector(
                         onTap: _openCatalog,
@@ -553,15 +471,14 @@ class _LiveStoreHomeScreenState extends State<LiveStoreHomeScreen> {
               SliverPadding(
                 padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
                 sliver: SliverGrid(
-                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: 2,
+                  gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+                    maxCrossAxisExtent: 230,
                     mainAxisSpacing: 12,
                     crossAxisSpacing: 12,
-                    childAspectRatio: 0.72,
+                    childAspectRatio: 0.74,
                   ),
                   delegate: SliverChildBuilderDelegate(
-                    (_, i) => FadeSlideIn(
-                        index: i, child: _card(newArrivals[i], 'جديد')),
+                    (_, i) => FadeSlideIn(index: i, child: _card(newArrivals[i], 'جديد')),
                     childCount: newArrivals.length,
                   ),
                 ),
@@ -581,23 +498,20 @@ class _LiveStoreHomeScreenState extends State<LiveStoreHomeScreen> {
                       children: [
                         const Text(
                           'تركيب في ورشة؟',
-                          style: TextStyle(
-                              fontWeight: FontWeight.bold, fontSize: 15),
+                          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
                         ),
                         const SizedBox(height: 4),
                         const Text(
                           'احجز موعد تركيب القطعة في أقرب ورشة معتمدة',
-                          style: TextStyle(
-                              color: AppColors.textSecondary, fontSize: 12),
+                          style: TextStyle(color: AppColors.textSecondary, fontSize: 12),
                         ),
                         const SizedBox(height: 12),
                         SizedBox(
                           width: double.infinity,
                           child: OutlinedButton(
-                            onPressed: _pickWorkshopForInstall,
+                            onPressed: _openWorkshopSelector,
                             style: OutlinedButton.styleFrom(
-                              side: const BorderSide(
-                                  color: AppColors.navy, width: 1.4),
+                              side: const BorderSide(color: AppColors.navy, width: 1.4),
                               padding: const EdgeInsets.symmetric(vertical: 14),
                               shape: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(12),
@@ -647,8 +561,7 @@ class _LiveStoreHomeScreenState extends State<LiveStoreHomeScreen> {
                     color: AppColors.placeholder,
                     borderRadius: BorderRadius.circular(12),
                     image: imgs.isNotEmpty
-                        ? DecorationImage(
-                            image: NetworkImage(imgs.first), fit: BoxFit.cover)
+                        ? DecorationImage(image: NetworkImage(imgs.first), fit: BoxFit.cover)
                         : null,
                   ),
                   child: imgs.isEmpty
@@ -663,8 +576,7 @@ class _LiveStoreHomeScreenState extends State<LiveStoreHomeScreen> {
                   top: 6,
                   right: 6,
                   child: Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                     decoration: BoxDecoration(
                       color: AppColors.orange,
                       borderRadius: BorderRadius.circular(12),
@@ -692,8 +604,7 @@ class _LiveStoreHomeScreenState extends State<LiveStoreHomeScreen> {
               '${p['car_name']} · ${p['car_model']}',
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style:
-                  const TextStyle(color: AppColors.textSecondary, fontSize: 11),
+              style: const TextStyle(color: AppColors.textSecondary, fontSize: 11),
             ),
             const Spacer(),
             Row(
@@ -701,12 +612,10 @@ class _LiveStoreHomeScreenState extends State<LiveStoreHomeScreen> {
               children: [
                 Text(
                   '${p['price']} د.أ',
-                  style: const TextStyle(
-                      fontWeight: FontWeight.w800, fontSize: 14),
+                  style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 14),
                 ),
                 Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                   decoration: BoxDecoration(
                     color: AppColors.navy,
                     borderRadius: BorderRadius.circular(10),
@@ -764,10 +673,8 @@ class _ProductDetailsScreenState extends State<ProductDetailsScreen> {
 
   Future<void> _trackAndLoadSeller() async {
     try {
-      await _db.rpc('increment_product_click',
-          params: {'p_id': widget.product['id']});
-      await _db.rpc('increment_product_view',
-          params: {'p_id': widget.product['id']});
+      await _db.rpc('increment_product_click', params: {'p_id': widget.product['id']});
+      await _db.rpc('increment_product_view', params: {'p_id': widget.product['id']});
       final sellerMap = await _db
           .from('customers')
           .select()
@@ -775,8 +682,7 @@ class _ProductDetailsScreenState extends State<ProductDetailsScreen> {
           .maybeSingle();
       if (mounted) {
         setState(() {
-          _seller =
-              sellerMap != null ? CustomerProfile.fromMap(sellerMap) : null;
+          _seller = sellerMap != null ? CustomerProfile.fromMap(sellerMap) : null;
           _loadingSeller = false;
         });
       }
@@ -785,56 +691,6 @@ class _ProductDetailsScreenState extends State<ProductDetailsScreen> {
         setState(() => _loadingSeller = false);
       }
     }
-  }
-
-  Future<void> _pickWorkshopForInstall() async {
-    final rows = await _db.from('customers').select().eq('role', 'mechanic');
-    final workshops =
-        rows.map<CustomerProfile>(CustomerProfile.fromMap).toList();
-    if (!mounted) {
-      return;
-    }
-
-    showModalBottomSheet(
-      context: context,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (_) => Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'اختر ورشة لتركيب القطعة',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 10),
-            if (workshops.isEmpty)
-              const Padding(
-                padding: EdgeInsets.all(24),
-                child: Center(child: Text('لا توجد ورش مسجلة حالياً')),
-              )
-            else
-              ...workshops.map((w) => ListTile(
-                    leading:
-                        const Icon(Icons.build_circle, color: AppColors.orange),
-                    title: Text(w.fullName ?? 'ورشة صيانة'),
-                    subtitle:
-                        Text('${w.workshopAddress ?? ""} · ${w.openingHours}'),
-                    onTap: () {
-                      Navigator.pop(context);
-                      Navigator.push(
-                        context,
-                        animatedRoute(BookWorkshopScreen(workshop: w)),
-                      );
-                    },
-                  )),
-          ],
-        ),
-      ),
-    );
   }
 
   Future<void> _sendMessage() async {
@@ -894,8 +750,7 @@ class _ProductDetailsScreenState extends State<ProductDetailsScreen> {
                 color: AppColors.placeholder,
                 borderRadius: BorderRadius.circular(16),
               ),
-              child: const Icon(Icons.settings_outlined,
-                  size: 54, color: AppColors.textSecondary),
+              child: const Icon(Icons.settings_outlined, size: 54, color: AppColors.textSecondary),
             ),
           const SizedBox(height: 16),
           Row(
@@ -904,8 +759,7 @@ class _ProductDetailsScreenState extends State<ProductDetailsScreen> {
               Expanded(
                 child: Text(
                   p['title'] ?? '',
-                  style: const TextStyle(
-                      fontSize: 20, fontWeight: FontWeight.bold),
+                  style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
                 ),
               ),
               Text(
@@ -921,8 +775,7 @@ class _ProductDetailsScreenState extends State<ProductDetailsScreen> {
           const SizedBox(height: 6),
           Text(
             '${p['main_category'] ?? ''} · ${p['sub_category'] ?? ''}',
-            style:
-                const TextStyle(color: AppColors.textSecondary, fontSize: 13),
+            style: const TextStyle(color: AppColors.textSecondary, fontSize: 13),
           ),
           const SizedBox(height: 4),
           Text(
@@ -934,8 +787,7 @@ class _ProductDetailsScreenState extends State<ProductDetailsScreen> {
               padding: const EdgeInsets.only(top: 4),
               child: Text(
                 'رقم الشاصي: ${p['chassis_number']}',
-                style: const TextStyle(
-                    color: AppColors.textSecondary, fontSize: 12),
+                style: const TextStyle(color: AppColors.textSecondary, fontSize: 12),
               ),
             ),
           const SizedBox(height: 10),
@@ -966,24 +818,26 @@ class _ProductDetailsScreenState extends State<ProductDetailsScreen> {
                 const SizedBox(height: 4),
                 const Text(
                   'احجز موعد تركيب هذه القطعة في ورشة معتمدة',
-                  style:
-                      TextStyle(color: AppColors.textSecondary, fontSize: 12),
+                  style: TextStyle(color: AppColors.textSecondary, fontSize: 12),
                 ),
                 const SizedBox(height: 10),
                 SizedBox(
                   width: double.infinity,
                   child: OutlinedButton(
-                    onPressed: _pickWorkshopForInstall,
+                    onPressed: () {
+                      Navigator.push(
+                        context,
+                        animatedRoute(SelectWorkshopScreen(viewerProfile: widget.viewerProfile)),
+                      );
+                    },
                     style: OutlinedButton.styleFrom(
                       side: const BorderSide(color: AppColors.navy, width: 1.4),
                       padding: const EdgeInsets.symmetric(vertical: 13),
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12)),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                     ),
                     child: const Text(
                       'اختيار ورشة وموعد',
-                      style: TextStyle(
-                          color: AppColors.navy, fontWeight: FontWeight.bold),
+                      style: TextStyle(color: AppColors.navy, fontWeight: FontWeight.bold),
                     ),
                   ),
                 ),
@@ -1005,8 +859,7 @@ class _ProductDetailsScreenState extends State<ProductDetailsScreen> {
                     children: [
                       const Text(
                         'معلومات البائع والتاجر',
-                        style: TextStyle(
-                            fontWeight: FontWeight.bold, fontSize: 15),
+                        style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
                       ),
                       const SizedBox(height: 10),
                       Row(
@@ -1031,8 +884,7 @@ class _ProductDetailsScreenState extends State<ProductDetailsScreen> {
                                     ),
                                     if (_seller?.isTrustedMerchant == true) ...[
                                       const SizedBox(width: 6),
-                                      const Icon(Icons.verified,
-                                          color: Colors.blue, size: 17),
+                                      const Icon(Icons.verified, color: Colors.blue, size: 17),
                                     ],
                                   ],
                                 ),
@@ -1043,9 +895,9 @@ class _ProductDetailsScreenState extends State<ProductDetailsScreen> {
                                     fontWeight: FontWeight.bold,
                                   ),
                                 ),
-                                if (_seller?.workshopAddress != null)
+                                if (_seller != null)
                                   Text(
-                                    _seller!.workshopAddress!,
+                                    formatWorkshopStreet(_seller!),
                                     style: const TextStyle(
                                       color: AppColors.textSecondary,
                                       fontSize: 12,
@@ -1075,10 +927,8 @@ class _ProductDetailsScreenState extends State<ProductDetailsScreen> {
                                 )),
                               );
                             },
-                            icon:
-                                const Icon(Icons.store_mall_directory_outlined),
-                            label:
-                                const Text('عرض بروفايل التاجر وجميع منشوراته'),
+                            icon: const Icon(Icons.store_mall_directory_outlined),
+                            label: const Text('عرض بروفايل التاجر وجميع منشوراته'),
                           ),
                         ),
                         if (widget.viewerProfile != null &&
@@ -1089,26 +939,22 @@ class _ProductDetailsScreenState extends State<ProductDetailsScreen> {
                             child: OutlinedButton.icon(
                               style: OutlinedButton.styleFrom(
                                 side: const BorderSide(color: AppColors.orange),
-                                padding:
-                                    const EdgeInsets.symmetric(vertical: 12),
+                                padding: const EdgeInsets.symmetric(vertical: 12),
                               ),
                               onPressed: () {
                                 Navigator.push(
                                   context,
                                   animatedRoute(ChatConversationScreen(
                                     otherUserId: _seller!.id,
-                                    otherUserName:
-                                        _seller!.fullName ?? 'التاجر',
+                                    otherUserName: _seller!.fullName ?? 'التاجر',
                                     otherUserPhone: _seller!.phone,
                                     productId: p['id'] as String?,
                                     productTitle: p['title'] as String?,
-                                    productPrice:
-                                        (p['price'] as num?)?.toDouble(),
+                                    productPrice: (p['price'] as num?)?.toDouble(),
                                   )),
                                 );
                               },
-                              icon: const Icon(Icons.chat,
-                                  color: AppColors.orange),
+                              icon: const Icon(Icons.chat, color: AppColors.orange),
                               label: const Text(
                                 'فتح الدردشة المباشرة',
                                 style: TextStyle(
@@ -1132,8 +978,8 @@ class _ProductDetailsScreenState extends State<ProductDetailsScreen> {
                                   hintText: 'أو أرسل رسالة سريعة للتاجر...',
                                   filled: true,
                                   fillColor: AppColors.background,
-                                  contentPadding: const EdgeInsets.symmetric(
-                                      horizontal: 14, vertical: 10),
+                                  contentPadding:
+                                      const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
                                   border: OutlineInputBorder(
                                     borderRadius: BorderRadius.circular(12),
                                   ),
@@ -1145,8 +991,7 @@ class _ProductDetailsScreenState extends State<ProductDetailsScreen> {
                               style: ElevatedButton.styleFrom(
                                 backgroundColor: AppColors.orange,
                                 foregroundColor: Colors.white,
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 16, vertical: 14),
+                                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
                               ),
                               onPressed: _sending ? null : _sendMessage,
                               child: const Text('إرسال'),
@@ -1196,8 +1041,7 @@ class MerchantPublicProfileScreen extends StatelessWidget {
                     const CircleAvatar(
                       radius: 26,
                       backgroundColor: AppColors.orange,
-                      child:
-                          Icon(Icons.storefront, color: Colors.white, size: 28),
+                      child: Icon(Icons.storefront, color: Colors.white, size: 28),
                     ),
                     const SizedBox(width: 14),
                     Expanded(
@@ -1216,15 +1060,13 @@ class MerchantPublicProfileScreen extends StatelessWidget {
                               ),
                               if (seller.isTrustedMerchant) ...[
                                 const SizedBox(width: 6),
-                                const Icon(Icons.verified,
-                                    color: Colors.lightBlueAccent, size: 18),
+                                const Icon(Icons.verified, color: Colors.lightBlueAccent, size: 18),
                               ],
                             ],
                           ),
                           Text(
                             '@${seller.username ?? ""}',
-                            style: const TextStyle(
-                                color: Colors.white70, fontSize: 12),
+                            style: const TextStyle(color: Colors.white70, fontSize: 12),
                           ),
                         ],
                       ),
@@ -1234,21 +1076,14 @@ class MerchantPublicProfileScreen extends StatelessWidget {
                 const Divider(color: Colors.white24, height: 22),
                 Text(
                   'رقم الهاتف للتواصل: ${seller.phone ?? "غير متوفر"}',
-                  style: const TextStyle(
-                      color: Colors.white, fontWeight: FontWeight.bold),
+                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
                 ),
-                if (seller.email != null)
-                  Text(
-                    'البريد: ${seller.email}',
-                    style: const TextStyle(color: Colors.white70, fontSize: 12),
-                  ),
-                if (seller.workshopAddress != null)
-                  Text(
-                    'العنوان: ${seller.workshopAddress}',
-                    style: const TextStyle(color: Colors.white70, fontSize: 12),
-                  ),
-                if (viewerProfile != null &&
-                    viewerProfile!.id != seller.id) ...[
+                const SizedBox(height: 4),
+                Text(
+                  'العنوان: ${formatWorkshopStreet(seller)}',
+                  style: const TextStyle(color: Colors.white70, fontSize: 12),
+                ),
+                if (viewerProfile != null && viewerProfile!.id != seller.id) ...[
                   const SizedBox(height: 12),
                   SizedBox(
                     width: double.infinity,
@@ -1305,11 +1140,11 @@ class MerchantPublicProfileScreen extends StatelessWidget {
               return GridView.builder(
                 shrinkWrap: true,
                 physics: const NeverScrollableScrollPhysics(),
-                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: 2,
+                gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+                  maxCrossAxisExtent: 230,
                   mainAxisSpacing: 12,
                   crossAxisSpacing: 12,
-                  childAspectRatio: 0.74,
+                  childAspectRatio: 0.76,
                 ),
                 itemCount: items.length,
                 itemBuilder: (_, i) {
@@ -1358,15 +1193,13 @@ class MerchantPublicProfileScreen extends StatelessWidget {
                             p['title'] ?? '',
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                                fontWeight: FontWeight.bold, fontSize: 13),
+                            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
                           ),
                           Text(
                             '${p['car_name']} · ${p['car_model']}',
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                                color: AppColors.textSecondary, fontSize: 11),
+                            style: const TextStyle(color: AppColors.textSecondary, fontSize: 11),
                           ),
                           const Spacer(),
                           Text(

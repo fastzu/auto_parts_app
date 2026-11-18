@@ -93,53 +93,6 @@ class _CustomerAppointmentsScreenState extends State<CustomerAppointmentsScreen>
     }).eq('id', appt['id']);
   }
 
-  Future<void> _openWorkshopsPicker() async {
-    final rows = await _db.from('customers').select().eq('role', 'mechanic');
-    final workshops = rows.map<CustomerProfile>(CustomerProfile.fromMap).toList();
-    if (!mounted) {
-      return;
-    }
-
-    showModalBottomSheet(
-      context: context,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (_) => Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'اختر ورشة لحجز موعد',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 10),
-            if (workshops.isEmpty)
-              const Padding(
-                padding: EdgeInsets.all(24),
-                child: Center(child: Text('لا توجد ورش مسجلة حالياً')),
-              )
-            else
-              ...workshops.map((w) => ListTile(
-                    leading: const Icon(Icons.build_circle, color: AppColors.orange),
-                    title: Text(w.fullName ?? 'ورشة صيانة'),
-                    subtitle: Text('${w.workshopAddress ?? ""} · ${w.openingHours}'),
-                    onTap: () {
-                      Navigator.pop(context);
-                      Navigator.push(
-                        context,
-                        animatedRoute(BookWorkshopScreen(workshop: w)),
-                      );
-                    },
-                  )),
-          ],
-        ),
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     final uid = _db.auth.currentUser?.id;
@@ -166,7 +119,14 @@ class _CustomerAppointmentsScreenState extends State<CustomerAppointmentsScreen>
                     backgroundColor: AppColors.navy,
                     foregroundColor: Colors.white,
                   ),
-                  onPressed: _openWorkshopsPicker,
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      animatedRoute(
+                        SelectWorkshopScreen(viewerProfile: widget.customerProfile),
+                      ),
+                    );
+                  },
                   icon: const Icon(Icons.add, size: 18),
                   label: const Text('حجز موعد'),
                 ),
