@@ -14,6 +14,7 @@ import '../dashboard/super_admin_dashboard_screen.dart';
 import '../dashboard/towing_dashboard_screen.dart';
 import '../dashboard/workshop_emergency_dashboard.dart';
 import 'add_product_screen.dart';
+import 'ai_diagnostic_screen.dart';
 import 'chat_screen.dart';
 import 'customer_appointments_screen.dart';
 import 'customer_subscriptions_screen.dart';
@@ -147,10 +148,53 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
     return Scaffold(
       key: _scaffoldKey,
       drawer: _buildRoleBasedDrawer(),
-      body: AnimatedSwitcher(
-        duration: const Duration(milliseconds: 260),
-        switchInCurve: Curves.easeOutCubic,
-        child: KeyedSubtree(key: ValueKey(_index), child: pages[_index]),
+      body: Stack(
+        children: [
+          AnimatedSwitcher(
+            duration: const Duration(milliseconds: 260),
+            switchInCurve: Curves.easeOutCubic,
+            child: KeyedSubtree(key: ValueKey(_index), child: pages[_index]),
+          ),
+
+          // زر الـ AI العائم في الزاوية السفلية (يفتح نافذة الفحص المنبثقة فوق أي صفحة)
+          Positioned(
+            left: 16,
+            bottom: 16,
+            child: BounceTap(
+              onTap: () => showAiDiagnosticSheet(context, viewerProfile: widget.profile),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(
+                    colors: [AppColors.navy, Color(0xFF1F2D3D)],
+                    begin: Alignment.topRight,
+                    end: Alignment.bottomLeft,
+                  ),
+                  borderRadius: BorderRadius.circular(28),
+                  border: Border.all(color: AppColors.orange, width: 1.5),
+                  boxShadow: [
+                    BoxShadow(
+                      color: AppColors.navy.withValues(alpha: 0.35),
+                      blurRadius: 12,
+                      offset: const Offset(0, 4),
+                    ),
+                  ],
+                ),
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.auto_awesome, color: AppColors.orange, size: 20),
+                    SizedBox(width: 6),
+                    Text(
+                      'فحص AI',
+                      style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
       ),
       floatingActionButton: isProvider
           ? BounceTap(

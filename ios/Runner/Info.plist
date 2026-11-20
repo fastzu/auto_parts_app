@@ -87,5 +87,7 @@
 		</array>
 		<key>UIStatusBarHidden</key>
 		<false/>
+	<key>NSMicrophoneUsageDescription</key>
+<string>نحتاج إلى الميكروفون لتسجيل صوت عطل السيارة وتشخيصه بالذكاء الاصطناعي.</string>
 	</dict>
 </plist>
