@@ -32,9 +32,10 @@ jobs:
 
       - name: Install CocoaPods
         run: |
-          cd ios
-          pod install --repo-update
-          cd ..
+          flutter build ios --config-only --no-codesign
+          if [ -f "ios/Podfile" ]; then
+            cd ios && pod install --repo-update
+          fi
 
       - name: Build iOS App (No Codesign)
         run: flutter build ios --release --no-codesign
