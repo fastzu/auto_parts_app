@@ -9,13 +9,11 @@ String formatWorkshopStreet(CustomerProfile w) {
   final rawStreet = (w.streetName ?? '').trim();
   final rawBuilding = (w.buildingNumber ?? '').trim();
   final parts = <String>[];
-
   if (rawStreet.isNotEmpty) {
     parts.add(rawStreet.startsWith('شارع') ? rawStreet : 'شارع $rawStreet');
   }
   if (rawBuilding.isNotEmpty) {
-    parts.add(
-        rawBuilding.startsWith('مبنى') ? rawBuilding : 'مبنى $rawBuilding');
+    parts.add(rawBuilding.startsWith('مبنى') ? rawBuilding : 'مبنى $rawBuilding');
   }
   if (parts.isNotEmpty) {
     return parts.join(' · ');
@@ -56,6 +54,39 @@ class SelectWorkshopScreen extends StatelessWidget {
                   final w = workshops[i];
                   final streetAddress = formatWorkshopStreet(w);
 
+                  final badge = Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: w.isAvailable ? AppColors.success : Colors.red,
+                      borderRadius: BorderRadius.circular(20),
+                      boxShadow: [
+                        BoxShadow(color: Colors.black.withValues(alpha: 0.2), blurRadius: 6),
+                      ],
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Container(
+                          width: 7,
+                          height: 7,
+                          decoration: const BoxDecoration(
+                            color: Colors.white,
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          w.isAvailable ? 'متاح الآن' : 'غير متاح',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+
                   return FadeSlideIn(
                     index: i,
                     child: Container(
@@ -75,7 +106,6 @@ class SelectWorkshopScreen extends StatelessWidget {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
-                          // 1) صورة الورشة + شارة التوفر
                           Stack(
                             children: [
                               SizedBox(
@@ -85,8 +115,7 @@ class SelectWorkshopScreen extends StatelessWidget {
                                     ? Image.network(
                                         w.workshopImageUrl!,
                                         fit: BoxFit.cover,
-                                        errorBuilder: (_, __, ___) =>
-                                            _imagePlaceholder(),
+                                        errorBuilder: (_, __, ___) => _imagePlaceholder(),
                                       )
                                     : _imagePlaceholder(),
                               ),
@@ -108,59 +137,16 @@ class SelectWorkshopScreen extends StatelessWidget {
                               Positioned(
                                 top: 12,
                                 right: 12,
-                                child: Container(
-                                  padding: const EdgeInsets.symmetric(
-                                      horizontal: 12, vertical: 6),
-                                  decoration: BoxDecoration(
-                                    color: w.isAvailable
-                                        ? AppColors.success
-                                        : Colors.red,
-                                    borderRadius: BorderRadius.circular(20),
-                                    boxShadow: [
-                                      BoxShadow(
-                                        color:
-                                            Colors.black.withValues(alpha: 0.2),
-                                        blurRadius: 6,
-                                      ),
-                                    ],
-                                  ),
-                                  child: Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      Container(
-                                        width: 7,
-                                        height: 7,
-                                        decoration: const BoxDecoration(
-                                          color: Colors.white,
-                                          shape: BoxShape.circle,
-                                        ),
-                                      ),
-                                      const SizedBox(width: 6),
-                                      Text(
-                                        w.isAvailable
-                                            ? 'متاح الآن'
-                                            : 'غير متاح',
-                                        style: const TextStyle(
-                                          color: Colors.white,
-                                          fontSize: 11,
-                                          fontWeight: FontWeight.bold,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
+                                child: w.isAvailable ? PulseBlink(child: badge) : badge,
                               ),
                             ],
                           ),
-
-                          // 2) تفاصيل الورشة (الاسم، العنوان، الرقم) + الأزرار
                           Padding(
                             padding: const EdgeInsets.all(16),
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Row(
-                                  crossAxisAlignment: CrossAxisAlignment.center,
                                   children: [
                                     Expanded(
                                       child: Row(
@@ -178,8 +164,7 @@ class SelectWorkshopScreen extends StatelessWidget {
                                           ),
                                           if (w.isTrustedMerchant) ...[
                                             const SizedBox(width: 6),
-                                            const Icon(Icons.verified,
-                                                color: Colors.blue, size: 18),
+                                            const Icon(Icons.verified, color: Colors.blue, size: 18),
                                           ],
                                         ],
                                       ),
@@ -191,15 +176,13 @@ class SelectWorkshopScreen extends StatelessWidget {
                                       decoration: BoxDecoration(
                                         color: AppColors.background,
                                         borderRadius: BorderRadius.circular(10),
-                                        border:
-                                            Border.all(color: AppColors.border),
+                                        border: Border.all(color: AppColors.border),
                                       ),
                                       child: Row(
                                         mainAxisSize: MainAxisSize.min,
                                         children: [
                                           const Icon(Icons.phone_outlined,
-                                              size: 14,
-                                              color: AppColors.orange),
+                                              size: 14, color: AppColors.orange),
                                           const SizedBox(width: 5),
                                           Text(
                                             w.phone ?? '-',
@@ -218,8 +201,7 @@ class SelectWorkshopScreen extends StatelessWidget {
                                 Row(
                                   children: [
                                     const Icon(Icons.location_on_outlined,
-                                        size: 16,
-                                        color: AppColors.textSecondary),
+                                        size: 16, color: AppColors.textSecondary),
                                     const SizedBox(width: 4),
                                     Expanded(
                                       child: Text(
@@ -245,19 +227,16 @@ class SelectWorkshopScreen extends StatelessWidget {
                                             return;
                                           }
                                           if (viewerProfile == null) {
-                                            ScaffoldMessenger.of(context)
-                                                .showSnackBar(
+                                            ScaffoldMessenger.of(context).showSnackBar(
                                               const SnackBar(
-                                                content: Text(
-                                                    'يرجى تسجيل الدخول أولاً لحجز موعد'),
+                                                content: Text('يرجى تسجيل الدخول أولاً لحجز موعد'),
                                               ),
                                             );
                                             return;
                                           }
                                           Navigator.push(
                                             context,
-                                            animatedRoute(BookWorkshopScreen(
-                                                workshop: w)),
+                                            animatedRoute(BookWorkshopScreen(workshop: w)),
                                           );
                                         },
                                         child: Container(
@@ -267,12 +246,10 @@ class SelectWorkshopScreen extends StatelessWidget {
                                             color: w.isAvailable
                                                 ? AppColors.orange
                                                 : AppColors.placeholder,
-                                            borderRadius:
-                                                BorderRadius.circular(12),
+                                            borderRadius: BorderRadius.circular(12),
                                           ),
                                           child: Row(
-                                            mainAxisAlignment:
-                                                MainAxisAlignment.center,
+                                            mainAxisAlignment: MainAxisAlignment.center,
                                             children: [
                                               Icon(
                                                 Icons.calendar_today_outlined,
@@ -283,9 +260,7 @@ class SelectWorkshopScreen extends StatelessWidget {
                                               ),
                                               const SizedBox(width: 8),
                                               Text(
-                                                w.isAvailable
-                                                    ? 'حجز موعد'
-                                                    : 'الورشة غير متاحة',
+                                                w.isAvailable ? 'حجز موعد' : 'الورشة غير متاحة',
                                                 style: TextStyle(
                                                   color: w.isAvailable
                                                       ? Colors.white
@@ -305,22 +280,18 @@ class SelectWorkshopScreen extends StatelessWidget {
                                       child: BounceTap(
                                         onTap: () {
                                           if (viewerProfile == null) {
-                                            ScaffoldMessenger.of(context)
-                                                .showSnackBar(
+                                            ScaffoldMessenger.of(context).showSnackBar(
                                               const SnackBar(
-                                                content: Text(
-                                                    'يرجى تسجيل الدخول أولاً للدردشة'),
+                                                content: Text('يرجى تسجيل الدخول أولاً للدردشة'),
                                               ),
                                             );
                                             return;
                                           }
                                           Navigator.push(
                                             context,
-                                            animatedRoute(
-                                                ChatConversationScreen(
+                                            animatedRoute(ChatConversationScreen(
                                               otherUserId: w.id,
-                                              otherUserName:
-                                                  w.fullName ?? 'الورشة',
+                                              otherUserName: w.fullName ?? 'الورشة',
                                               otherUserPhone: w.phone,
                                             )),
                                           );
@@ -330,16 +301,13 @@ class SelectWorkshopScreen extends StatelessWidget {
                                           alignment: Alignment.center,
                                           decoration: BoxDecoration(
                                             color: AppColors.navy,
-                                            borderRadius:
-                                                BorderRadius.circular(12),
+                                            borderRadius: BorderRadius.circular(12),
                                           ),
                                           child: const Row(
-                                            mainAxisAlignment:
-                                                MainAxisAlignment.center,
+                                            mainAxisAlignment: MainAxisAlignment.center,
                                             children: [
                                               Icon(Icons.chat_bubble_outline,
-                                                  size: 16,
-                                                  color: Colors.white),
+                                                  size: 16, color: Colors.white),
                                               SizedBox(width: 6),
                                               Text(
                                                 'دردشة',
@@ -378,8 +346,7 @@ class SelectWorkshopScreen extends StatelessWidget {
       child: const Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(Icons.build_circle_outlined,
-              size: 42, color: AppColors.textSecondary),
+          Icon(Icons.build_circle_outlined, size: 42, color: AppColors.textSecondary),
           SizedBox(height: 4),
           Text('صورة الورشة', style: TextStyle(color: AppColors.textSecondary)),
         ],
@@ -397,24 +364,25 @@ class BookWorkshopScreen extends StatefulWidget {
 }
 
 class _BookWorkshopScreenState extends State<BookWorkshopScreen> {
+  final _db = Supabase.instance.client;
   DateTime _selectedDate = DateTime.now();
-  String _selectedHour = '10:00 ص';
+  String? _selectedHour;
   final _descCtrl = TextEditingController();
   bool _submitting = false;
 
-  final List<String> _hourlySlots = const [
-    '08:00 ص',
-    '09:00 ص',
-    '10:00 ص',
-    '11:00 ص',
-    '12:00 م',
-    '01:00 م',
-    '02:00 م',
-    '03:00 م',
-    '04:00 م',
-    '05:00 م',
-    '06:00 م',
-    '07:00 م',
+  final List<({String label, int hour24})> _hourlySlots = const [
+    (label: '08:00 ص', hour24: 8),
+    (label: '09:00 ص', hour24: 9),
+    (label: '10:00 ص', hour24: 10),
+    (label: '11:00 ص', hour24: 11),
+    (label: '12:00 م', hour24: 12),
+    (label: '01:00 م', hour24: 13),
+    (label: '02:00 م', hour24: 14),
+    (label: '03:00 م', hour24: 15),
+    (label: '04:00 م', hour24: 16),
+    (label: '05:00 م', hour24: 17),
+    (label: '06:00 م', hour24: 18),
+    (label: '07:00 م', hour24: 19),
   ];
 
   @override
@@ -426,25 +394,69 @@ class _BookWorkshopScreenState extends State<BookWorkshopScreen> {
   String get _formattedDate =>
       '${_selectedDate.year}-${_selectedDate.month.toString().padLeft(2, '0')}-${_selectedDate.day.toString().padLeft(2, '0')}';
 
-  Future<void> _submitBooking() async {
+  bool get _isToday {
+    final now = DateTime.now();
+    return _selectedDate.year == now.year &&
+        _selectedDate.month == now.month &&
+        _selectedDate.day == now.day;
+  }
+
+  int _hourForLabel(String label) =>
+      _hourlySlots.firstWhere((s) => s.label == label, orElse: () => _hourlySlots.first).hour24;
+
+  bool _isSlotDisabled({
+    required ({String label, int hour24}) slot,
+    required Set<String> bookedLabels,
+  }) {
+    if (bookedLabels.contains(slot.label)) {
+      return true;
+    }
+
+    if (_isToday) {
+      final nowHour = DateTime.now().hour;
+      if (slot.hour24 <= nowHour) {
+        return true;
+      }
+
+      final bookedHours = bookedLabels.map(_hourForLabel).toList();
+      final hasBookedBeforeNow = bookedHours.any((h) => h <= nowHour);
+      final futureBookedHours = bookedHours.where((h) => h > nowHour).toList();
+      if (hasBookedBeforeNow && futureBookedHours.isNotEmpty) {
+        final maxFutureBooked = futureBookedHours.reduce((a, b) => a > b ? a : b);
+        if (slot.hour24 > nowHour && slot.hour24 < maxFutureBooked) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  Future<void> _submitBooking(bool workshopFullToday) async {
+    if (_selectedHour == null && !workshopFullToday) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('يرجى اختيار ساعة متاحة أولاً')),
+      );
+      return;
+    }
+
     setState(() => _submitting = true);
     try {
-      final db = Supabase.instance.client;
-      await db.from('workshop_appointments').insert({
-        'user_id': db.auth.currentUser!.id,
+      await _db.from('workshop_appointments').insert({
+        'user_id': _db.auth.currentUser!.id,
         'workshop_id': widget.workshop.id,
         'appointment_date': _formattedDate,
-        'appointment_time': _selectedHour,
-        'service_description': _descCtrl.text.trim().isEmpty
-            ? 'فحص وصيانة مركبة'
-            : _descCtrl.text.trim(),
+        'appointment_time': _selectedHour ?? 'حسب توفر الورشة',
+        'service_description':
+            _descCtrl.text.trim().isEmpty ? 'فحص وصيانة مركبة' : _descCtrl.text.trim(),
         'status': 'pending',
         'progress_step': 'pending',
       });
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('تم إرسال طلب الموعد للورشة بنجاح!'),
+          SnackBar(
+            content: Text(workshopFullToday
+                ? 'الورشة ممتلئة حالياً؛ تم إرسال طلبك وسيقترح الميكانيكي موعداً مناسباً لك!'
+                : 'تم إرسال طلب الموعد للورشة بنجاح!'),
             backgroundColor: AppColors.success,
           ),
         );
@@ -460,76 +472,140 @@ class _BookWorkshopScreenState extends State<BookWorkshopScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-          title: Text('حجز موعد - ${widget.workshop.fullName ?? "الورشة"}')),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          FadeSlideIn(
-            child: Container(
-              decoration: BoxDecoration(
-                color: AppColors.surface,
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: AppColors.border),
+      appBar: AppBar(title: Text('حجز موعد - ${widget.workshop.fullName ?? "الورشة"}')),
+      body: StreamBuilder<List<Map<String, dynamic>>>(
+        stream: _db
+            .from('workshop_appointments')
+            .stream(primaryKey: ['id'])
+            .eq('workshop_id', widget.workshop.id),
+        builder: (context, snap) {
+          final dayAppts = (snap.data ?? [])
+              .where((a) => a['appointment_date'] == _formattedDate && a['status'] != 'cancelled')
+              .toList();
+
+          final bookedLabels =
+              dayAppts.map((a) => (a['appointment_time'] as String?) ?? '').toSet();
+          final acceptedCount = dayAppts.where((a) => a['status'] == 'accepted').length;
+          final isWorkshopFull = acceptedCount >= widget.workshop.maxCarCapacity;
+
+          if (_selectedHour != null && bookedLabels.contains(_selectedHour)) {
+            _selectedHour = null;
+          }
+
+          return ListView(
+            padding: const EdgeInsets.all(16),
+            children: [
+              FadeSlideIn(
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: AppColors.surface,
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: AppColors.border),
+                  ),
+                  child: CalendarDatePicker(
+                    initialDate: _selectedDate,
+                    firstDate: DateTime.now(),
+                    lastDate: DateTime.now().add(const Duration(days: 60)),
+                    onDateChanged: (newDate) => setState(() {
+                      _selectedDate = newDate;
+                      _selectedHour = null;
+                    }),
+                  ),
+                ),
               ),
-              child: CalendarDatePicker(
-                initialDate: _selectedDate,
-                firstDate: DateTime.now(),
-                lastDate: DateTime.now().add(const Duration(days: 60)),
-                onDateChanged: (newDate) =>
-                    setState(() => _selectedDate = newDate),
+              const SizedBox(height: 14),
+              if (isWorkshopFull)
+                Container(
+                  margin: const EdgeInsets.only(bottom: 12),
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: AppColors.orangeLight,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: AppColors.orange),
+                  ),
+                  child: const Text(
+                    'تنبيه: وصلت الورشة للحد الأقصى من السيارات لهذا اليوم، يمكنك إرسال الطلب وسيقترح عليك الميكانيكي موعداً بديلاً في نفس اليوم أو يوم آخر.',
+                    style: TextStyle(
+                      color: AppColors.orange,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
+              const Text(
+                'اختر الساعة (الساعات الرمادية المشطوبة محجوزة أو غير متاحة)',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
               ),
-            ),
-          ),
-          const SizedBox(height: 16),
-          const Text(
-            'اختر الساعة (فاصل ساعة بين كل موعد وآخر)',
-            style: TextStyle(fontWeight: FontWeight.bold),
-          ),
-          const SizedBox(height: 10),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: _hourlySlots.map((slot) {
-              final selected = _selectedHour == slot;
-              return ChoiceChip(
-                label: Text(slot),
-                selected: selected,
-                selectedColor: AppColors.navy,
-                labelStyle: TextStyle(
-                    color: selected ? Colors.white : AppColors.textPrimary),
-                onSelected: (_) => setState(() => _selectedHour = slot),
-              );
-            }).toList(),
-          ),
-          const SizedBox(height: 16),
-          TextField(
-            controller: _descCtrl,
-            maxLines: 2,
-            decoration: InputDecoration(
-              labelText: 'وصف المشكلة أو الخدمة المطلوبة',
-              filled: true,
-              fillColor: AppColors.surface,
-              border:
-                  OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
-            ),
-          ),
-          const SizedBox(height: 22),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.orange,
-              foregroundColor: Colors.white,
-              padding: const EdgeInsets.symmetric(vertical: 16),
-              shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(14)),
-            ),
-            onPressed: _submitting ? null : _submitBooking,
-            child: _submitting
-                ? const CircularProgressIndicator(color: Colors.white)
-                : const Text('تأكيد حجز الموعد',
-                    style: TextStyle(fontWeight: FontWeight.bold)),
-          ),
-        ],
+              const SizedBox(height: 10),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: _hourlySlots.map((slot) {
+                  final disabled = _isSlotDisabled(slot: slot, bookedLabels: bookedLabels);
+                  final selected = !disabled && _selectedHour == slot.label;
+
+                  return GestureDetector(
+                    onTap: disabled ? null : () => setState(() => _selectedHour = slot.label),
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 180),
+                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+                      decoration: BoxDecoration(
+                        color: disabled
+                            ? AppColors.placeholder
+                            : (selected ? AppColors.navy : AppColors.surface),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: disabled
+                              ? AppColors.border
+                              : (selected ? AppColors.navy : AppColors.border),
+                        ),
+                      ),
+                      child: Text(
+                        slot.label,
+                        style: TextStyle(
+                          color: disabled
+                              ? AppColors.textSecondary
+                              : (selected ? Colors.white : AppColors.textPrimary),
+                          fontWeight: FontWeight.bold,
+                          fontSize: 13,
+                          decoration:
+                              disabled ? TextDecoration.lineThrough : TextDecoration.none,
+                        ),
+                      ),
+                    ),
+                  );
+                }).toList(),
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: _descCtrl,
+                maxLines: 2,
+                decoration: InputDecoration(
+                  labelText: 'وصف المشكلة أو الخدمة المطلوبة',
+                  filled: true,
+                  fillColor: AppColors.surface,
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+                ),
+              ),
+              const SizedBox(height: 22),
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.orange,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                ),
+                onPressed: _submitting ? null : () => _submitBooking(isWorkshopFull),
+                child: _submitting
+                    ? const CircularProgressIndicator(color: Colors.white)
+                    : Text(
+                        isWorkshopFull ? 'إرسال طلب لاقتراح موعد آخر' : 'تأكيد حجز الموعد',
+                        style: const TextStyle(fontWeight: FontWeight.bold),
+                      ),
+              ),
+            ],
+          );
+        },
       ),
     );
   }
