@@ -4,23 +4,30 @@ import '../../theme/app_theme.dart';
 import '../../widgets/animations.dart';
 import '../mobile/add_product_screen.dart';
 
-class MerchantProductsDashboard extends StatelessWidget {
+class MerchantProductsDashboard extends StatefulWidget {
   const MerchantProductsDashboard({super.key});
+
+  @override
+  State<MerchantProductsDashboard> createState() => _MerchantProductsDashboardState();
+}
+
+class _MerchantProductsDashboardState extends State<MerchantProductsDashboard> {
+  DashboardPeriod _period = DashboardPeriod.month1;
+  DateTimeRange? _customRange;
 
   @override
   Widget build(BuildContext context) {
     final db = Supabase.instance.client;
     final uid = db.auth.currentUser!.id;
+    final range = DateRangeFilterBar.resolveRange(_period, _customRange);
 
     return Scaffold(
       appBar: AppBar(
         title: const Text('داش بورد المنتجات والأداء'),
         actions: [
           IconButton(
-            icon:
-                const Icon(Icons.add_circle, color: AppColors.orange, size: 28),
-            onPressed: () => Navigator.push(
-                context, animatedRoute(const AddProductScreen())),
+            icon: const Icon(Icons.add_circle, color: AppColors.orange, size: 28),
+            onPressed: () => Navigator.push(context, animatedRoute(const AddProductScreen())),
           ),
         ],
       ),
@@ -34,42 +41,69 @@ class MerchantProductsDashboard extends StatelessWidget {
           if (!snap.hasData) {
             return const Center(child: CircularProgressIndicator());
           }
-          final items = snap.data!;
 
-          final totalViews = items.fold<int>(
-              0, (s, p) => s + ((p['views_count'] as int?) ?? 0));
-          final totalClicks = items.fold<int>(
-              0, (s, p) => s + ((p['clicks_count'] as int?) ?? 0));
-          final totalSales = items.fold<int>(
-              0, (s, p) => s + ((p['sales_count'] as int?) ?? 0));
+          final items = snap.data!.where((p) {
+            final dt = DateTime.tryParse((p['created_at'] as String?) ?? '');
+            if (dt == null) {
+              return true;
+            }
+            return !dt.isBefore(range.start) &&
+                !dt.isAfter(range.end.add(const Duration(days: 1)));
+          }).toList();
+
+          final totalViews = items.fold<int>(0, (s, p) => s + ((p['views_count'] as int?) ?? 0));
+          final totalClicks =
+              items.fold<int>(0, (s, p) => s + ((p['clicks_count'] as int?) ?? 0));
+          final totalSales = items.fold<int>(0, (s, p) => s + ((p['sales_count'] as int?) ?? 0));
+
+          final chartData = items.take(6).map((p) {
+            final title = (p['title'] as String? ?? '');
+            final short = title.length > 8 ? title.substring(0, 8) : title;
+            return (label: short, value: ((p['views_count'] as int?) ?? 0).toDouble());
+          }).toList();
 
           return ListView(
             padding: const EdgeInsets.all(16),
             children: [
+              DateRangeFilterBar(
+                period: _period,
+                customRange: _customRange,
+                onChanged: (p, r) => setState(() {
+                  _period = p;
+                  _customRange = r;
+                }),
+              ),
+              const SizedBox(height: 14),
               Row(
                 children: [
-                  _statCard('المنشورات', '${items.length}',
-                      Icons.inventory_2_outlined),
+                  _statCard('المنشورات', items.length, Icons.inventory_2_outlined),
                   const SizedBox(width: 8),
-                  _statCard(
-                      'المشاهدات', '$totalViews', Icons.visibility_outlined),
+                  _statCard('المشاهدات', totalViews, Icons.visibility_outlined),
                   const SizedBox(width: 8),
-                  _statCard(
-                      'النقرات', '$totalClicks', Icons.touch_app_outlined),
+                  _statCard('النقرات', totalClicks, Icons.touch_app_outlined),
                   const SizedBox(width: 8),
-                  _statCard(
-                      'المبيعات', '$totalSales', Icons.shopping_bag_outlined),
+                  _statCard('المبيعات', totalSales, Icons.shopping_bag_outlined),
                 ],
               ),
+              if (chartData.isNotEmpty) ...[
+                const SizedBox(height: 16),
+                InteractiveAnimatedChart(
+                  title: 'تفاعل المشاهدات حسب القطعة',
+                  data: chartData,
+                  unit: 'مشاهدة',
+                ),
+              ],
               const SizedBox(height: 18),
-              const Text('إحصائيات كل قطعة',
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+              const Text(
+                'إحصائيات كل قطعة',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+              ),
               const SizedBox(height: 10),
               if (items.isEmpty)
                 const Center(
                   child: Padding(
                     padding: EdgeInsets.all(40),
-                    child: Text('لم تنشر أي قطع غيار بعد'),
+                    child: Text('لا توجد قطع ضمن هذه الفترة الزمنية'),
                   ),
                 )
               else
@@ -100,39 +134,37 @@ class MerchantProductsDashboard extends StatelessWidget {
                                     image: imgs.isNotEmpty
                                         ? DecorationImage(
                                             image: NetworkImage(imgs.first),
-                                            fit: BoxFit.cover)
+                                            fit: BoxFit.cover,
+                                          )
                                         : null,
                                   ),
-                                  child: imgs.isEmpty
-                                      ? const Icon(Icons.settings_outlined)
-                                      : null,
+                                  child: imgs.isEmpty ? const Icon(Icons.settings_outlined) : null,
                                 ),
                                 const SizedBox(width: 12),
                                 Expanded(
                                   child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
+                                    crossAxisAlignment: CrossAxisAlignment.start,
                                     children: [
-                                      Text(p['title'] ?? '',
-                                          style: const TextStyle(
-                                              fontWeight: FontWeight.bold)),
                                       Text(
-                                          '${p['price']} د.أ · ${p['car_name']}',
-                                          style: const TextStyle(
-                                              color: AppColors.textSecondary,
-                                              fontSize: 12)),
+                                        p['title'] ?? '',
+                                        style: const TextStyle(fontWeight: FontWeight.bold),
+                                      ),
+                                      Text(
+                                        '${p['price']} د.أ · ${p['car_name']}',
+                                        style: const TextStyle(
+                                          color: AppColors.textSecondary,
+                                          fontSize: 12,
+                                        ),
+                                      ),
                                     ],
                                   ),
                                 ),
                                 IconButton(
                                   tooltip: isHidden ? 'إظهار' : 'إخفاء',
-                                  icon: Icon(isHidden
-                                      ? Icons.visibility_off
-                                      : Icons.visibility),
+                                  icon: Icon(isHidden ? Icons.visibility_off : Icons.visibility),
                                   onPressed: () => db
                                       .from('products')
-                                      .update({'is_hidden': !isHidden}).eq(
-                                          'id', p['id']),
+                                      .update({'is_hidden': !isHidden}).eq('id', p['id']),
                                 ),
                               ],
                             ),
@@ -140,12 +172,9 @@ class MerchantProductsDashboard extends StatelessWidget {
                             Row(
                               mainAxisAlignment: MainAxisAlignment.spaceAround,
                               children: [
-                                _miniMetric(
-                                    Icons.visibility_outlined, '$views مشاهدة'),
-                                _miniMetric(
-                                    Icons.touch_app_outlined, '$clicks نقرة'),
-                                _miniMetric(
-                                    Icons.sell_outlined, '$sales مبيعة'),
+                                _miniMetric(Icons.visibility_outlined, '$views مشاهدة'),
+                                _miniMetric(Icons.touch_app_outlined, '$clicks نقرة'),
+                                _miniMetric(Icons.sell_outlined, '$sales مبيعة'),
                               ],
                             ),
                           ],
@@ -161,7 +190,7 @@ class MerchantProductsDashboard extends StatelessWidget {
     );
   }
 
-  Widget _statCard(String label, String val, IconData icon) {
+  Widget _statCard(String label, int val, IconData icon) {
     return Expanded(
       child: Container(
         padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 6),
@@ -172,14 +201,13 @@ class MerchantProductsDashboard extends StatelessWidget {
         ),
         child: Column(
           children: [
-            Icon(icon, color: AppColors.orange, size: 20),
+            PulseBlink(child: Icon(icon, color: AppColors.orange, size: 20)),
             const SizedBox(height: 4),
-            Text(val,
-                style:
-                    const TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
-            Text(label,
-                style: const TextStyle(
-                    color: AppColors.textSecondary, fontSize: 10)),
+            AnimatedCounter(
+              value: val,
+              style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
+            ),
+            Text(label, style: const TextStyle(color: AppColors.textSecondary, fontSize: 10)),
           ],
         ),
       ),
@@ -191,8 +219,7 @@ class MerchantProductsDashboard extends StatelessWidget {
       children: [
         Icon(icon, size: 15, color: AppColors.navy),
         const SizedBox(width: 4),
-        Text(text,
-            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+        Text(text, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
       ],
     );
   }

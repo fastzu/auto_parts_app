@@ -21,14 +21,11 @@ class _AddProductScreenState extends State<AddProductScreen> {
   final _priceCtrl = TextEditingController();
   final _chassisCtrl = TextEditingController();
 
-  // القطع الرئيسية والفرعية
   String _mainCat = CarPartsCatalogAZ.mainCategories.first;
   late String _subPart = CarPartsCatalogAZ.categoriesAndParts[_mainCat]!.first;
 
-  // شركة السيارة + الموديل + السنة (مترابطة)
   String _selectedBrand = JordanCarsCatalog.brands.first;
-  late String _selectedModel =
-      JordanCarsCatalog.brandsAndModels[_selectedBrand]!.first;
+  late String _selectedModel = JordanCarsCatalog.brandsAndModels[_selectedBrand]!.first;
   String _selectedYear = '2022';
 
   final List<({String name, Uint8List bytes})> _images = [];
@@ -57,13 +54,9 @@ class _AddProductScreenState extends State<AddProductScreen> {
   }
 
   Future<void> _publish() async {
-    if (_images.isEmpty ||
-        _titleCtrl.text.trim().isEmpty ||
-        _priceCtrl.text.trim().isEmpty) {
+    if (_images.isEmpty || _titleCtrl.text.trim().isEmpty || _priceCtrl.text.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('يرجى رفع صورة القطعة وإدخال عنوان المنشور والسعر'),
-        ),
+        const SnackBar(content: Text('يرجى رفع صورة القطعة وإدخال عنوان المنشور والسعر')),
       );
       return;
     }
@@ -79,21 +72,31 @@ class _AddProductScreenState extends State<AddProductScreen> {
     setState(() => _publishing = true);
     try {
       final uid = user.id;
+
+      final settingsRows = await _db
+          .from('system_settings')
+          .select('key, value')
+          .inFilter('key', ['enable_post_limits', 'default_max_posts']);
+      final settingsMap = {for (final r in settingsRows) r['key'] as String: r['value'] as String};
+      final limitsEnabled = settingsMap['enable_post_limits'] != 'false';
+      final globalDefaultLimit = int.tryParse(settingsMap['default_max_posts'] ?? '5') ?? 5;
+
       final profile = await _db
           .from('customers')
           .select('max_posts_limit, free_posts_count')
           .eq('id', uid)
           .maybeSingle();
 
-      final maxLimit = (profile?['max_posts_limit'] as int?) ?? 5;
+      final userLimit = (profile?['max_posts_limit'] as int?) ?? globalDefaultLimit;
       final currentCount = (profile?['free_posts_count'] as int?) ?? 0;
 
-      if (currentCount >= maxLimit) {
+      if (limitsEnabled && currentCount >= userLimit) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
+            SnackBar(
               content: Text(
-                  'وصلت للحد الأقصى للمنشورات في باقتك. قم بالترقية للنشر أكثر!'),
+                'وصلت للحد الأقصى للمنشورات ($userLimit منشورات). تواصل مع الإدارة لزيادة الحد!',
+              ),
               backgroundColor: AppColors.orange,
             ),
           );
@@ -104,13 +107,11 @@ class _AddProductScreenState extends State<AddProductScreen> {
       final List<String> imageUrls = [];
       for (final img in _images) {
         final safeName = img.name.replaceAll(RegExp(r'[^a-zA-Z0-9._-]'), '_');
-        final path =
-            'products/$uid/${DateTime.now().millisecondsSinceEpoch}_$safeName';
+        final path = 'products/$uid/${DateTime.now().millisecondsSinceEpoch}_$safeName';
         await _db.storage.from('app_media').uploadBinary(
               path,
               img.bytes,
-              fileOptions:
-                  const FileOptions(contentType: 'image/jpeg', upsert: true),
+              fileOptions: const FileOptions(contentType: 'image/jpeg', upsert: true),
             );
         imageUrls.add(_db.storage.from('app_media').getPublicUrl(path));
       }
@@ -128,8 +129,7 @@ class _AddProductScreenState extends State<AddProductScreen> {
         'sub_category': _subPart,
         'car_name': fullCarName,
         'car_model': _selectedYear,
-        'chassis_number':
-            _chassisCtrl.text.trim().isEmpty ? null : _chassisCtrl.text.trim(),
+        'chassis_number': _chassisCtrl.text.trim().isEmpty ? null : _chassisCtrl.text.trim(),
         'price': double.tryParse(_priceCtrl.text.trim()) ?? 0.0,
         'images': imageUrls,
       });
@@ -215,8 +215,7 @@ class _AddProductScreenState extends State<AddProductScreen> {
                               child: const CircleAvatar(
                                 radius: 11,
                                 backgroundColor: Colors.black54,
-                                child: Icon(Icons.close,
-                                    size: 14, color: Colors.white),
+                                child: Icon(Icons.close, size: 14, color: Colors.white),
                               ),
                             ),
                           ),
@@ -226,8 +225,6 @@ class _AddProductScreenState extends State<AddProductScreen> {
             ),
           ),
           const SizedBox(height: 14),
-
-          // القسم الرئيسي للقطعة
           DropdownButtonFormField<String>(
             isExpanded: true,
             initialValue: _mainCat,
@@ -235,25 +232,24 @@ class _AddProductScreenState extends State<AddProductScreen> {
               labelText: 'القسم الرئيسي للقطعة',
               filled: true,
               fillColor: AppColors.surface,
-              border:
-                  OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
             ),
             items: CarPartsCatalogAZ.mainCategories
                 .map((c) => DropdownMenuItem(
-                    value: c, child: Text(c, overflow: TextOverflow.ellipsis)))
+                      value: c,
+                      child: Text(c, overflow: TextOverflow.ellipsis),
+                    ))
                 .toList(),
             onChanged: (val) {
-              if (val == null) return;
-              setState(() {
-                _mainCat = val;
-                _subPart =
-                    CarPartsCatalogAZ.categoriesAndParts[_mainCat]!.first;
-              });
+              if (val != null) {
+                setState(() {
+                  _mainCat = val;
+                  _subPart = CarPartsCatalogAZ.categoriesAndParts[_mainCat]!.first;
+                });
+              }
             },
           ),
           const SizedBox(height: 12),
-
-          // القطعة الفرعية
           AnimatedSwitcher(
             duration: const Duration(milliseconds: 220),
             child: DropdownButtonFormField<String>(
@@ -264,20 +260,19 @@ class _AddProductScreenState extends State<AddProductScreen> {
                 labelText: 'القطعة الفرعية / الملحقات',
                 filled: true,
                 fillColor: AppColors.surface,
-                border:
-                    OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
               ),
               items: CarPartsCatalogAZ.categoriesAndParts[_mainCat]!
                   .map((sub) => DropdownMenuItem(value: sub, child: Text(sub)))
                   .toList(),
               onChanged: (val) {
-                if (val != null) setState(() => _subPart = val);
+                if (val != null) {
+                  setState(() => _subPart = val);
+                }
               },
             ),
           ),
           const SizedBox(height: 12),
-
-          // شركة السيارة (جميع شركات الأردن)
           DropdownButtonFormField<String>(
             isExpanded: true,
             initialValue: _selectedBrand,
@@ -285,24 +280,21 @@ class _AddProductScreenState extends State<AddProductScreen> {
               labelText: 'شركة السيارة',
               filled: true,
               fillColor: AppColors.surface,
-              border:
-                  OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
             ),
             items: JordanCarsCatalog.brands
                 .map((b) => DropdownMenuItem(value: b, child: Text(b)))
                 .toList(),
             onChanged: (val) {
-              if (val == null) return;
-              setState(() {
-                _selectedBrand = val;
-                _selectedModel =
-                    JordanCarsCatalog.brandsAndModels[_selectedBrand]!.first;
-              });
+              if (val != null) {
+                setState(() {
+                  _selectedBrand = val;
+                  _selectedModel = JordanCarsCatalog.brandsAndModels[_selectedBrand]!.first;
+                });
+              }
             },
           ),
           const SizedBox(height: 12),
-
-          // الموديل + سنة الصنع
           Row(
             children: [
               Expanded(
@@ -317,14 +309,15 @@ class _AddProductScreenState extends State<AddProductScreen> {
                       labelText: 'الموديل',
                       filled: true,
                       fillColor: AppColors.surface,
-                      border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(14)),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
                     ),
                     items: modelsForBrand
                         .map((m) => DropdownMenuItem(value: m, child: Text(m)))
                         .toList(),
                     onChanged: (val) {
-                      if (val != null) setState(() => _selectedModel = val);
+                      if (val != null) {
+                        setState(() => _selectedModel = val);
+                      }
                     },
                   ),
                 ),
@@ -339,42 +332,39 @@ class _AddProductScreenState extends State<AddProductScreen> {
                     labelText: 'السنة',
                     filled: true,
                     fillColor: AppColors.surface,
-                    border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(14)),
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
                   ),
                   items: JordanCarsCatalog.years
                       .map((y) => DropdownMenuItem(value: y, child: Text(y)))
                       .toList(),
                   onChanged: (val) {
-                    if (val != null) setState(() => _selectedYear = val);
+                    if (val != null) {
+                      setState(() => _selectedYear = val);
+                    }
                   },
                 ),
               ),
             ],
           ),
           const SizedBox(height: 12),
-
           _field(_titleCtrl, 'عنوان المنشور'),
           _field(_priceCtrl, 'السعر (د.أ)', type: TextInputType.number),
           _field(_chassisCtrl, 'رقم الشاصي (VIN / Chassis Number)'),
           _field(_descCtrl, 'وصف وتفاصيل القطعة', maxLines: 3),
-
           const SizedBox(height: 16),
           ElevatedButton(
             style: ElevatedButton.styleFrom(
               backgroundColor: AppColors.orange,
               foregroundColor: Colors.white,
               padding: const EdgeInsets.symmetric(vertical: 16),
-              shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(14)),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
             ),
             onPressed: _publishing ? null : _publish,
             child: _publishing
                 ? const SizedBox(
                     width: 22,
                     height: 22,
-                    child: CircularProgressIndicator(
-                        color: Colors.white, strokeWidth: 2.5),
+                    child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2.5),
                   )
                 : const Text(
                     'نشر القطعة الآن',
