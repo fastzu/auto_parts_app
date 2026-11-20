@@ -1,4 +1,4 @@
-name: Build iOS IPA
+name: Build iOS with Dynamic Island
 
 on:
   push:
@@ -6,32 +6,48 @@ on:
   workflow_dispatch:
 
 jobs:
-  build:
+  build_ios:
+    name: Build iOS IPA
     runs-on: macos-latest
 
     steps:
-      - name: Checkout repository
+      - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Flutter
+      - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
 
-      - name: Install dependencies
+      - name: Install Flutter packages
         run: flutter pub get
 
-      - name: Build unsigned iOS app
+      - name: Prepare iOS config
+        run: flutter build ios --config-only --no-codesign
+
+      - name: Setup Live Activity Widget Extension
+        run: |
+          gem install xcodeproj --no-document || true
+          ruby ios/setup_live_activity.rb
+
+      - name: Install CocoaPods
+        run: |
+          cd ios
+          pod install --repo-update
+          cd ..
+
+      - name: Build iOS App (No Codesign)
         run: flutter build ios --release --no-codesign
 
       - name: Package IPA
         run: |
-          mkdir -p Payload
-          cp -r build/ios/iphoneos/Runner.app Payload/
-          zip -r auto_parts_app.ipa Payload
+          mkdir -p build/ios/ipa/Payload
+          cp -r build/ios/iphoneos/Runner.app build/ios/ipa/Payload/
+          cd build/ios/ipa
+          zip -r AutoPartsApp-unsigned.ipa Payload
 
-      - name: Upload IPA artifact
+      - name: Upload IPA Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: auto_parts_app-ipa
-          path: auto_parts_app.ipa
+          name: AutoPartsApp-iOS
+          path: build/ios/ipa/AutoPartsApp-unsigned.ipa
