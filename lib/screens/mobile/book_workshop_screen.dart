@@ -3,17 +3,26 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../models/db_models.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/animations.dart';
-import '../mobile/chat_screen.dart';
+import 'chat_screen.dart';
 
 String formatWorkshopStreet(CustomerProfile w) {
-  final parts = <String>[
-    if ((w.streetName ?? '').trim().isNotEmpty) 'شارع ${w.streetName!.trim()}',
-    if ((w.buildingNumber ?? '').trim().isNotEmpty) 'مبنى ${w.buildingNumber!.trim()}',
-  ];
+  final rawStreet = (w.streetName ?? '').trim();
+  final rawBuilding = (w.buildingNumber ?? '').trim();
+  final parts = <String>[];
+
+  if (rawStreet.isNotEmpty) {
+    parts.add(rawStreet.startsWith('شارع') ? rawStreet : 'شارع $rawStreet');
+  }
+  if (rawBuilding.isNotEmpty) {
+    parts.add(
+        rawBuilding.startsWith('مبنى') ? rawBuilding : 'مبنى $rawBuilding');
+  }
   if (parts.isNotEmpty) {
     return parts.join(' · ');
   }
-  return (w.workshopAddress ?? '').trim().isNotEmpty ? w.workshopAddress! : 'العنوان غير محدد';
+  return (w.workshopAddress ?? '').trim().isNotEmpty
+      ? w.workshopAddress!
+      : 'العنوان غير محدد';
 }
 
 class SelectWorkshopScreen extends StatelessWidget {
@@ -36,154 +45,344 @@ class SelectWorkshopScreen extends StatelessWidget {
             return const Center(child: Text('لا توجد ورش مسجلة حالياً'));
           }
 
-          return ListView.separated(
-            padding: const EdgeInsets.all(16),
-            itemCount: workshops.length,
-            separatorBuilder: (_, __) => const SizedBox(height: 16),
-            itemBuilder: (_, i) {
-              final w = workshops[i];
-              final streetAddress = formatWorkshopStreet(w);
+          return Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 640),
+              child: ListView.separated(
+                padding: const EdgeInsets.all(16),
+                itemCount: workshops.length,
+                separatorBuilder: (_, __) => const SizedBox(height: 16),
+                itemBuilder: (_, i) {
+                  final w = workshops[i];
+                  final streetAddress = formatWorkshopStreet(w);
 
-              return FadeSlideIn(
-                index: i,
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: AppColors.surface,
-                    borderRadius: BorderRadius.circular(20),
-                    border: Border.all(color: AppColors.navy, width: 1.4),
-                  ),
-                  clipBehavior: Clip.antiAlias,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      Stack(
+                  return FadeSlideIn(
+                    index: i,
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: AppColors.surface,
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(color: AppColors.border),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.05),
+                            blurRadius: 14,
+                            offset: const Offset(0, 6),
+                          ),
+                        ],
+                      ),
+                      clipBehavior: Clip.antiAlias,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
-                          SizedBox(
-                            height: 145,
-                            width: double.infinity,
-                            child: (w.workshopImageUrl ?? '').isNotEmpty
-                                ? Image.network(w.workshopImageUrl!, fit: BoxFit.cover)
-                                : Container(
-                                    color: AppColors.placeholder,
-                                    child: const Column(
-                                      mainAxisAlignment: MainAxisAlignment.center,
-                                      children: [
-                                        Icon(Icons.build_circle_outlined, size: 42, color: AppColors.textSecondary),
-                                        SizedBox(height: 4),
-                                        Text('صورة الورشة', style: TextStyle(color: AppColors.textSecondary)),
+                          // 1) صورة الورشة + شارة التوفر
+                          Stack(
+                            children: [
+                              SizedBox(
+                                height: 165,
+                                width: double.infinity,
+                                child: (w.workshopImageUrl ?? '').isNotEmpty
+                                    ? Image.network(
+                                        w.workshopImageUrl!,
+                                        fit: BoxFit.cover,
+                                        errorBuilder: (_, __, ___) =>
+                                            _imagePlaceholder(),
+                                      )
+                                    : _imagePlaceholder(),
+                              ),
+                              Positioned.fill(
+                                child: DecoratedBox(
+                                  decoration: BoxDecoration(
+                                    gradient: LinearGradient(
+                                      begin: Alignment.topCenter,
+                                      end: Alignment.bottomCenter,
+                                      colors: [
+                                        Colors.black.withValues(alpha: 0.15),
+                                        Colors.transparent,
+                                        Colors.black.withValues(alpha: 0.35),
                                       ],
                                     ),
                                   ),
+                                ),
+                              ),
+                              Positioned(
+                                top: 12,
+                                right: 12,
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 12, vertical: 6),
+                                  decoration: BoxDecoration(
+                                    color: w.isAvailable
+                                        ? AppColors.success
+                                        : Colors.red,
+                                    borderRadius: BorderRadius.circular(20),
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color:
+                                            Colors.black.withValues(alpha: 0.2),
+                                        blurRadius: 6,
+                                      ),
+                                    ],
+                                  ),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Container(
+                                        width: 7,
+                                        height: 7,
+                                        decoration: const BoxDecoration(
+                                          color: Colors.white,
+                                          shape: BoxShape.circle,
+                                        ),
+                                      ),
+                                      const SizedBox(width: 6),
+                                      Text(
+                                        w.isAvailable
+                                            ? 'متاح الآن'
+                                            : 'غير متاح',
+                                        style: const TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 11,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ],
                           ),
-                          Positioned(
-                            top: 10,
-                            right: 10,
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                              decoration: BoxDecoration(
-                                color: w.isAvailable ? AppColors.success : Colors.red,
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                              child: Text(
-                                w.isAvailable ? 'متاح الآن' : 'غير متاح',
-                                style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
-                              ),
+
+                          // 2) تفاصيل الورشة (الاسم، العنوان، الرقم) + الأزرار
+                          Padding(
+                            padding: const EdgeInsets.all(16),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  crossAxisAlignment: CrossAxisAlignment.center,
+                                  children: [
+                                    Expanded(
+                                      child: Row(
+                                        children: [
+                                          Flexible(
+                                            child: Text(
+                                              w.fullName ?? 'ورشة صيانة',
+                                              overflow: TextOverflow.ellipsis,
+                                              style: const TextStyle(
+                                                fontWeight: FontWeight.w800,
+                                                fontSize: 17,
+                                                color: AppColors.textPrimary,
+                                              ),
+                                            ),
+                                          ),
+                                          if (w.isTrustedMerchant) ...[
+                                            const SizedBox(width: 6),
+                                            const Icon(Icons.verified,
+                                                color: Colors.blue, size: 18),
+                                          ],
+                                        ],
+                                      ),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(
+                                          horizontal: 10, vertical: 5),
+                                      decoration: BoxDecoration(
+                                        color: AppColors.background,
+                                        borderRadius: BorderRadius.circular(10),
+                                        border:
+                                            Border.all(color: AppColors.border),
+                                      ),
+                                      child: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          const Icon(Icons.phone_outlined,
+                                              size: 14,
+                                              color: AppColors.orange),
+                                          const SizedBox(width: 5),
+                                          Text(
+                                            w.phone ?? '-',
+                                            style: const TextStyle(
+                                              fontWeight: FontWeight.bold,
+                                              fontSize: 12,
+                                              color: AppColors.navy,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 8),
+                                Row(
+                                  children: [
+                                    const Icon(Icons.location_on_outlined,
+                                        size: 16,
+                                        color: AppColors.textSecondary),
+                                    const SizedBox(width: 4),
+                                    Expanded(
+                                      child: Text(
+                                        streetAddress,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: const TextStyle(
+                                          color: AppColors.textSecondary,
+                                          fontSize: 13,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                const Divider(height: 22),
+                                Row(
+                                  children: [
+                                    Expanded(
+                                      flex: 2,
+                                      child: BounceTap(
+                                        onTap: () {
+                                          if (!w.isAvailable) {
+                                            return;
+                                          }
+                                          if (viewerProfile == null) {
+                                            ScaffoldMessenger.of(context)
+                                                .showSnackBar(
+                                              const SnackBar(
+                                                content: Text(
+                                                    'يرجى تسجيل الدخول أولاً لحجز موعد'),
+                                              ),
+                                            );
+                                            return;
+                                          }
+                                          Navigator.push(
+                                            context,
+                                            animatedRoute(BookWorkshopScreen(
+                                                workshop: w)),
+                                          );
+                                        },
+                                        child: Container(
+                                          height: 46,
+                                          alignment: Alignment.center,
+                                          decoration: BoxDecoration(
+                                            color: w.isAvailable
+                                                ? AppColors.orange
+                                                : AppColors.placeholder,
+                                            borderRadius:
+                                                BorderRadius.circular(12),
+                                          ),
+                                          child: Row(
+                                            mainAxisAlignment:
+                                                MainAxisAlignment.center,
+                                            children: [
+                                              Icon(
+                                                Icons.calendar_today_outlined,
+                                                size: 17,
+                                                color: w.isAvailable
+                                                    ? Colors.white
+                                                    : AppColors.textSecondary,
+                                              ),
+                                              const SizedBox(width: 8),
+                                              Text(
+                                                w.isAvailable
+                                                    ? 'حجز موعد'
+                                                    : 'الورشة غير متاحة',
+                                                style: TextStyle(
+                                                  color: w.isAvailable
+                                                      ? Colors.white
+                                                      : AppColors.textSecondary,
+                                                  fontWeight: FontWeight.bold,
+                                                  fontSize: 14,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 10),
+                                    Expanded(
+                                      flex: 1,
+                                      child: BounceTap(
+                                        onTap: () {
+                                          if (viewerProfile == null) {
+                                            ScaffoldMessenger.of(context)
+                                                .showSnackBar(
+                                              const SnackBar(
+                                                content: Text(
+                                                    'يرجى تسجيل الدخول أولاً للدردشة'),
+                                              ),
+                                            );
+                                            return;
+                                          }
+                                          Navigator.push(
+                                            context,
+                                            animatedRoute(
+                                                ChatConversationScreen(
+                                              otherUserId: w.id,
+                                              otherUserName:
+                                                  w.fullName ?? 'الورشة',
+                                              otherUserPhone: w.phone,
+                                            )),
+                                          );
+                                        },
+                                        child: Container(
+                                          height: 46,
+                                          alignment: Alignment.center,
+                                          decoration: BoxDecoration(
+                                            color: AppColors.navy,
+                                            borderRadius:
+                                                BorderRadius.circular(12),
+                                          ),
+                                          child: const Row(
+                                            mainAxisAlignment:
+                                                MainAxisAlignment.center,
+                                            children: [
+                                              Icon(Icons.chat_bubble_outline,
+                                                  size: 16,
+                                                  color: Colors.white),
+                                              SizedBox(width: 6),
+                                              Text(
+                                                'دردشة',
+                                                style: TextStyle(
+                                                  color: Colors.white,
+                                                  fontWeight: FontWeight.bold,
+                                                  fontSize: 13,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ],
                             ),
                           ),
                         ],
                       ),
-                      const Divider(height: 1.5, thickness: 1.5, color: AppColors.navy),
-                      Padding(
-                        padding: const EdgeInsets.all(14),
-                        child: Column(
-                          children: [
-                            Row(
-                              crossAxisAlignment: CrossAxisAlignment.center,
-                              children: [
-                                Expanded(
-                                  flex: 3,
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      Text(w.fullName ?? 'ورشة صيانة', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
-                                      const SizedBox(height: 3),
-                                      Text(streetAddress, style: const TextStyle(color: AppColors.textSecondary, fontSize: 12)),
-                                    ],
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                Expanded(
-                                  flex: 2,
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.center,
-                                    children: [
-                                      const Text('الرقم', style: TextStyle(color: AppColors.textSecondary, fontSize: 11)),
-                                      Text(w.phone ?? '-', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
-                                    ],
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                ElevatedButton.icon(
-                                  style: ElevatedButton.styleFrom(
-                                    backgroundColor: AppColors.navy,
-                                    foregroundColor: Colors.white,
-                                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                                  ),
-                                  onPressed: () {
-                                    if (viewerProfile == null) {
-                                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('يرجى تسجيل الدخول أولاً للدردشة')));
-                                      return;
-                                    }
-                                    Navigator.push(
-                                      context,
-                                      animatedRoute(ChatConversationScreen(
-                                        otherUserId: w.id,
-                                        otherUserName: w.fullName ?? 'الورشة',
-                                        otherUserPhone: w.phone,
-                                      )),
-                                    );
-                                  },
-                                  icon: const Icon(Icons.chat_bubble_outline, size: 16),
-                                  label: const Text('دردشة', style: TextStyle(fontSize: 12)),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 14),
-                            SizedBox(
-                              width: double.infinity,
-                              child: ElevatedButton(
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: w.isAvailable ? AppColors.orange : AppColors.placeholder,
-                                  foregroundColor: w.isAvailable ? Colors.white : AppColors.textSecondary,
-                                  padding: const EdgeInsets.symmetric(vertical: 12),
-                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                                ),
-                                onPressed: !w.isAvailable
-                                    ? null
-                                    : () {
-                                        if (viewerProfile == null) {
-                                          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('يرجى تسجيل الدخول أولاً لحجز موعد')));
-                                          return;
-                                        }
-                                        Navigator.push(context, animatedRoute(BookWorkshopScreen(workshop: w)));
-                                      },
-                                child: Text(
-                                  w.isAvailable ? 'حجز موعد' : 'الورشة غير متاحة حالياً',
-                                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              );
-            },
+                    ),
+                  );
+                },
+              ),
+            ),
           );
         },
+      ),
+    );
+  }
+
+  Widget _imagePlaceholder() {
+    return Container(
+      color: AppColors.placeholder,
+      child: const Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(Icons.build_circle_outlined,
+              size: 42, color: AppColors.textSecondary),
+          SizedBox(height: 4),
+          Text('صورة الورشة', style: TextStyle(color: AppColors.textSecondary)),
+        ],
       ),
     );
   }
@@ -204,9 +403,18 @@ class _BookWorkshopScreenState extends State<BookWorkshopScreen> {
   bool _submitting = false;
 
   final List<String> _hourlySlots = const [
-    '08:00 ص', '09:00 ص', '10:00 ص', '11:00 ص',
-    '12:00 م', '01:00 م', '02:00 م', '03:00 م',
-    '04:00 م', '05:00 م', '06:00 م', '07:00 م',
+    '08:00 ص',
+    '09:00 ص',
+    '10:00 ص',
+    '11:00 ص',
+    '12:00 م',
+    '01:00 م',
+    '02:00 م',
+    '03:00 م',
+    '04:00 م',
+    '05:00 م',
+    '06:00 م',
+    '07:00 م',
   ];
 
   @override
@@ -227,13 +435,18 @@ class _BookWorkshopScreenState extends State<BookWorkshopScreen> {
         'workshop_id': widget.workshop.id,
         'appointment_date': _formattedDate,
         'appointment_time': _selectedHour,
-        'service_description': _descCtrl.text.trim().isEmpty ? 'فحص وصيانة مركبة' : _descCtrl.text.trim(),
+        'service_description': _descCtrl.text.trim().isEmpty
+            ? 'فحص وصيانة مركبة'
+            : _descCtrl.text.trim(),
         'status': 'pending',
         'progress_step': 'pending',
       });
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('تم إرسال طلب الموعد للورشة بنجاح!'), backgroundColor: AppColors.success),
+          const SnackBar(
+            content: Text('تم إرسال طلب الموعد للورشة بنجاح!'),
+            backgroundColor: AppColors.success,
+          ),
         );
         Navigator.pop(context);
       }
@@ -247,23 +460,32 @@ class _BookWorkshopScreenState extends State<BookWorkshopScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text('حجز موعد - ${widget.workshop.fullName ?? "الورشة"}')),
+      appBar: AppBar(
+          title: Text('حجز موعد - ${widget.workshop.fullName ?? "الورشة"}')),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
           FadeSlideIn(
             child: Container(
-              decoration: BoxDecoration(color: AppColors.surface, borderRadius: BorderRadius.circular(16), border: Border.all(color: AppColors.border)),
+              decoration: BoxDecoration(
+                color: AppColors.surface,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: AppColors.border),
+              ),
               child: CalendarDatePicker(
                 initialDate: _selectedDate,
                 firstDate: DateTime.now(),
                 lastDate: DateTime.now().add(const Duration(days: 60)),
-                onDateChanged: (newDate) => setState(() => _selectedDate = newDate),
+                onDateChanged: (newDate) =>
+                    setState(() => _selectedDate = newDate),
               ),
             ),
           ),
           const SizedBox(height: 16),
-          const Text('اختر الساعة (فاصل ساعة بين كل موعد وآخر)', style: TextStyle(fontWeight: FontWeight.bold)),
+          const Text(
+            'اختر الساعة (فاصل ساعة بين كل موعد وآخر)',
+            style: TextStyle(fontWeight: FontWeight.bold),
+          ),
           const SizedBox(height: 10),
           Wrap(
             spacing: 8,
@@ -274,7 +496,8 @@ class _BookWorkshopScreenState extends State<BookWorkshopScreen> {
                 label: Text(slot),
                 selected: selected,
                 selectedColor: AppColors.navy,
-                labelStyle: TextStyle(color: selected ? Colors.white : AppColors.textPrimary),
+                labelStyle: TextStyle(
+                    color: selected ? Colors.white : AppColors.textPrimary),
                 onSelected: (_) => setState(() => _selectedHour = slot),
               );
             }).toList(),
@@ -283,13 +506,28 @@ class _BookWorkshopScreenState extends State<BookWorkshopScreen> {
           TextField(
             controller: _descCtrl,
             maxLines: 2,
-            decoration: InputDecoration(labelText: 'وصف المشكلة أو الخدمة المطلوبة', filled: true, fillColor: AppColors.surface, border: OutlineInputBorder(borderRadius: BorderRadius.circular(14))),
+            decoration: InputDecoration(
+              labelText: 'وصف المشكلة أو الخدمة المطلوبة',
+              filled: true,
+              fillColor: AppColors.surface,
+              border:
+                  OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+            ),
           ),
           const SizedBox(height: 22),
           ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: AppColors.orange, foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(vertical: 16), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14))),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.orange,
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(vertical: 16),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14)),
+            ),
             onPressed: _submitting ? null : _submitBooking,
-            child: _submitting ? const CircularProgressIndicator(color: Colors.white) : const Text('تأكيد حجز الموعد', style: TextStyle(fontWeight: FontWeight.bold)),
+            child: _submitting
+                ? const CircularProgressIndicator(color: Colors.white)
+                : const Text('تأكيد حجز الموعد',
+                    style: TextStyle(fontWeight: FontWeight.bold)),
           ),
         ],
       ),
