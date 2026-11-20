@@ -1,5 +1,5 @@
 name: auto_parts_app
-description: تطبيق قطع غيار السيارات وطلب المساعدة الطارئة ولوحة تحكم الورشة.
+description: تطبيق غيارك لقطع غيار السيارات وورش الصيانة والطوارئ.
 publish_to: 'none'
 version: 1.0.0+1
 
@@ -9,25 +9,40 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  google_fonts: 9.0.0
-  cupertino_icons: ^1.0.8
+  google_fonts: ^9.0.0
+  cupertino_icons: ^2.0.0
   supabase_flutter: ^2.18.3
   http: ^1.2.2
   geolocator: ^14.1.1
   geocoding: ^5.0.0
   flutter_map: ^8.3.2
-  latlong2: ^0.9.1
+  latlong2: ^0.10.1
   webview_flutter: ^4.13.1
   image_picker: ^1.2.1
   video_player: ^2.14.1
-  material_ui: ^1.11.0
   url_launcher: ^6.3.3
   live_activities: ^2.6.0
+  material_ui: any
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
-  flutter_lints: ^4.0.0
+  flutter_lints: ^6.0.0
+  flutter_launcher_icons: ^0.14.3
 
 flutter:
   uses-material-design: true
+  assets:
+    - assets/ghayarak-icon.png
+    - assets/gear.png
+    - assets/ring.png
+    - assets/wrench.png
+    
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: "assets/ghayarak-icon.png"
+  background_color_ios: "#121A27"
+  remove_alpha_ios: true
+  adaptive_icon_background: "#121A27"
+  adaptive_icon_foreground: "assets/ghayarak-icon.png"
