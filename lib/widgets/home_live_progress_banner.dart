@@ -1,5 +1,6 @@
 import 'package:material_ui/material_ui.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../models/db_models.dart';
 import '../services/dynamic_island_service.dart';
 import '../services/live_progress_tracker.dart';
@@ -18,26 +19,42 @@ class _HomeLiveProgressBannerState extends State<HomeLiveProgressBanner> {
   final _db = Supabase.instance.client;
   final _tracker = LiveProgressTracker.instance;
   final Set<String> _startedTracking = {};
+  final Map<String, ({double? lat, double? lng, String address})> _workshopLocations = {};
 
   Future<void> _ensureWorkshopGps(Map<String, dynamic> appt) async {
     final id = appt['id'] as String;
     if (_startedTracking.contains(id)) {
       return;
     }
-    if (appt['status'] == 'accepted' && appt['progress_step'] == 'on_the_way') {
-      _startedTracking.add(id);
-      final wId = appt['workshop_id'] as String?;
-      if (wId == null) {
-        return;
-      }
+    _startedTracking.add(id);
+
+    final wId = appt['workshop_id'] as String?;
+    if (wId == null) {
+      return;
+    }
+    try {
       final w = await _db
           .from('customers')
-          .select('workshop_latitude, workshop_longitude')
+          .select('workshop_latitude, workshop_longitude, street_name, workshop_address')
           .eq('id', wId)
           .maybeSingle();
+
       final lat = (w?['workshop_latitude'] as num?)?.toDouble();
       final lng = (w?['workshop_longitude'] as num?)?.toDouble();
-      if (lat != null && lng != null) {
+      final street = (w?['street_name'] as String?) ?? '';
+      final addr = (w?['workshop_address'] as String?) ?? '';
+      final fallbackAddr = street.isNotEmpty ? street : addr;
+
+      if (mounted) {
+        setState(() {
+          _workshopLocations[wId] = (lat: lat, lng: lng, address: fallbackAddr);
+        });
+      }
+
+      if (lat != null &&
+          lng != null &&
+          appt['status'] == 'accepted' &&
+          appt['progress_step'] == 'on_the_way') {
         await _tracker.startTrackingToWorkshop(
           appointmentId: id,
           workshopLat: lat,
@@ -45,7 +62,20 @@ class _HomeLiveProgressBannerState extends State<HomeLiveProgressBanner> {
           workshopUserId: wId,
         );
       }
+    } catch (_) {}
+  }
+
+  Future<void> _openInGoogleMaps({double? lat, double? lng, String? addressQuery}) async {
+    Uri uri;
+    if (lat != null && lng != null) {
+      uri = Uri.parse(
+        'https://www.google.com/maps/dir/?api=1&destination=$lat,$lng&travelmode=driving',
+      );
+    } else {
+      final q = Uri.encodeComponent((addressQuery ?? 'Amman Jordan').trim());
+      uri = Uri.parse('https://www.google.com/maps/search/?api=1&query=$q');
     }
+    await launchUrl(uri, mode: LaunchMode.externalApplication);
   }
 
   double _workshopProgressValue(String step) {
@@ -130,8 +160,7 @@ class _HomeLiveProgressBannerState extends State<HomeLiveProgressBanner> {
 
             return Column(
               children: [
-                // 1) بطاقة تقدم موعد الورشة على الهوم + Dynamic Island
-                if (activeAppts.isNotEmpty) ...[
+                if (activeAppts.isNotEmpty)
                   Builder(builder: (_) {
                     final a = activeAppts.first;
                     final step = (a['progress_step'] as String?) ?? 'pending';
@@ -141,6 +170,8 @@ class _HomeLiveProgressBannerState extends State<HomeLiveProgressBanner> {
                         : _workshopStepLabel(step);
 
                     _ensureWorkshopGps(a);
+                    final wLoc = _workshopLocations[a['workshop_id']];
+
                     DynamicIslandService.instance.syncProgress(
                       keyId: 'appt_${a['id']}',
                       title: 'صيانة الورشة',
@@ -166,23 +197,27 @@ class _HomeLiveProgressBannerState extends State<HomeLiveProgressBanner> {
                                     workshopUserId: a['workshop_id'],
                                   )
                               : null,
+                          onOpenMaps: () => _openInGoogleMaps(
+                            lat: wLoc?.lat,
+                            lng: wLoc?.lng,
+                            addressQuery: wLoc?.address,
+                          ),
                         );
                       },
                     );
                   }),
-                ],
-
-                // 2) بطاقة تقدم طلب الطوارئ على الهوم + Dynamic Island
-                if (activeEmgs.isNotEmpty) ...[
+                if (activeEmgs.isNotEmpty)
                   Builder(builder: (_) {
                     final e = activeEmgs.first;
                     final step = (e['progress_step'] as String?) ?? 'pending';
                     final progress = _emergencyProgressValue(step);
                     final label = _emergencyStepLabel(step);
+                    final lat = (e['pickup_latitude'] as num?)?.toDouble();
+                    final lng = (e['pickup_longitude'] as num?)?.toDouble();
 
                     DynamicIslandService.instance.syncProgress(
                       keyId: 'emg_${e['id']}',
-                      title: 'طوارئ السيارات',
+                      title: 'طوارئ غيارك',
                       statusText: label,
                       progress: progress,
                       etaOrDistance: (e['estimated_time'] as String?) ?? '',
@@ -193,9 +228,13 @@ class _HomeLiveProgressBannerState extends State<HomeLiveProgressBanner> {
                       title: 'طلب الطوارئ المباشر (${e['description'] ?? ""})',
                       statusText: label,
                       progress: progress,
+                      onOpenMaps: () => _openInGoogleMaps(
+                        lat: lat,
+                        lng: lng,
+                        addressQuery: e['dropoff_address'] as String?,
+                      ),
                     );
                   }),
-                ],
               ],
             );
           },
@@ -211,6 +250,7 @@ class _HomeLiveProgressBannerState extends State<HomeLiveProgressBanner> {
     required double progress,
     String? actionLabel,
     VoidCallback? onAction,
+    VoidCallback? onOpenMaps,
   }) {
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
@@ -230,40 +270,66 @@ class _HomeLiveProgressBannerState extends State<HomeLiveProgressBanner> {
                 child: Text(
                   title,
                   style: const TextStyle(
-                      color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 13,
+                  ),
                 ),
               ),
               Text(
                 '${(progress * 100).toInt()}%',
                 style: const TextStyle(
-                    color: AppColors.orange, fontWeight: FontWeight.bold, fontSize: 13),
+                  color: AppColors.orange,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 13,
+                ),
               ),
             ],
           ),
           const SizedBox(height: 6),
           Text(statusText, style: const TextStyle(color: Colors.white70, fontSize: 12)),
           const SizedBox(height: 10),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(8),
-            child: LinearProgressIndicator(
-              value: progress,
-              minHeight: 7,
-              color: AppColors.orange,
-              backgroundColor: Colors.white24,
+          TweenAnimationBuilder<double>(
+            tween: Tween(begin: 0, end: progress),
+            duration: const Duration(milliseconds: 500),
+            curve: Curves.easeOutCubic,
+            builder: (_, val, __) => ClipRRect(
+              borderRadius: BorderRadius.circular(8),
+              child: LinearProgressIndicator(
+                value: val,
+                minHeight: 7,
+                color: AppColors.orange,
+                backgroundColor: Colors.white24,
+              ),
             ),
           ),
-          if (actionLabel != null && onAction != null) ...[
+          if (onOpenMaps != null || (actionLabel != null && onAction != null)) ...[
             const SizedBox(height: 10),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: TextButton(
-                style: TextButton.styleFrom(
-                  backgroundColor: Colors.white12,
-                  foregroundColor: Colors.white,
-                ),
-                onPressed: onAction,
-                child: Text(actionLabel, style: const TextStyle(fontSize: 12)),
-              ),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                if (onOpenMaps != null)
+                  ElevatedButton.icon(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.orange,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    ),
+                    onPressed: onOpenMaps,
+                    icon: const Icon(Icons.map_outlined, size: 16),
+                    label: const Text('فتح الموقع على Google Maps', style: TextStyle(fontSize: 12)),
+                  ),
+                if (actionLabel != null && onAction != null)
+                  TextButton(
+                    style: TextButton.styleFrom(
+                      backgroundColor: Colors.white12,
+                      foregroundColor: Colors.white,
+                    ),
+                    onPressed: onAction,
+                    child: Text(actionLabel, style: const TextStyle(fontSize: 12)),
+                  ),
+              ],
             ),
           ],
         ],

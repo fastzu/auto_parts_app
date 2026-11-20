@@ -24,7 +24,6 @@ Route<T> animatedRoute<T>(Widget page) {
   );
 }
 
-/// شعار غيارك مع تفاعل دوران لطيف عند الضغط عليه
 class GhiyarakLogo extends StatefulWidget {
   final double size;
   const GhiyarakLogo({super.key, this.size = 40});
@@ -67,9 +66,10 @@ class _GhiyarakLogoState extends State<GhiyarakLogo> {
   }
 }
 
-/// شاشة السبلاش المتحركة بالطبقات الثلاث + وهج خلفي + شريط تحميل
+/// السبلاش المتحرك باستخدام الصور الثلاث المنفصلة: gear.png + ring.png + wrench.png
 class GhiyarakAnimatedSplash extends StatefulWidget {
-  const GhiyarakAnimatedSplash({super.key});
+  final VoidCallback? onCompleted;
+  const GhiyarakAnimatedSplash({super.key, this.onCompleted});
 
   @override
   State<GhiyarakAnimatedSplash> createState() => _GhiyarakAnimatedSplashState();
@@ -82,8 +82,21 @@ class _GhiyarakAnimatedSplashState extends State<GhiyarakAnimatedSplash>
   @override
   void initState() {
     super.initState();
-    _ctrl = AnimationController(vsync: this, duration: const Duration(milliseconds: 2400))
-      ..forward();
+    _ctrl = AnimationController(vsync: this, duration: const Duration(milliseconds: 2400));
+    _ctrl.addStatusListener((status) {
+      if (status == AnimationStatus.completed) {
+        Future.delayed(const Duration(milliseconds: 600), () {
+          if (mounted) {
+            widget.onCompleted?.call();
+          }
+        });
+      }
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _ctrl.forward();
+      }
+    });
   }
 
   @override
@@ -106,56 +119,41 @@ class _GhiyarakAnimatedSplashState extends State<GhiyarakAnimatedSplash>
             final wrenchT = Curves.easeOutBack.transform(((t - 0.37) / 0.38).clamp(0.0, 1.0));
             final titleT = Curves.easeOutCubic.transform(((t - 0.62) / 0.29).clamp(0.0, 1.0));
             final subT = Curves.easeOutCubic.transform(((t - 0.71) / 0.29).clamp(0.0, 1.0));
-            final glowAlpha = (0.18 + 0.14 * math.sin(t * math.pi * 2)).clamp(0.08, 0.35);
 
             return Column(
               mainAxisSize: MainAxisSize.min,
               children: [
                 SizedBox(
-                  width: 205,
-                  height: 205,
+                  width: 195,
+                  height: 195,
                   child: Stack(
                     alignment: Alignment.center,
                     children: [
-                      // وهج خلفي متوهج
-                      Container(
-                        width: 170 * (0.8 + 0.2 * gearT),
-                        height: 170 * (0.8 + 0.2 * gearT),
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          boxShadow: [
-                            BoxShadow(
-                              color: AppColors.orange.withValues(alpha: glowAlpha),
-                              blurRadius: 55,
-                              spreadRadius: 12,
-                            ),
-                          ],
-                        ),
-                      ),
+                      // 1) صورة الترس: gear.png
                       Opacity(
                         opacity: gearT,
                         child: Transform.rotate(
                           angle: -math.pi * (1 - gearT),
                           child: Transform.scale(
                             scale: 0.4 + 0.6 * gearT,
-                            child: Image.asset('assets/gear.png', width: 175, height: 175),
+                            child: Image.asset('assets/gear.png', width: 195, height: 195),
                           ),
                         ),
                       ),
-                      Opacity(
-                        opacity: ringT,
-                        child: Transform.scale(
-                          scale: 0.6 + 0.4 * ringT,
-                          child: Image.asset('assets/ring.png', width: 175, height: 175),
+                      // 2) صورة الحلقة: ring.png (تُرسم دائرياً تدريجياً)
+                      if (ringT > 0)
+                        ClipPath(
+                          clipper: _RingSweepClipper(ringT),
+                          child: Image.asset('assets/ring.png', width: 195, height: 195),
                         ),
-                      ),
+                      // 3) صورة المفتاح: wrench.png
                       Opacity(
                         opacity: wrenchT.clamp(0.0, 1.0),
                         child: Transform.rotate(
                           angle: (-140 * math.pi / 180) * (1 - wrenchT),
                           child: Transform.scale(
                             scale: (0.2 + 0.8 * wrenchT).clamp(0.01, 1.3),
-                            child: Image.asset('assets/wrench.png', width: 175, height: 175),
+                            child: Image.asset('assets/wrench.png', width: 195, height: 195),
                           ),
                         ),
                       ),
@@ -169,7 +167,7 @@ class _GhiyarakAnimatedSplashState extends State<GhiyarakAnimatedSplash>
                     offset: Offset(0, 14 * (1 - titleT)),
                     child: const Text(
                       'غيارك',
-                      style: TextStyle(color: Colors.white, fontSize: 42, fontWeight: FontWeight.w900),
+                      style: TextStyle(color: Colors.white, fontSize: 44, fontWeight: FontWeight.w900),
                     ),
                   ),
                 ),
@@ -184,19 +182,6 @@ class _GhiyarakAnimatedSplashState extends State<GhiyarakAnimatedSplash>
                     ),
                   ),
                 ),
-                const SizedBox(height: 28),
-                SizedBox(
-                  width: 140,
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(10),
-                    child: LinearProgressIndicator(
-                      value: t,
-                      minHeight: 4,
-                      color: AppColors.orange,
-                      backgroundColor: Colors.white12,
-                    ),
-                  ),
-                ),
               ],
             );
           },
@@ -206,7 +191,27 @@ class _GhiyarakAnimatedSplashState extends State<GhiyarakAnimatedSplash>
   }
 }
 
-/// شيمر أنيق أثناء تحميل المنتجات من القاعدة
+class _RingSweepClipper extends CustomClipper<Path> {
+  final double progress;
+  _RingSweepClipper(this.progress);
+
+  @override
+  Path getClip(Size size) {
+    final p = progress.clamp(0.0, 1.0);
+    if (p >= 1.0) {
+      return Path()..addRect(Rect.fromLTWH(0, 0, size.width, size.height));
+    }
+    final center = Offset(size.width / 2, size.height / 2);
+    return Path()
+      ..moveTo(center.dx, center.dy)
+      ..arcTo(Rect.fromCircle(center: center, radius: size.width), 0, 2 * math.pi * p, false)
+      ..close();
+  }
+
+  @override
+  bool shouldReclip(covariant _RingSweepClipper oldClipper) => oldClipper.progress != progress;
+}
+
 class ShimmerProductsLoading extends StatefulWidget {
   const ShimmerProductsLoading({super.key});
 

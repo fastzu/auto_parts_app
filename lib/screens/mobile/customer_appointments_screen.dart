@@ -1,5 +1,6 @@
 import 'package:material_ui/material_ui.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../config/env_config.dart';
 import '../../models/db_models.dart';
 import '../../services/live_progress_tracker.dart';
@@ -25,9 +26,10 @@ class CustomerAppointmentsScreen extends StatefulWidget {
 
 class _CustomerAppointmentsScreenState extends State<CustomerAppointmentsScreen> {
   final _db = Supabase.instance.client;
-  final _tracker = LiveProgressTracker();
+  final _tracker = LiveProgressTracker.instance;
   final _notifs = NotificationsService();
   final Set<String> _trackingStartedIds = {};
+  final Map<String, ({double? lat, double? lng, String address})> _workshopLocs = {};
 
   @override
   void dispose() {
@@ -40,30 +42,59 @@ class _CustomerAppointmentsScreenState extends State<CustomerAppointmentsScreen>
     if (_trackingStartedIds.contains(id)) {
       return;
     }
-    if (appt['status'] == 'accepted' && appt['progress_step'] == 'on_the_way') {
-      _trackingStartedIds.add(id);
-      final workshopId = appt['workshop_id'] as String?;
-      if (workshopId == null) {
-        return;
-      }
+    _trackingStartedIds.add(id);
 
-      final workshop = await _db
-          .from('customers')
-          .select('workshop_latitude, workshop_longitude')
-          .eq('id', workshopId)
-          .maybeSingle();
-
-      final lat = (workshop?['workshop_latitude'] as num?)?.toDouble();
-      final lng = (workshop?['workshop_longitude'] as num?)?.toDouble();
-      if (lat != null && lng != null) {
-        _tracker.startTrackingToWorkshop(
-          appointmentId: id,
-          workshopLat: lat,
-          workshopLng: lng,
-          workshopUserId: workshopId,
-        );
-      }
+    final workshopId = appt['workshop_id'] as String?;
+    if (workshopId == null) {
+      return;
     }
+
+    final workshop = await _db
+        .from('customers')
+        .select('workshop_latitude, workshop_longitude, street_name, workshop_address')
+        .eq('id', workshopId)
+        .maybeSingle();
+
+    final lat = (workshop?['workshop_latitude'] as num?)?.toDouble();
+    final lng = (workshop?['workshop_longitude'] as num?)?.toDouble();
+    final street = (workshop?['street_name'] as String?) ?? '';
+    final addr = (workshop?['workshop_address'] as String?) ?? '';
+
+    if (mounted) {
+      setState(() {
+        _workshopLocs[workshopId] = (
+          lat: lat,
+          lng: lng,
+          address: street.isNotEmpty ? street : addr,
+        );
+      });
+    }
+
+    if (appt['status'] == 'accepted' &&
+        appt['progress_step'] == 'on_the_way' &&
+        lat != null &&
+        lng != null) {
+      await _tracker.startTrackingToWorkshop(
+        appointmentId: id,
+        workshopLat: lat,
+        workshopLng: lng,
+        workshopUserId: workshopId,
+      );
+    }
+  }
+
+  Future<void> _openWorkshopMaps(String? workshopId) async {
+    final loc = workshopId != null ? _workshopLocs[workshopId] : null;
+    Uri uri;
+    if (loc?.lat != null && loc?.lng != null) {
+      uri = Uri.parse(
+        'https://www.google.com/maps/dir/?api=1&destination=${loc!.lat},${loc.lng}&travelmode=driving',
+      );
+    } else {
+      final q = Uri.encodeComponent((loc?.address ?? 'Amman Jordan').trim());
+      uri = Uri.parse('https://www.google.com/maps/search/?api=1&query=$q');
+    }
+    await launchUrl(uri, mode: LaunchMode.externalApplication);
   }
 
   Future<void> _acceptProposedReschedule(Map<String, dynamic> appt) async {
@@ -189,8 +220,8 @@ class _CustomerAppointmentsScreenState extends State<CustomerAppointmentsScreen>
                               const SizedBox(height: 6),
                               Text(
                                 appt['service_description'] ?? 'صيانة مركبة',
-                                style:
-                                    const TextStyle(color: AppColors.textSecondary, fontSize: 13),
+                                style: const TextStyle(
+                                    color: AppColors.textSecondary, fontSize: 13),
                               ),
                               if (status == 'reschedule_proposed') ...[
                                 const SizedBox(height: 12),
@@ -246,7 +277,7 @@ class _CustomerAppointmentsScreenState extends State<CustomerAppointmentsScreen>
                               ],
                               if (status == 'accepted' || status == 'completed') ...[
                                 const Divider(height: 22),
-                                _buildProgressStepper(step),
+                                _buildProgressStepper(step, appt['workshop_id'] as String?),
                               ],
                               if (showPayments &&
                                   step == 'awaiting_payment' &&
@@ -305,7 +336,7 @@ class _CustomerAppointmentsScreenState extends State<CustomerAppointmentsScreen>
     );
   }
 
-  Widget _buildProgressStepper(String step) {
+  Widget _buildProgressStepper(String step, String? workshopId) {
     final arrived = step != 'pending' && step != 'on_the_way';
     final repairSteps = [
       'arrived_at_workshop',
@@ -328,17 +359,35 @@ class _CustomerAppointmentsScreenState extends State<CustomerAppointmentsScreen>
               size: 18,
             ),
             const SizedBox(width: 6),
-            Text(
-              arrived
-                  ? 'تم الوصول إلى الورشة (تلقائي عبر GPS)'
-                  : 'في الطريق إلى الورشة (يتحدث تلقائياً)...',
-              style: TextStyle(
-                fontWeight: FontWeight.bold,
-                fontSize: 12,
-                color: arrived ? AppColors.success : AppColors.orange,
+            Expanded(
+              child: Text(
+                arrived
+                    ? 'تم الوصول إلى الورشة (تلقائي عبر GPS)'
+                    : 'في الطريق إلى الورشة (يتحدث تلقائياً)...',
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 12,
+                  color: arrived ? AppColors.success : AppColors.orange,
+                ),
               ),
             ),
           ],
+        ),
+        const SizedBox(height: 8),
+        SizedBox(
+          width: double.infinity,
+          child: OutlinedButton.icon(
+            style: OutlinedButton.styleFrom(
+              side: const BorderSide(color: AppColors.navy),
+              padding: const EdgeInsets.symmetric(vertical: 10),
+            ),
+            onPressed: () => _openWorkshopMaps(workshopId),
+            icon: const Icon(Icons.map_outlined, color: AppColors.navy, size: 18),
+            label: const Text(
+              'فتح موقع الورشة على Google Maps',
+              style: TextStyle(color: AppColors.navy, fontWeight: FontWeight.bold, fontSize: 12),
+            ),
+          ),
         ),
         if (arrived) ...[
           const SizedBox(height: 10),

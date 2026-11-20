@@ -6,11 +6,7 @@ class PaymentWebViewScreen extends StatefulWidget {
   final String redirectUrl;
   final String title;
 
-  const PaymentWebViewScreen({
-    super.key,
-    required this.redirectUrl,
-    required this.title,
-  });
+  const PaymentWebViewScreen({super.key, required this.redirectUrl, required this.title});
 
   @override
   State<PaymentWebViewScreen> createState() => _PaymentWebViewScreenState();
@@ -30,10 +26,11 @@ class _PaymentWebViewScreenState extends State<PaymentWebViewScreen> {
           onPageStarted: (_) => setState(() => _isLoading = true),
           onPageFinished: (url) {
             setState(() => _isLoading = false);
-            if (url.contains('payment-webhook') &&
-                url.contains('mode=return')) {
+            if (url.contains('payment-webhook') && url.contains('mode=return')) {
               Future.delayed(const Duration(milliseconds: 900), () {
-                if (mounted) Navigator.of(context).pop(true);
+                if (mounted) {
+                  Navigator.of(context).pop(true);
+                }
               });
             }
           },
@@ -48,18 +45,17 @@ class _PaymentWebViewScreenState extends State<PaymentWebViewScreen> {
       appBar: AppBar(
         backgroundColor: AppColors.navy,
         foregroundColor: Colors.white,
-        title: Text(widget.title,
-            style: const TextStyle(color: Colors.white, fontSize: 16)),
+        iconTheme: const IconThemeData(color: Colors.white),
+        title: Text(widget.title, style: const TextStyle(color: Colors.white, fontSize: 16)),
         leading: IconButton(
-          icon: const Icon(Icons.close),
+          icon: const Icon(Icons.close, color: Colors.white),
           onPressed: () => Navigator.of(context).pop(false),
         ),
       ),
       body: Stack(
         children: [
           WebViewWidget(controller: _webController),
-          if (_isLoading)
-            const LinearProgressIndicator(color: AppColors.orange),
+          if (_isLoading) const LinearProgressIndicator(color: AppColors.orange),
         ],
       ),
     );

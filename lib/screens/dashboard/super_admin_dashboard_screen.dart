@@ -91,15 +91,7 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
           EnvConfig.winchEnabled.value = map['enable_winch'] == 'true';
         }
       });
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-              content: Text('تعذر تحميل الإعدادات: $e'),
-              backgroundColor: Colors.red),
-        );
-      }
-    }
+    } catch (_) {}
   }
 
   Future<void> _updateSingleSetting(String key, String value) async {
@@ -108,11 +100,7 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('لم يتم الحفظ في القاعدة (تأكد من صلاحيات SQL): $e'),
-            backgroundColor: Colors.red,
-          ),
-        );
+            SnackBar(content: Text('خطأ: $e'), backgroundColor: Colors.red));
       }
     }
   }
@@ -140,20 +128,14 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
       ];
       await _db.from('system_settings').upsert(updates);
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('تم حفظ جميع إعدادات السوبر أدمن وتطبيقها فوراً!'),
-            backgroundColor: AppColors.success,
-          ),
-        );
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('تم حفظ جميع إعدادات السوبر أدمن!'),
+            backgroundColor: AppColors.success));
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-              content: Text('خطأ أثناء الحفظ: $e'),
-              backgroundColor: Colors.red),
-        );
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text('خطأ أثناء الحفظ: $e'), backgroundColor: Colors.red));
       }
     } finally {
       if (mounted) {
@@ -165,10 +147,8 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
-      listenable: Listenable.merge([
-        EnvConfig.paymentsEnabled,
-        EnvConfig.winchEnabled,
-      ]),
+      listenable:
+          Listenable.merge([EnvConfig.paymentsEnabled, EnvConfig.winchEnabled]),
       builder: (context, _) {
         final showPayments = EnvConfig.paymentsEnabled.value;
         final showWinch = EnvConfig.winchEnabled.value;
@@ -202,18 +182,26 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
               : AppBar(
                   backgroundColor: AppColors.navy,
                   foregroundColor: Colors.white,
-                  title: Text(
-                    currentTitle,
-                    style: const TextStyle(color: Colors.white, fontSize: 16),
+                  iconTheme: const IconThemeData(color: Colors.white),
+                  actionsIconTheme: const IconThemeData(color: Colors.white),
+                  leading: Builder(
+                    builder: (ctx) => IconButton(
+                      icon: const Icon(Icons.menu, color: Colors.white),
+                      onPressed: () => Scaffold.of(ctx).openDrawer(),
+                    ),
                   ),
+                  title: Text(currentTitle,
+                      style:
+                          const TextStyle(color: Colors.white, fontSize: 16)),
                   actions: [
                     IconButton(
                       tooltip: 'العودة للرئيسية',
-                      icon: const Icon(Icons.storefront),
+                      icon: const Icon(Icons.storefront, color: Colors.white),
                       onPressed: _goHome,
                     ),
                     IconButton(
-                      icon: const Icon(Icons.logout),
+                      tooltip: 'تسجيل الخروج',
+                      icon: const Icon(Icons.logout, color: Colors.white),
                       onPressed: () async {
                         await _db.auth.signOut();
                         if (context.mounted) {
@@ -240,7 +228,7 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
                       4 => _allProductsControlView(),
                       5 => _operationsMonitorView(showWinch),
                       6 => _financeAndSubscriptionsView(),
-                      _ => _overviewView(showPayments, showWinch),
+                      _ => _overviewView(showPayments, showWinch, isWide),
                     },
                   ),
                 ),
@@ -263,15 +251,19 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Text(
-                'لوحة السوبر أدمن',
-                style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold),
+              const Row(
+                children: [
+                  GhiyarakLogo(size: 32),
+                  SizedBox(width: 8),
+                  Text('لوحة غيارك',
+                      style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold)),
+                ],
               ),
               IconButton(
-                icon: const Icon(Icons.logout, color: Colors.white70, size: 20),
+                icon: const Icon(Icons.logout, color: Colors.white, size: 20),
                 onPressed: () async {
                   await _db.auth.signOut();
                   if (mounted) {
@@ -285,11 +277,9 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
           const SizedBox(height: 6),
           ListTile(
             contentPadding: EdgeInsets.zero,
-            leading: const Icon(Icons.storefront, color: Colors.white70),
-            title: const Text(
-              'العودة للرئيسية (المتجر)',
-              style: TextStyle(color: Colors.white70, fontSize: 13),
-            ),
+            leading: const Icon(Icons.storefront, color: Colors.white),
+            title: const Text('العودة للرئيسية (المتجر)',
+                style: TextStyle(color: Colors.white, fontSize: 13)),
             onTap: () => _goHome(closeDrawerFirst: isDrawer),
           ),
           const Divider(color: Colors.white24),
@@ -306,20 +296,15 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
                     shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(12)),
                     tileColor: active ? AppColors.orange : Colors.transparent,
-                    leading: Icon(
-                      item.icon,
-                      color: active ? Colors.white : Colors.white70,
-                      size: 20,
-                    ),
-                    title: Text(
-                      item.title,
-                      style: TextStyle(
+                    leading: Icon(item.icon,
                         color: active ? Colors.white : Colors.white70,
-                        fontWeight:
-                            active ? FontWeight.bold : FontWeight.normal,
-                        fontSize: 13,
-                      ),
-                    ),
+                        size: 20),
+                    title: Text(item.title,
+                        style: TextStyle(
+                            color: active ? Colors.white : Colors.white70,
+                            fontWeight:
+                                active ? FontWeight.bold : FontWeight.normal,
+                            fontSize: 13)),
                     onTap: () {
                       setState(() => _tab = item.id);
                       if (isDrawer) {
@@ -336,7 +321,7 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
     );
   }
 
-  Widget _overviewView(bool showPayments, bool showWinch) {
+  Widget _overviewView(bool showPayments, bool showWinch, bool isWide) {
     return StreamBuilder<List<Map<String, dynamic>>>(
       stream: _db.from('products').stream(primaryKey: ['id']),
       builder: (_, prodSnap) {
@@ -366,42 +351,76 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
                     final merchantsCount =
                         users.where((u) => u['role'] == 'merchant').length;
 
+                    final cards = [
+                      (
+                        title: 'إجمالي الحسابات',
+                        val: users.length,
+                        icon: Icons.people
+                      ),
+                      (
+                        title: 'الورش والميكانيكيين',
+                        val: workshopsCount,
+                        icon: Icons.build
+                      ),
+                      (
+                        title: 'تجار قطع الغيار',
+                        val: merchantsCount,
+                        icon: Icons.storefront
+                      ),
+                      (
+                        title: 'منشورات القطع',
+                        val: prods.length,
+                        icon: Icons.inventory_2
+                      ),
+                      (
+                        title: 'إجمالي المشاهدات',
+                        val: totalViews,
+                        icon: Icons.visibility
+                      ),
+                      (
+                        title: 'إجمالي النقرات',
+                        val: totalClicks,
+                        icon: Icons.touch_app
+                      ),
+                      (
+                        title: 'طلبات الطوارئ',
+                        val: reqs.length,
+                        icon: Icons.car_crash
+                      ),
+                      (
+                        title: 'مواعيد الورش',
+                        val: appts.length,
+                        icon: Icons.event_available
+                      ),
+                    ];
+
                     return ListView(
-                      padding: const EdgeInsets.all(24),
+                      padding: const EdgeInsets.all(16),
                       children: [
-                        const Text(
-                          'الرؤية الشاملة للمنصة',
-                          style: TextStyle(
-                              fontSize: 22, fontWeight: FontWeight.bold),
-                        ),
-                        const SizedBox(height: 6),
+                        const Text('الرؤية الشاملة للمنصة',
+                            style: TextStyle(
+                                fontSize: 21, fontWeight: FontWeight.bold)),
+                        const SizedBox(height: 4),
                         Text(
-                          'الدفع والمالية: ${showPayments ? "مفعّل" : "مخفي"}  |  الونش: ${showWinch ? "مفعّل" : "مخفي"}',
-                          style: const TextStyle(
-                              color: AppColors.textSecondary, fontSize: 13),
-                        ),
-                        const SizedBox(height: 18),
-                        Wrap(
-                          spacing: 14,
-                          runSpacing: 14,
-                          children: [
-                            _kpi('إجمالي الحسابات', '${users.length}',
-                                Icons.people),
-                            _kpi('الورش والميكانيكيين', '$workshopsCount',
-                                Icons.build),
-                            _kpi('تجار قطع الغيار', '$merchantsCount',
-                                Icons.storefront),
-                            _kpi('منشورات القطع', '${prods.length}',
-                                Icons.inventory_2),
-                            _kpi('إجمالي المشاهدات', '$totalViews',
-                                Icons.visibility),
-                            _kpi('إجمالي النقرات', '$totalClicks',
-                                Icons.touch_app),
-                            _kpi('طلبات الطوارئ', '${reqs.length}',
-                                Icons.car_crash),
-                            _kpi('مواعيد الورش', '${appts.length}',
-                                Icons.event_available),
-                          ],
+                            'الدفع: ${showPayments ? "مفعّل" : "مخفي"}  ·  الونش: ${showWinch ? "مفعّل" : "مخفي"}',
+                            style: const TextStyle(
+                                color: AppColors.textSecondary, fontSize: 12)),
+                        const SizedBox(height: 16),
+                        GridView.builder(
+                          shrinkWrap: true,
+                          physics: const NeverScrollableScrollPhysics(),
+                          itemCount: cards.length,
+                          gridDelegate:
+                              SliverGridDelegateWithFixedCrossAxisCount(
+                            crossAxisCount: isWide ? 4 : 2,
+                            mainAxisSpacing: 12,
+                            crossAxisSpacing: 12,
+                            childAspectRatio: isWide ? 1.45 : 1.15,
+                          ),
+                          itemBuilder: (_, i) => FadeSlideIn(
+                              index: i,
+                              child: _kpi(
+                                  cards[i].title, cards[i].val, cards[i].icon)),
                         ),
                       ],
                     );
@@ -425,22 +444,16 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
         }
         final allUsers = snap.data!;
         final filtered = allUsers.where((u) {
-          if (!showWinch && u['role'] == 'towing') {
-            return false;
-          }
-          if (_roleFilter == 'all') {
-            return true;
-          }
+          if (!showWinch && u['role'] == 'towing') return false;
+          if (_roleFilter == 'all') return true;
           return u['role'] == _roleFilter;
         }).toList();
 
         return ListView(
           padding: const EdgeInsets.all(20),
           children: [
-            const Text(
-              'التحكم الكامل بالحسابات والتجار والورش',
-              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-            ),
+            const Text('التحكم الكامل بالحسابات والتجار والورش',
+                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
             const SizedBox(height: 12),
             SingleChildScrollView(
               scrollDirection: Axis.horizontal,
@@ -465,78 +478,46 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Row(
-                        children: [
-                          Expanded(
+                      Row(children: [
+                        Expanded(
                             child: Text(
-                              '${m.fullName ?? "بدون اسم"} (@${m.username ?? "-"})',
-                              style: const TextStyle(
-                                  fontWeight: FontWeight.bold, fontSize: 15),
-                            ),
-                          ),
-                          if (m.isTrustedMerchant)
-                            const Icon(Icons.verified,
-                                color: Colors.blue, size: 20),
-                          const SizedBox(width: 6),
-                          Chip(label: Text(m.role)),
-                        ],
-                      ),
+                                '${m.fullName ?? "بدون اسم"} (@${m.username ?? "-"})',
+                                style: const TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 15))),
+                        if (m.isTrustedMerchant)
+                          const Icon(Icons.verified,
+                              color: Colors.blue, size: 20),
+                        const SizedBox(width: 6),
+                        Chip(label: Text(m.role))
+                      ]),
                       Text(
-                        'الإيميل: ${m.email ?? "-"} | الهاتف: ${m.phone ?? "-"}',
-                        style: const TextStyle(
-                            color: AppColors.textSecondary, fontSize: 12),
-                      ),
-                      if (m.workshopAddress != null)
-                        Text(
-                          'عنوان الورشة: ${m.workshopAddress} · السعة: ${m.maxCarCapacity} سيارة/يوم',
+                          'الإيميل: ${m.email ?? "-"} | الهاتف: ${m.phone ?? "-"}',
                           style: const TextStyle(
-                              color: AppColors.textSecondary, fontSize: 12),
-                        ),
-                      if (showWinch && m.winchPlateNumber != null)
-                        Text(
-                          'نمرة الونش: ${m.winchPlateNumber} · السائق: ${m.isOwnerWinchDriver ? "صاحب الحساب" : "${m.winchDriverName ?? ""} (${m.winchDriverPhone ?? ""})"}',
-                          style: const TextStyle(
-                              color: AppColors.orange, fontSize: 12),
-                        ),
+                              color: AppColors.textSecondary, fontSize: 12)),
                       const Divider(),
                       Wrap(
                         spacing: 8,
-                        runSpacing: 6,
                         crossAxisAlignment: WrapCrossAlignment.center,
                         children: [
-                          Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              const Text('تاجر موثوق:',
-                                  style: TextStyle(fontSize: 12)),
-                              Switch(
+                          Row(mainAxisSize: MainAxisSize.min, children: [
+                            const Text('تاجر موثوق:',
+                                style: TextStyle(fontSize: 12)),
+                            Switch(
                                 value: m.isTrustedMerchant,
                                 activeTrackColor: AppColors.orange,
                                 onChanged: (val) async {
-                                  try {
-                                    await _db.from('customers').update({
-                                      'is_trusted_merchant': val
-                                    }).eq('id', m.id);
-                                    if (mounted) {
-                                      setState(() {});
-                                    }
-                                  } catch (e) {
-                                    if (mounted) {
-                                      ScaffoldMessenger.of(context)
-                                          .showSnackBar(
-                                        SnackBar(content: Text('خطأ: $e')),
-                                      );
-                                    }
-                                  }
-                                },
-                              ),
-                            ],
-                          ),
+                                  await _db
+                                      .from('customers')
+                                      .update({'is_trusted_merchant': val}).eq(
+                                          'id', m.id);
+                                  if (mounted) setState(() {});
+                                })
+                          ]),
                           OutlinedButton(
-                            onPressed: () => _editAccountDialog(
-                                raw, showPayments, showWinch),
-                            child: const Text('تعديل الحساب'),
-                          ),
+                              onPressed: () => _editAccountDialog(
+                                  raw, showPayments, showWinch),
+                              child: const Text('تعديل الحساب')),
                         ],
                       ),
                     ],
@@ -555,13 +536,12 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
     return Padding(
       padding: const EdgeInsets.only(left: 8),
       child: ChoiceChip(
-        label: Text(label),
-        selected: active,
-        selectedColor: AppColors.navy,
-        labelStyle:
-            TextStyle(color: active ? Colors.white : AppColors.textPrimary),
-        onSelected: (_) => setState(() => _roleFilter = key),
-      ),
+          label: Text(label),
+          selected: active,
+          selectedColor: AppColors.navy,
+          labelStyle:
+              TextStyle(color: active ? Colors.white : AppColors.textPrimary),
+          onSelected: (_) => setState(() => _roleFilter = key)),
     );
   }
 
@@ -599,26 +579,22 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
                       value: 'admin', child: Text('مدير نظام (admin)')),
                 ],
                 onChanged: (v) {
-                  if (v != null) {
-                    setD(() => role = v);
-                  }
+                  if (v != null) setD(() => role = v);
                 },
               ),
               const SizedBox(height: 10),
               TextField(
-                controller: limitCtrl,
-                keyboardType: TextInputType.number,
-                decoration:
-                    const InputDecoration(labelText: 'الحد الأقصى للمنشورات'),
-              ),
+                  controller: limitCtrl,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(
+                      labelText: 'الحد الأقصى للمنشورات')),
               if (showPayments) ...[
                 const SizedBox(height: 10),
                 TextField(
-                  controller: commCtrl,
-                  keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(
-                      labelText: 'نسبة العمولة (مثال: 0.10 = 10%)'),
-                ),
+                    controller: commCtrl,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(
+                        labelText: 'نسبة العمولة (مثال: 0.10 = 10%)'))
               ],
             ],
           ),
@@ -628,33 +604,18 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
                 child: const Text('إلغاء')),
             ElevatedButton(
               style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.orange,
-                foregroundColor: Colors.white,
-              ),
+                  backgroundColor: AppColors.orange,
+                  foregroundColor: Colors.white),
               onPressed: () async {
-                try {
-                  await _db.from('customers').update({
-                    'role': role,
-                    'is_admin': role == 'admin',
-                    'max_posts_limit': int.tryParse(limitCtrl.text) ?? 5,
-                    if (showPayments)
-                      'commission_rate': double.tryParse(commCtrl.text) ?? 0.15,
-                  }).eq('id', raw['id']);
-                  if (ctx.mounted) {
-                    Navigator.pop(ctx);
-                  }
-                  if (mounted) {
-                    setState(() {});
-                  }
-                } catch (e) {
-                  if (mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                          content: Text('تعذر التحديث: $e'),
-                          backgroundColor: Colors.red),
-                    );
-                  }
-                }
+                await _db.from('customers').update({
+                  'role': role,
+                  'is_admin': role == 'admin',
+                  'max_posts_limit': int.tryParse(limitCtrl.text) ?? 5,
+                  if (showPayments)
+                    'commission_rate': double.tryParse(commCtrl.text) ?? 0.15
+                }).eq('id', raw['id']);
+                if (ctx.mounted) Navigator.pop(ctx);
+                if (mounted) setState(() {});
               },
               child: const Text('حفظ التعديلات'),
             ),
@@ -668,110 +629,77 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
     return ListView(
       padding: const EdgeInsets.all(24),
       children: [
-        const Text(
-          'إعدادات السوبر أدمن والتحكم العام',
-          style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
-        ),
+        const Text('إعدادات السوبر أدمن والتحكم العام',
+            style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
         const SizedBox(height: 16),
         Card(
-          child: SwitchListTile(
-            title: const Text(
-              'تفعيل خدمات الونش والسحب',
-              style: TextStyle(fontWeight: FontWeight.bold),
-            ),
-            subtitle: const Text(
-              'عند الإيقاف يُخفى الونش من التسجيل والطوارئ ولوحة التحكم، وعند التفعيل يعود فوراً',
-            ),
-            value: showWinch,
-            activeTrackColor: AppColors.orange,
-            onChanged: (v) async {
-              EnvConfig.winchEnabled.value = v;
-              await _updateSingleSetting('enable_winch', v.toString());
-            },
-          ),
-        ),
+            child: SwitchListTile(
+                title: const Text('تفعيل خدمات الونش والسحب',
+                    style: TextStyle(fontWeight: FontWeight.bold)),
+                value: showWinch,
+                activeTrackColor: AppColors.orange,
+                onChanged: (v) async {
+                  EnvConfig.winchEnabled.value = v;
+                  await _updateSingleSetting('enable_winch', v.toString());
+                })),
         const SizedBox(height: 10),
         Card(
-          child: SwitchListTile(
-            title: const Text(
-              'تفعيل المعاملات المالية والدفع والاشتراكات',
-              style: TextStyle(fontWeight: FontWeight.bold),
-            ),
-            subtitle: const Text(
-              'عند الإيقاف تختفي كل شاشات الدفع والمحافظ والاشتراكات والعمولات، وعند التفعيل تعود فوراً',
-            ),
-            value: showPayments,
-            activeTrackColor: AppColors.orange,
-            onChanged: (v) async {
-              EnvConfig.paymentsEnabled.value = v;
-              await _updateSingleSetting('enable_payments', v.toString());
-            },
-          ),
-        ),
+            child: SwitchListTile(
+                title: const Text('تفعيل المعاملات المالية والدفع والاشتراكات',
+                    style: TextStyle(fontWeight: FontWeight.bold)),
+                value: showPayments,
+                activeTrackColor: AppColors.orange,
+                onChanged: (v) async {
+                  EnvConfig.paymentsEnabled.value = v;
+                  await _updateSingleSetting('enable_payments', v.toString());
+                })),
         const SizedBox(height: 16),
         if (showWinch && showPayments) ...[
           TextField(
-            controller: _kmPriceCtrl,
-            keyboardType: TextInputType.number,
-            decoration: const InputDecoration(
-              labelText: 'تسعيرة الونش لكل كيلومتر (د.أ)',
-              border: OutlineInputBorder(),
-            ),
-          ),
-          const SizedBox(height: 12),
+              controller: _kmPriceCtrl,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(
+                  labelText: 'تسعيرة الونش لكل كيلومتر (د.أ)',
+                  border: OutlineInputBorder())),
+          const SizedBox(height: 12)
         ],
         if (showPayments) ...[
           TextField(
-            controller: _defaultCommCtrl,
-            keyboardType: TextInputType.number,
-            decoration: const InputDecoration(
-              labelText: 'نسبة العمولة الافتراضية (مثال 0.15 = 15%)',
-              border: OutlineInputBorder(),
-            ),
-          ),
+              controller: _defaultCommCtrl,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(
+                  labelText: 'نسبة العمولة الافتراضية (0.15 = 15%)',
+                  border: OutlineInputBorder())),
           const SizedBox(height: 12),
           TextField(
-            controller: _minWithdrawCtrl,
-            keyboardType: TextInputType.number,
-            decoration: const InputDecoration(
-              labelText: 'الحد الأدنى لسحب الأرباح (د.أ)',
-              border: OutlineInputBorder(),
-            ),
-          ),
+              controller: _minWithdrawCtrl,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(
+                  labelText: 'الحد الأدنى لسحب الأرباح (د.أ)',
+                  border: OutlineInputBorder())),
           const SizedBox(height: 12),
           TextField(
-            controller: _cliqAliasCtrl,
-            decoration: const InputDecoration(
-              labelText: 'حساب CliQ الرسمي',
-              border: OutlineInputBorder(),
-            ),
-          ),
+              controller: _cliqAliasCtrl,
+              decoration: const InputDecoration(
+                  labelText: 'حساب CliQ الرسمي', border: OutlineInputBorder())),
           const SizedBox(height: 12),
         ],
         SwitchListTile(
-          title: const Text('وضع الصيانة'),
-          value: _maintenance,
-          activeTrackColor: AppColors.orange,
-          onChanged: (v) => setState(() => _maintenance = v),
-        ),
+            title: const Text('وضع الصيانة'),
+            value: _maintenance,
+            activeTrackColor: AppColors.orange,
+            onChanged: (v) => setState(() => _maintenance = v)),
         const SizedBox(height: 16),
         ElevatedButton(
-          style: ElevatedButton.styleFrom(
-            backgroundColor: AppColors.orange,
-            foregroundColor: Colors.white,
-            padding: const EdgeInsets.symmetric(vertical: 15),
-          ),
-          onPressed: _saving ? null : _saveSettings,
-          child: _saving
-              ? const SizedBox(
-                  width: 20,
-                  height: 20,
-                  child: CircularProgressIndicator(
-                      color: Colors.white, strokeWidth: 2),
-                )
-              : const Text('حفظ جميع الإعدادات',
-                  style: TextStyle(fontWeight: FontWeight.bold)),
-        ),
+            style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.orange,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 15)),
+            onPressed: _saving ? null : _saveSettings,
+            child: _saving
+                ? const CircularProgressIndicator(color: Colors.white)
+                : const Text('حفظ جميع الإعدادات',
+                    style: TextStyle(fontWeight: FontWeight.bold))),
       ],
     );
   }
@@ -787,10 +715,8 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
         }
         final prods = snap.data!;
         if (prods.isEmpty) {
-          return const Center(
-              child: Text('لا توجد منشورات قطع غيار في المنصة'));
+          return const Center(child: Text('لا توجد منشورات قطع غيار'));
         }
-
         return ListView.builder(
           padding: const EdgeInsets.all(20),
           itemCount: prods.length,
@@ -798,49 +724,38 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
             final p = prods[i];
             final isHidden = p['is_hidden'] == true;
             final imgs = List<String>.from(p['images'] ?? []);
-
             return Card(
               margin: const EdgeInsets.only(bottom: 10),
               child: ListTile(
                 leading: Container(
-                  width: 52,
-                  height: 52,
-                  decoration: BoxDecoration(
-                    color: AppColors.placeholder,
-                    borderRadius: BorderRadius.circular(10),
-                    image: imgs.isNotEmpty
-                        ? DecorationImage(
-                            image: NetworkImage(imgs.first), fit: BoxFit.cover)
-                        : null,
-                  ),
-                  child: imgs.isEmpty ? const Icon(Icons.settings) : null,
-                ),
+                    width: 52,
+                    height: 52,
+                    decoration: BoxDecoration(
+                        color: AppColors.placeholder,
+                        borderRadius: BorderRadius.circular(10),
+                        image: imgs.isNotEmpty
+                            ? DecorationImage(
+                                image: NetworkImage(imgs.first),
+                                fit: BoxFit.cover)
+                            : null),
+                    child: imgs.isEmpty ? const Icon(Icons.settings) : null),
                 title: Text(p['title'] ?? '',
                     style: const TextStyle(fontWeight: FontWeight.bold)),
                 subtitle: Text(
-                  '${p['car_name']} (${p['car_model']}) · ${p['price']} د.أ · مشاهدات: ${p['views_count'] ?? 0} · نقرات: ${p['clicks_count'] ?? 0}',
-                ),
-                trailing: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    IconButton(
-                      tooltip: isHidden ? 'إظهار المنشور' : 'إخفاء المنشور',
+                    '${p['car_name']} (${p['car_model']}) · ${p['price']} د.أ · مشاهدات: ${p['views_count'] ?? 0}'),
+                trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+                  IconButton(
                       icon: Icon(
-                        isHidden ? Icons.visibility_off : Icons.visibility,
-                        color: isHidden ? Colors.orange : AppColors.navy,
-                      ),
+                          isHidden ? Icons.visibility_off : Icons.visibility,
+                          color: isHidden ? Colors.orange : AppColors.navy),
                       onPressed: () => _db
                           .from('products')
-                          .update({'is_hidden': !isHidden}).eq('id', p['id']),
-                    ),
-                    IconButton(
-                      tooltip: 'حذف نهائي',
+                          .update({'is_hidden': !isHidden}).eq('id', p['id'])),
+                  IconButton(
                       icon: const Icon(Icons.delete_outline, color: Colors.red),
                       onPressed: () =>
-                          _db.from('products').delete().eq('id', p['id']),
-                    ),
-                  ],
-                ),
+                          _db.from('products').delete().eq('id', p['id']))
+                ]),
               ),
             );
           },
@@ -853,10 +768,8 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
     return ListView(
       padding: const EdgeInsets.all(20),
       children: [
-        const Text(
-          'مراقبة طلبات الطوارئ ومواعيد الورش (Live)',
-          style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-        ),
+        const Text('مراقبة طلبات الطوارئ ومواعيد الورش (Live)',
+            style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
         const SizedBox(height: 14),
         const Text('طلبات الطوارئ',
             style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
@@ -871,41 +784,38 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
                 .toList();
             if (reqs.isEmpty) {
               return const Card(
-                child: Padding(
-                  padding: EdgeInsets.all(16),
-                  child: Text('لا توجد طلبات طوارئ'),
-                ),
-              );
+                  child: Padding(
+                      padding: EdgeInsets.all(16),
+                      child: Text('لا توجد طلبات طوارئ')));
             }
             return Column(
-              children: reqs.map((r) {
-                return Card(
-                  margin: const EdgeInsets.only(bottom: 8),
-                  child: ListTile(
-                    title: Text('${r['service_type']} · ${r['car_details']}'),
-                    subtitle: Text(
-                      'المشكلة: ${r['description'] ?? "-"} · الحالة: ${r['status']} (${r['progress_step']})',
-                    ),
-                    trailing: PopupMenuButton<String>(
-                      onSelected: (val) => _db
-                          .from('mechanic_requests')
-                          .update({'status': val, 'progress_step': val}).eq(
-                              'id', r['id']),
-                      itemBuilder: (_) => const [
-                        PopupMenuItem(
-                            value: 'pending', child: Text('تعليق (pending)')),
-                        PopupMenuItem(
-                            value: 'completed',
-                            child: Text('إنهاء (completed)')),
-                        PopupMenuItem(
-                            value: 'cancelled',
-                            child: Text('إلغاء (cancelled)')),
-                      ],
-                    ),
-                  ),
-                );
-              }).toList(),
-            );
+                children: reqs
+                    .map((r) => Card(
+                        margin: const EdgeInsets.only(bottom: 8),
+                        child: ListTile(
+                            title: Text(
+                                '${r['service_type']} · ${r['car_details']}'),
+                            subtitle: Text(
+                                'المشكلة: ${r['description'] ?? "-"} · الحالة: ${r['status']} (${r['progress_step']})'),
+                            trailing: PopupMenuButton<String>(
+                                onSelected: (val) => _db
+                                        .from('mechanic_requests')
+                                        .update({
+                                      'status': val,
+                                      'progress_step': val
+                                    }).eq('id', r['id']),
+                                itemBuilder: (_) => const [
+                                      PopupMenuItem(
+                                          value: 'pending',
+                                          child: Text('تعليق (pending)')),
+                                      PopupMenuItem(
+                                          value: 'completed',
+                                          child: Text('إنهاء (completed)')),
+                                      PopupMenuItem(
+                                          value: 'cancelled',
+                                          child: Text('إلغاء (cancelled)'))
+                                    ]))))
+                    .toList());
           },
         ),
         const SizedBox(height: 20),
@@ -920,34 +830,27 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
             final appts = snap.data ?? [];
             if (appts.isEmpty) {
               return const Card(
-                child: Padding(
-                  padding: EdgeInsets.all(16),
-                  child: Text('لا توجد مواعيد ورش'),
-                ),
-              );
+                  child: Padding(
+                      padding: EdgeInsets.all(16),
+                      child: Text('لا توجد مواعيد ورش')));
             }
             return Column(
-              children: appts.map((a) {
-                return Card(
-                  margin: const EdgeInsets.only(bottom: 8),
-                  child: ListTile(
-                    title: Text(
-                        '${a['appointment_date']} · ${a['appointment_time']}'),
-                    subtitle: Text(
-                      '${a['service_description'] ?? ""} · الحالة: ${a['status']} (${a['progress_step']})',
-                    ),
-                    trailing: IconButton(
-                      tooltip: 'إلغاء الموعد',
-                      icon:
-                          const Icon(Icons.cancel_outlined, color: Colors.red),
-                      onPressed: () => _db
-                          .from('workshop_appointments')
-                          .update({'status': 'cancelled'}).eq('id', a['id']),
-                    ),
-                  ),
-                );
-              }).toList(),
-            );
+                children: appts
+                    .map((a) => Card(
+                        margin: const EdgeInsets.only(bottom: 8),
+                        child: ListTile(
+                            title: Text(
+                                '${a['appointment_date']} · ${a['appointment_time']}'),
+                            subtitle: Text(
+                                '${a['service_description'] ?? ""} · الحالة: ${a['status']} (${a['progress_step']})'),
+                            trailing: IconButton(
+                                icon: const Icon(Icons.cancel_outlined,
+                                    color: Colors.red),
+                                onPressed: () => _db
+                                    .from('workshop_appointments')
+                                    .update({'status': 'cancelled'}).eq(
+                                        'id', a['id'])))))
+                    .toList());
           },
         ),
       ],
@@ -958,67 +861,9 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
     return ListView(
       padding: const EdgeInsets.all(20),
       children: [
-        const Text(
-          'الاشتراكات وطلبات CliQ والحركات المالية',
-          style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-        ),
+        const Text('الاشتراكات والحركات المالية',
+            style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
         const SizedBox(height: 14),
-        const Text('طلبات الاشتراكات',
-            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-        const SizedBox(height: 8),
-        FutureBuilder<List<Map<String, dynamic>>>(
-          future: _db
-              .from('subscription_requests')
-              .select()
-              .order('created_at', ascending: false),
-          builder: (_, snap) {
-            final subs = snap.data ?? [];
-            if (subs.isEmpty) {
-              return const Card(
-                child: Padding(
-                  padding: EdgeInsets.all(16),
-                  child: Text('لا توجد طلبات اشتراك حالياً'),
-                ),
-              );
-            }
-            return Column(
-              children: subs.map((s) {
-                final isPending = s['status'] == 'pending';
-                return Card(
-                  child: ListTile(
-                    title: Text('${s['plan_name']} (${s['amount']})'),
-                    subtitle: Text(
-                        'الوسيلة: ${s['payment_method']} · الحالة: ${s['status']}'),
-                    trailing: isPending
-                        ? ElevatedButton(
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: AppColors.success,
-                              foregroundColor: Colors.white,
-                            ),
-                            onPressed: () async {
-                              await _db.from('subscription_requests').update(
-                                  {'status': 'approved'}).eq('id', s['id']);
-                              if (s['user_id'] != null) {
-                                await _db.from('customers').update({
-                                  'subscription_plan': 'provider_1m',
-                                  'is_trusted_merchant': true,
-                                }).eq('id', s['user_id']);
-                              }
-                              setState(() {});
-                            },
-                            child: const Text('اعتماد'),
-                          )
-                        : null,
-                  ),
-                );
-              }).toList(),
-            );
-          },
-        ),
-        const SizedBox(height: 20),
-        const Text('الحركات المالية (المحافظ)',
-            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-        const SizedBox(height: 8),
         StreamBuilder<List<Map<String, dynamic>>>(
           stream: _db
               .from('wallet_transactions')
@@ -1028,51 +873,48 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
                 (snap.data ?? []).map(DbWalletTransaction.fromMap).toList();
             if (txs.isEmpty) {
               return const Card(
-                child: Padding(
-                  padding: EdgeInsets.all(16),
-                  child: Text('لا توجد حركات مالية بعد'),
-                ),
-              );
+                  child: Padding(
+                      padding: EdgeInsets.all(16),
+                      child: Text('لا توجد حركات مالية')));
             }
             return Column(
-              children: txs.map((t) {
-                return Card(
-                  child: ListTile(
-                    title: Text('${t.transactionType} · ${t.paymentMethod}'),
-                    subtitle: Text(
-                      'الإجمالي: ${t.grossAmount.toStringAsFixed(2)} | العمولة: ${t.commissionAmount.toStringAsFixed(2)} | الصافي للمزود: ${t.netAmount.toStringAsFixed(2)}',
-                    ),
-                  ),
-                );
-              }).toList(),
-            );
+                children: txs
+                    .map((t) => Card(
+                        child: ListTile(
+                            title: Text(
+                                '${t.transactionType} · ${t.paymentMethod}'),
+                            subtitle: Text(
+                                'الإجمالي: ${t.grossAmount.toStringAsFixed(2)} | العمولة: ${t.commissionAmount.toStringAsFixed(2)} | الصافي: ${t.netAmount.toStringAsFixed(2)}'))))
+                    .toList());
           },
         ),
       ],
     );
   }
 
-  Widget _kpi(String title, String val, IconData icon) {
+  Widget _kpi(String title, int val, IconData icon) {
     return Container(
-      width: 195,
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppColors.border),
-      ),
+          color: AppColors.surface,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: AppColors.border)),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(icon, color: AppColors.orange, size: 22),
-          const SizedBox(height: 8),
+          Icon(icon, color: AppColors.orange, size: 24),
+          const Spacer(),
           Text(title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
               style: const TextStyle(
                   color: AppColors.textSecondary, fontSize: 12)),
           const SizedBox(height: 4),
-          Text(val,
+          AnimatedCounter(
+              value: val,
               style:
-                  const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+                  const TextStyle(fontSize: 22, fontWeight: FontWeight.w800)),
         ],
       ),
     );
