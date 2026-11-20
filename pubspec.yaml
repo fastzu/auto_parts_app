@@ -9,14 +9,14 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  google_fonts: ^9.0.0
-  cupertino_icons: ^2.0.0
+  google_fonts: 9.0.0
+  cupertino_icons: ^1.0.8
   supabase_flutter: ^2.18.3
   http: ^1.2.2
   geolocator: ^14.1.1
   geocoding: ^5.0.0
   flutter_map: ^8.3.2
-  latlong2: ^0.10.1
+  latlong2: ^0.9.1
   webview_flutter: ^4.13.1
   image_picker: ^1.2.1
   video_player: ^2.14.1
@@ -27,8 +27,9 @@ dependencies:
 dev_dependencies:
   flutter_test:
     sdk: flutter
-  flutter_lints: ^6.0.0
+  flutter_lints: ^4.0.0
   flutter_launcher_icons: ^0.14.3
+  flutter_native_splash: ^2.4.8
 
 flutter:
   uses-material-design: true
@@ -37,7 +38,7 @@ flutter:
     - assets/gear.png
     - assets/ring.png
     - assets/wrench.png
-    
+
 flutter_launcher_icons:
   android: true
   ios: true
@@ -46,3 +47,13 @@ flutter_launcher_icons:
   remove_alpha_ios: true
   adaptive_icon_background: "#121A27"
   adaptive_icon_foreground: "assets/ghayarak-icon.png"
+
+flutter_native_splash:
+  color: "#121A27"
+  image: "assets/ghayarak-icon.png"
+  android: true
+  ios: true
+  web: true
+  android_12:
+    color: "#121A27"
+    image: "assets/ghayarak-icon.png"

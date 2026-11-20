@@ -1,9 +1,11 @@
 import 'dart:math' as math;
+import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
+import '../theme/app_theme.dart';
 
 Route<T> animatedRoute<T>(Widget page) {
   return PageRouteBuilder<T>(
-    transitionDuration: const Duration(milliseconds: 320),
+    transitionDuration: const Duration(milliseconds: 340),
     reverseTransitionDuration: const Duration(milliseconds: 260),
     pageBuilder: (_, __, ___) => page,
     transitionsBuilder: (_, animation, __, child) {
@@ -11,38 +13,61 @@ Route<T> animatedRoute<T>(Widget page) {
       return FadeTransition(
         opacity: curved,
         child: SlideTransition(
-          position: Tween<Offset>(
-            begin: const Offset(0, 0.06),
-            end: Offset.zero,
-          ).animate(curved),
-          child: child,
+          position: Tween<Offset>(begin: const Offset(0, 0.05), end: Offset.zero).animate(curved),
+          child: ScaleTransition(
+            scale: Tween<double>(begin: 0.97, end: 1.0).animate(curved),
+            child: child,
+          ),
         ),
       );
     },
   );
 }
 
-/// شعار غيارك الرسمي من assets/ghayarak-icon.png
-class GhiyarakLogo extends StatelessWidget {
+/// شعار غيارك مع تفاعل دوران لطيف عند الضغط عليه
+class GhiyarakLogo extends StatefulWidget {
   final double size;
-
   const GhiyarakLogo({super.key, this.size = 40});
 
   @override
+  State<GhiyarakLogo> createState() => _GhiyarakLogoState();
+}
+
+class _GhiyarakLogoState extends State<GhiyarakLogo> {
+  double _turns = 0;
+
+  @override
   Widget build(BuildContext context) {
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(size * 0.25),
-      child: Image.asset(
-        'assets/ghayarak-icon.png',
-        width: size,
-        height: size,
-        fit: BoxFit.cover,
+    return GestureDetector(
+      onTap: () {
+        HapticFeedback.lightImpact();
+        setState(() => _turns += 0.5);
+      },
+      child: AnimatedRotation(
+        turns: _turns,
+        duration: const Duration(milliseconds: 500),
+        curve: Curves.easeOutBack,
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(widget.size * 0.25),
+          child: Image.asset(
+            'assets/ghayarak-icon.png',
+            width: widget.size,
+            height: widget.size,
+            fit: BoxFit.cover,
+            errorBuilder: (_, __, ___) => Container(
+              width: widget.size,
+              height: widget.size,
+              color: const Color(0xFF121A27),
+              child: Icon(Icons.settings, color: Colors.white, size: widget.size * 0.6),
+            ),
+          ),
+        ),
       ),
     );
   }
 }
 
-/// شاشة السبلاش المتحركة بالطبقات الثلاث (gear.png + ring.png + wrench.png)
+/// شاشة السبلاش المتحركة بالطبقات الثلاث + وهج خلفي + شريط تحميل
 class GhiyarakAnimatedSplash extends StatefulWidget {
   const GhiyarakAnimatedSplash({super.key});
 
@@ -57,10 +82,8 @@ class _GhiyarakAnimatedSplashState extends State<GhiyarakAnimatedSplash>
   @override
   void initState() {
     super.initState();
-    _ctrl = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 2400),
-    )..forward();
+    _ctrl = AnimationController(vsync: this, duration: const Duration(milliseconds: 2400))
+      ..forward();
   }
 
   @override
@@ -83,17 +106,32 @@ class _GhiyarakAnimatedSplashState extends State<GhiyarakAnimatedSplash>
             final wrenchT = Curves.easeOutBack.transform(((t - 0.37) / 0.38).clamp(0.0, 1.0));
             final titleT = Curves.easeOutCubic.transform(((t - 0.62) / 0.29).clamp(0.0, 1.0));
             final subT = Curves.easeOutCubic.transform(((t - 0.71) / 0.29).clamp(0.0, 1.0));
+            final glowAlpha = (0.18 + 0.14 * math.sin(t * math.pi * 2)).clamp(0.08, 0.35);
 
             return Column(
               mainAxisSize: MainAxisSize.min,
               children: [
                 SizedBox(
-                  width: 185,
-                  height: 185,
+                  width: 205,
+                  height: 205,
                   child: Stack(
                     alignment: Alignment.center,
                     children: [
-                      // 1) الترس
+                      // وهج خلفي متوهج
+                      Container(
+                        width: 170 * (0.8 + 0.2 * gearT),
+                        height: 170 * (0.8 + 0.2 * gearT),
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          boxShadow: [
+                            BoxShadow(
+                              color: AppColors.orange.withValues(alpha: glowAlpha),
+                              blurRadius: 55,
+                              spreadRadius: 12,
+                            ),
+                          ],
+                        ),
+                      ),
                       Opacity(
                         opacity: gearT,
                         child: Transform.rotate(
@@ -104,7 +142,6 @@ class _GhiyarakAnimatedSplashState extends State<GhiyarakAnimatedSplash>
                           ),
                         ),
                       ),
-                      // 2) الحلقة
                       Opacity(
                         opacity: ringT,
                         child: Transform.scale(
@@ -112,7 +149,6 @@ class _GhiyarakAnimatedSplashState extends State<GhiyarakAnimatedSplash>
                           child: Image.asset('assets/ring.png', width: 175, height: 175),
                         ),
                       ),
-                      // 3) المفتاح البرتقالي
                       Opacity(
                         opacity: wrenchT.clamp(0.0, 1.0),
                         child: Transform.rotate(
@@ -133,11 +169,7 @@ class _GhiyarakAnimatedSplashState extends State<GhiyarakAnimatedSplash>
                     offset: Offset(0, 14 * (1 - titleT)),
                     child: const Text(
                       'غيارك',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 42,
-                        fontWeight: FontWeight.w900,
-                      ),
+                      style: TextStyle(color: Colors.white, fontSize: 42, fontWeight: FontWeight.w900),
                     ),
                   ),
                 ),
@@ -148,11 +180,20 @@ class _GhiyarakAnimatedSplashState extends State<GhiyarakAnimatedSplash>
                     offset: Offset(0, 14 * (1 - subT)),
                     child: const Text(
                       'قطع غيار · ورش · طوارئ',
-                      style: TextStyle(
-                        color: Color(0xFF9AA4B4),
-                        fontSize: 15,
-                        fontWeight: FontWeight.w500,
-                      ),
+                      style: TextStyle(color: Color(0xFF9AA4B4), fontSize: 15, fontWeight: FontWeight.w500),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 28),
+                SizedBox(
+                  width: 140,
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(10),
+                    child: LinearProgressIndicator(
+                      value: t,
+                      minHeight: 4,
+                      color: AppColors.orange,
+                      backgroundColor: Colors.white12,
                     ),
                   ),
                 ),
@@ -165,17 +206,71 @@ class _GhiyarakAnimatedSplashState extends State<GhiyarakAnimatedSplash>
   }
 }
 
+/// شيمر أنيق أثناء تحميل المنتجات من القاعدة
+class ShimmerProductsLoading extends StatefulWidget {
+  const ShimmerProductsLoading({super.key});
+
+  @override
+  State<ShimmerProductsLoading> createState() => _ShimmerProductsLoadingState();
+}
+
+class _ShimmerProductsLoadingState extends State<ShimmerProductsLoading>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _c;
+
+  @override
+  void initState() {
+    super.initState();
+    _c = AnimationController(vsync: this, duration: const Duration(milliseconds: 1100))..repeat(reverse: true);
+  }
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _c,
+      builder: (_, __) {
+        final col = Color.lerp(AppColors.placeholder, Colors.grey.shade100, _c.value)!;
+        return GridView.builder(
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          itemCount: 4,
+          gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+            maxCrossAxisExtent: 230,
+            mainAxisSpacing: 12,
+            crossAxisSpacing: 12,
+            childAspectRatio: 0.78,
+          ),
+          itemBuilder: (_, __) => Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(color: AppColors.surface, borderRadius: BorderRadius.circular(16), border: Border.all(color: AppColors.border)),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(height: 95, decoration: BoxDecoration(color: col, borderRadius: BorderRadius.circular(12))),
+                const SizedBox(height: 10),
+                Container(height: 14, width: 100, decoration: BoxDecoration(color: col, borderRadius: BorderRadius.circular(6))),
+                const SizedBox(height: 6),
+                Container(height: 11, width: 70, decoration: BoxDecoration(color: col, borderRadius: BorderRadius.circular(6))),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
 class AnimatedCounter extends StatelessWidget {
   final int value;
   final String suffix;
   final TextStyle? style;
-
-  const AnimatedCounter({
-    super.key,
-    required this.value,
-    this.suffix = '',
-    this.style,
-  });
+  const AnimatedCounter({super.key, required this.value, this.suffix = '', this.style});
 
   @override
   Widget build(BuildContext context) {
@@ -192,13 +287,7 @@ class FadeSlideIn extends StatelessWidget {
   final Widget child;
   final int index;
   final Duration duration;
-
-  const FadeSlideIn({
-    super.key,
-    required this.child,
-    this.index = 0,
-    this.duration = const Duration(milliseconds: 380),
-  });
+  const FadeSlideIn({super.key, required this.child, this.index = 0, this.duration = const Duration(milliseconds: 380)});
 
   @override
   Widget build(BuildContext context) {
@@ -207,15 +296,7 @@ class FadeSlideIn extends StatelessWidget {
       tween: Tween(begin: 0, end: 1),
       duration: Duration(milliseconds: duration.inMilliseconds + delay),
       curve: Curves.easeOutCubic,
-      builder: (context, value, child) {
-        return Opacity(
-          opacity: value,
-          child: Transform.translate(
-            offset: Offset(0, 16 * (1 - value)),
-            child: child,
-          ),
-        );
-      },
+      builder: (context, value, child) => Opacity(opacity: value, child: Transform.translate(offset: Offset(0, 16 * (1 - value)), child: child)),
       child: child,
     );
   }
@@ -224,7 +305,6 @@ class FadeSlideIn extends StatelessWidget {
 class BounceTap extends StatefulWidget {
   final Widget child;
   final VoidCallback onTap;
-
   const BounceTap({super.key, required this.child, required this.onTap});
 
   @override
@@ -237,15 +317,18 @@ class _BounceTapState extends State<BounceTap> {
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
-      onTapDown: (_) => setState(() => _pressed = true),
+      onTapDown: (_) {
+        HapticFeedback.selectionClick();
+        setState(() => _pressed = true);
+      },
       onTapUp: (_) {
         setState(() => _pressed = false);
         widget.onTap();
       },
       onTapCancel: () => setState(() => _pressed = false),
       child: AnimatedScale(
-        scale: _pressed ? 0.93 : 1.0,
-        duration: const Duration(milliseconds: 120),
+        scale: _pressed ? 0.92 : 1.0,
+        duration: const Duration(milliseconds: 130),
         curve: Curves.easeOutBack,
         child: widget.child,
       ),
@@ -267,10 +350,7 @@ class _PulsingPinState extends State<PulsingPin> with SingleTickerProviderStateM
   @override
   void initState() {
     super.initState();
-    _controller = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 1600),
-    )..repeat();
+    _controller = AnimationController(vsync: this, duration: const Duration(milliseconds: 1600))..repeat();
   }
 
   @override
@@ -289,19 +369,10 @@ class _PulsingPinState extends State<PulsingPin> with SingleTickerProviderStateM
         children: [
           AnimatedBuilder(
             animation: _controller,
-            builder: (_, __) {
-              return Transform.scale(
-                scale: 0.6 + (_controller.value * 1.1),
-                child: Container(
-                  width: 48,
-                  height: 48,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: widget.color.withValues(alpha: (1 - _controller.value) * 0.35),
-                  ),
-                ),
-              );
-            },
+            builder: (_, __) => Transform.scale(
+              scale: 0.6 + (_controller.value * 1.1),
+              child: Container(width: 48, height: 48, decoration: BoxDecoration(shape: BoxShape.circle, color: widget.color.withValues(alpha: (1 - _controller.value) * 0.35))),
+            ),
           ),
           Icon(Icons.location_on, color: widget.color, size: 38),
         ],

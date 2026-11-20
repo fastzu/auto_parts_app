@@ -1,5 +1,5 @@
-import 'package:material_ui/material_ui.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:material_ui/material_ui.dart';
 
 class AppColors {
   static const Color background = Color(0xFFF8F9FB);
@@ -19,7 +19,7 @@ class AppTheme {
     return ThemeData(
       useMaterial3: true,
       scaffoldBackgroundColor: AppColors.background,
-      textTheme: GoogleFonts.cairoTextTheme(),
+      fontFamily: GoogleFonts.cairo().fontFamily,
       colorScheme: ColorScheme.fromSeed(
         seedColor: AppColors.orange,
         primary: AppColors.orange,
