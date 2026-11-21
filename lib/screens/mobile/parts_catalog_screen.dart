@@ -26,7 +26,8 @@ class _PartsCatalogScreenState extends State<PartsCatalogScreen> {
   String _search = '';
   String _selectedCat = 'الكل';
 
-  Map<String, ({bool trusted, double ratingAvg, int ratingCount, int boostTier})>
+  Map<String,
+          ({bool trusted, double ratingAvg, int ratingCount, int boostTier})>
       _sellerMeta = {};
 
   @override
@@ -40,8 +41,8 @@ class _PartsCatalogScreenState extends State<PartsCatalogScreen> {
       final rows = await _db.from('customers').select(
             'id, is_trusted_merchant, subscription_plan, subscription_expires_at, rating_avg, rating_count',
           );
-      final map =
-          <String, ({bool trusted, double ratingAvg, int ratingCount, int boostTier})>{};
+      final map = <String,
+          ({bool trusted, double ratingAvg, int ratingCount, int boostTier})>{};
       for (final r in List<Map<String, dynamic>>.from(rows)) {
         final id = r['id'] as String?;
         if (id == null) continue;
@@ -81,24 +82,27 @@ class _PartsCatalogScreenState extends State<PartsCatalogScreen> {
             final searchOk = q.isEmpty ||
                 (p['title'] ?? '').toString().toLowerCase().contains(q) ||
                 (p['car_name'] ?? '').toString().toLowerCase().contains(q) ||
-                (p['chassis_number'] ?? '').toString().toLowerCase().contains(q);
+                (p['chassis_number'] ?? '')
+                    .toString()
+                    .toLowerCase()
+                    .contains(q);
             return catOk && searchOk;
           }).toList();
 
-          // ترتيب SEO Boost + التقييم في نتائج البحث والكتالوج
           parts.sort((a, b) {
             final ma = _sellerMeta[a['user_id']];
             final mb = _sellerMeta[b['user_id']];
             final boostCmp = (mb?.boostTier ?? 0).compareTo(ma?.boostTier ?? 0);
             if (boostCmp != 0) return boostCmp;
             if (_search.trim().isNotEmpty) {
-              final ratingCmp = (mb?.ratingAvg ?? 0).compareTo(ma?.ratingAvg ?? 0);
+              final ratingCmp =
+                  (mb?.ratingAvg ?? 0).compareTo(ma?.ratingAvg ?? 0);
               if (ratingCmp != 0) return ratingCmp;
             }
-            final ta =
-                DateTime.tryParse((a['created_at'] ?? '').toString()) ?? DateTime(2000);
-            final tb =
-                DateTime.tryParse((b['created_at'] ?? '').toString()) ?? DateTime(2000);
+            final ta = DateTime.tryParse((a['created_at'] ?? '').toString()) ??
+                DateTime(2000);
+            final tb = DateTime.tryParse((b['created_at'] ?? '').toString()) ??
+                DateTime(2000);
             return tb.compareTo(ta);
           });
 
@@ -151,7 +155,8 @@ class _PartsCatalogScreenState extends State<PartsCatalogScreen> {
                         child: Text(
                           cat,
                           style: TextStyle(
-                            color: active ? Colors.white : AppColors.textPrimary,
+                            color:
+                                active ? Colors.white : AppColors.textPrimary,
                             fontWeight: FontWeight.w600,
                             fontSize: 13,
                           ),
@@ -182,6 +187,9 @@ class _PartsCatalogScreenState extends State<PartsCatalogScreen> {
                     final p = parts[i];
                     final imgs = List<String>.from(p['images'] ?? []);
                     final qty = (p['quantity'] as num?)?.toInt() ?? 1;
+                    final discountPct =
+                        (p['discount_percent'] as num?)?.toInt() ?? 0;
+                    final origPrice = (p['original_price'] as num?)?.toDouble();
                     final meta = _sellerMeta[p['user_id']];
                     final isTrusted = meta?.trusted ?? false;
                     final boostTier = meta?.boostTier ?? 0;
@@ -233,7 +241,8 @@ class _PartsCatalogScreenState extends State<PartsCatalogScreen> {
                                     ),
                                     child: imgs.isEmpty
                                         ? const Icon(Icons.settings_outlined,
-                                            color: AppColors.textSecondary, size: 32)
+                                            color: AppColors.textSecondary,
+                                            size: 32)
                                         : null,
                                   ),
                                   if (boostTier > 0)
@@ -245,7 +254,8 @@ class _PartsCatalogScreenState extends State<PartsCatalogScreen> {
                                             horizontal: 7, vertical: 3),
                                         decoration: BoxDecoration(
                                           color: const Color(0xFFD97706),
-                                          borderRadius: BorderRadius.circular(10),
+                                          borderRadius:
+                                              BorderRadius.circular(10),
                                         ),
                                         child: const Text(
                                           'مميز',
@@ -266,7 +276,8 @@ class _PartsCatalogScreenState extends State<PartsCatalogScreen> {
                                             horizontal: 6, vertical: 3),
                                         decoration: BoxDecoration(
                                           color: Colors.blue.shade700,
-                                          borderRadius: BorderRadius.circular(10),
+                                          borderRadius:
+                                              BorderRadius.circular(10),
                                         ),
                                         child: const Row(
                                           mainAxisSize: MainAxisSize.min,
@@ -286,6 +297,28 @@ class _PartsCatalogScreenState extends State<PartsCatalogScreen> {
                                         ),
                                       ),
                                     ),
+                                  if (discountPct > 0)
+                                    Positioned(
+                                      bottom: 6,
+                                      right: 6,
+                                      child: Container(
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 6, vertical: 2),
+                                        decoration: BoxDecoration(
+                                          color: Colors.red.shade600,
+                                          borderRadius:
+                                              BorderRadius.circular(8),
+                                        ),
+                                        child: Text(
+                                          'خصم $discountPct%',
+                                          style: const TextStyle(
+                                            color: Colors.white,
+                                            fontSize: 9.5,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
                                 ],
                               ),
                               const SizedBox(height: 7),
@@ -301,7 +334,8 @@ class _PartsCatalogScreenState extends State<PartsCatalogScreen> {
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                                 style: const TextStyle(
-                                    color: AppColors.textSecondary, fontSize: 11),
+                                    color: AppColors.textSecondary,
+                                    fontSize: 11),
                               ),
                               const SizedBox(height: 4),
                               Row(
@@ -336,15 +370,44 @@ class _PartsCatalogScreenState extends State<PartsCatalogScreen> {
                               ),
                               const Spacer(),
                               Row(
-                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                mainAxisAlignment:
+                                    MainAxisAlignment.spaceBetween,
                                 children: [
-                                  Flexible(
-                                    child: Text(
-                                      '${p['price']} د.أ',
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: const TextStyle(
-                                          fontWeight: FontWeight.bold, fontSize: 13.5),
+                                  Expanded(
+                                    child: Row(
+                                      children: [
+                                        Flexible(
+                                          child: Text(
+                                            '${p['price']} د.أ',
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: TextStyle(
+                                              fontWeight: FontWeight.bold,
+                                              fontSize: 13.5,
+                                              color: discountPct > 0
+                                                  ? Colors.red.shade700
+                                                  : AppColors.textPrimary,
+                                            ),
+                                          ),
+                                        ),
+                                        if (discountPct > 0 &&
+                                            origPrice != null) ...[
+                                          const SizedBox(width: 4),
+                                          Flexible(
+                                            child: Text(
+                                              '$origPrice',
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                              style: const TextStyle(
+                                                fontSize: 10.5,
+                                                color: AppColors.textSecondary,
+                                                decoration:
+                                                    TextDecoration.lineThrough,
+                                              ),
+                                            ),
+                                          ),
+                                        ],
+                                      ],
                                     ),
                                   ),
                                   const SizedBox(width: 4),
@@ -385,7 +448,8 @@ class _PartsCatalogScreenState extends State<PartsCatalogScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     const Text('تركيب في ورشة؟',
-                        style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+                        style: TextStyle(
+                            fontWeight: FontWeight.bold, fontSize: 15)),
                     const SizedBox(height: 4),
                     const Text('احجز موعد تركيب القطعة في أقرب ورشة',
                         style: TextStyle(
@@ -398,19 +462,22 @@ class _PartsCatalogScreenState extends State<PartsCatalogScreen> {
                           Navigator.push(
                             context,
                             animatedRoute(
-                              SelectWorkshopScreen(viewerProfile: widget.viewerProfile),
+                              SelectWorkshopScreen(
+                                  viewerProfile: widget.viewerProfile),
                             ),
                           );
                         },
                         style: OutlinedButton.styleFrom(
-                          side: const BorderSide(color: AppColors.navy, width: 1.4),
+                          side: const BorderSide(
+                              color: AppColors.navy, width: 1.4),
                           padding: const EdgeInsets.symmetric(vertical: 14),
                           shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(12)),
                         ),
                         child: const Text('اختيار ورشة وموعد',
                             style: TextStyle(
-                                color: AppColors.navy, fontWeight: FontWeight.bold)),
+                                color: AppColors.navy,
+                                fontWeight: FontWeight.bold)),
                       ),
                     ),
                   ],

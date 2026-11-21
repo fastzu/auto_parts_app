@@ -50,6 +50,161 @@ Future<void> _dialPhone(String? phone) async {
   }
 }
 
+Future<void> _showRateMerchantSheet({
+  required BuildContext context,
+  required String merchantId,
+  required String merchantName,
+  required String reviewerId,
+  int initialStars = 5,
+  String initialComment = '',
+  bool isEditing = false,
+  required Future<void> Function() onSaved,
+}) async {
+  final db = Supabase.instance.client;
+  int selectedStars = initialStars.clamp(1, 5);
+  final commentCtrl = TextEditingController(text: initialComment);
+  bool saving = false;
+
+  await showModalBottomSheet(
+    context: context,
+    isScrollControlled: true,
+    backgroundColor: Colors.white,
+    shape: const RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+    ),
+    builder: (ctx) => StatefulBuilder(
+      builder: (ctx, setModal) => Padding(
+        padding: EdgeInsets.fromLTRB(
+          20,
+          20,
+          20,
+          MediaQuery.of(ctx).viewInsets.bottom + 24,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              isEditing ? 'تعديل تقييمك للتاجر' : 'قيّم التاجر',
+              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              merchantName,
+              style: const TextStyle(color: AppColors.textSecondary, fontSize: 13),
+            ),
+            const SizedBox(height: 14),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: List.generate(5, (index) {
+                final star = index + 1;
+                return IconButton(
+                  onPressed: () => setModal(() => selectedStars = star),
+                  icon: Icon(
+                    star <= selectedStars
+                        ? Icons.star_rounded
+                        : Icons.star_border_rounded,
+                    color: Colors.amber,
+                    size: 40,
+                  ),
+                );
+              }),
+            ),
+            Center(
+              child: Text(
+                '$selectedStars / 5',
+                style: const TextStyle(
+                  fontWeight: FontWeight.bold,
+                  color: AppColors.navy,
+                  fontSize: 14,
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: commentCtrl,
+              maxLines: 3,
+              decoration: InputDecoration(
+                hintText: 'اكتب تجربتك مع التاجر (اختياري)...',
+                filled: true,
+                fillColor: AppColors.background,
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(14),
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.orange,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                ),
+                onPressed: saving
+                    ? null
+                    : () async {
+                        setModal(() => saving = true);
+                        try {
+                          await db.from('merchant_ratings').upsert(
+                            {
+                              'merchant_id': merchantId,
+                              'reviewer_id': reviewerId,
+                              'rating': selectedStars,
+                              'comment': commentCtrl.text.trim(),
+                              'updated_at': DateTime.now().toIso8601String(),
+                            },
+                            onConflict: 'merchant_id,reviewer_id',
+                          );
+                          if (ctx.mounted) Navigator.pop(ctx);
+                          await onSaved();
+                          if (context.mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text('تم حفظ تقييمك بنجاح!'),
+                                backgroundColor: AppColors.success,
+                              ),
+                            );
+                          }
+                        } catch (e) {
+                          setModal(() => saving = false);
+                          if (context.mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text('تعذر حفظ التقييم: $e'),
+                                backgroundColor: Colors.red,
+                              ),
+                            );
+                          }
+                        }
+                      },
+                child: saving
+                    ? const SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.white,
+                        ),
+                      )
+                    : const Text(
+                        'حفظ التقييم',
+                        style: TextStyle(fontWeight: FontWeight.bold),
+                      ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
+  commentCtrl.dispose();
+}
+
 class LiveStoreHomeScreen extends StatefulWidget {
   final CustomerProfile? profile;
   final VoidCallback onOpenDrawer;
@@ -418,7 +573,6 @@ class _LiveStoreHomeScreenState extends State<LiveStoreHomeScreen> {
             return catOk && carOk && searchOk;
           }).toList();
 
-          // تفعيل SEO Boost الحقيقي + التقييم في نتائج البحث والرئيسية
           all.sort((a, b) {
             final ma = _sellerMeta[a['user_id']] ?? const _SellerMeta();
             final mb = _sellerMeta[b['user_id']] ?? const _SellerMeta();
@@ -435,7 +589,6 @@ class _LiveStoreHomeScreenState extends State<LiveStoreHomeScreen> {
             return tb.compareTo(ta);
           });
 
-          // الأكثر مبيعاً مع أولوية SEO Boost + التقييم
           final bestSellers = List<Map<String, dynamic>>.from(all)
             ..sort((a, b) {
               final ma = _sellerMeta[a['user_id']] ?? const _SellerMeta();
@@ -643,7 +796,7 @@ class _LiveStoreHomeScreenState extends State<LiveStoreHomeScreen> {
                             itemCount: bestSellers.take(8).length,
                             separatorBuilder: (_, __) => const SizedBox(width: 12),
                             itemBuilder: (_, i) => SizedBox(
-                              width: 170,
+                              width: 172,
                               child: FadeSlideIn(
                                 index: i,
                                 child: _card(bestSellers[i], 'الأكثر مبيعاً', 'best'),
@@ -743,6 +896,8 @@ class _LiveStoreHomeScreenState extends State<LiveStoreHomeScreen> {
     final heroTag = '${heroPrefix}_${p['id']}';
     final meta = _sellerMeta[p['user_id']] ?? const _SellerMeta();
     final qty = (p['quantity'] as num?)?.toInt() ?? 1;
+    final discountPct = (p['discount_percent'] as num?)?.toInt() ?? 0;
+    final origPrice = (p['original_price'] as num?)?.toDouble();
 
     return BounceTap(
       onTap: () async {
@@ -842,6 +997,26 @@ class _LiveStoreHomeScreenState extends State<LiveStoreHomeScreen> {
                       ),
                     ),
                   ),
+                if (discountPct > 0)
+                  Positioned(
+                    bottom: 6,
+                    right: 6,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: Colors.red.shade600,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Text(
+                        'خصم $discountPct%',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 9.5,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  ),
               ],
             ),
             const SizedBox(height: 7),
@@ -891,12 +1066,39 @@ class _LiveStoreHomeScreenState extends State<LiveStoreHomeScreen> {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Flexible(
-                  child: Text(
-                    '${p['price']} د.أ',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 13.5),
+                Expanded(
+                  child: Row(
+                    children: [
+                      Flexible(
+                        child: Text(
+                          '${p['price']} د.أ',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontWeight: FontWeight.w800,
+                            fontSize: 13.5,
+                            color: discountPct > 0
+                                ? Colors.red.shade700
+                                : AppColors.textPrimary,
+                          ),
+                        ),
+                      ),
+                      if (discountPct > 0 && origPrice != null) ...[
+                        const SizedBox(width: 4),
+                        Flexible(
+                          child: Text(
+                            '$origPrice',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 10.5,
+                              color: AppColors.textSecondary,
+                              decoration: TextDecoration.lineThrough,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
                   ),
                 ),
                 const SizedBox(width: 4),
@@ -947,6 +1149,9 @@ class _ProductDetailsScreenState extends State<ProductDetailsScreen> {
   bool _loadingSeller = true;
   bool _sending = false;
 
+  String? get _currentUid =>
+      widget.viewerProfile?.id ?? _db.auth.currentUser?.id;
+
   @override
   void initState() {
     super.initState();
@@ -989,13 +1194,53 @@ class _ProductDetailsScreenState extends State<ProductDetailsScreen> {
     }
   }
 
+  Future<void> _quickRateSeller() async {
+    final uid = _currentUid;
+    final seller = _seller;
+    if (seller == null) return;
+    if (uid == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('سجّل دخولك أولاً لتقييم التاجر')),
+      );
+      return;
+    }
+    if (uid == seller.id) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('لا يمكنك تقييم حسابك الشخصي — جرّب بحساب زبون آخر'),
+        ),
+      );
+      return;
+    }
+
+    final existing = await _db
+        .from('merchant_ratings')
+        .select('rating, comment')
+        .eq('merchant_id', seller.id)
+        .eq('reviewer_id', uid)
+        .maybeSingle();
+
+    if (!mounted) return;
+    await _showRateMerchantSheet(
+      context: context,
+      merchantId: seller.id,
+      merchantName: seller.fullName ?? 'التاجر',
+      reviewerId: uid,
+      initialStars: (existing?['rating'] as num?)?.toInt() ?? 5,
+      initialComment: (existing?['comment'] as String?) ?? '',
+      isEditing: existing != null,
+      onSaved: _reloadSeller,
+    );
+  }
+
   Future<void> _sendMessage() async {
     final text = _msgCtrl.text.trim();
-    if (text.isEmpty || widget.viewerProfile == null) return;
+    final uid = _currentUid;
+    if (text.isEmpty || uid == null) return;
     setState(() => _sending = true);
     try {
       await _db.from('messages').insert({
-        'sender_id': widget.viewerProfile!.id,
+        'sender_id': uid,
         'receiver_id': widget.product['user_id'],
         'product_id': widget.product['id'],
         'message': text,
@@ -1019,6 +1264,10 @@ class _ProductDetailsScreenState extends State<ProductDetailsScreen> {
     final p = widget.product;
     final imgs = List<String>.from(p['images'] ?? []);
     final qty = (p['quantity'] as num?)?.toInt() ?? 1;
+    final discountPct = (p['discount_percent'] as num?)?.toInt() ?? 0;
+    final origPrice = (p['original_price'] as num?)?.toDouble();
+    final uid = _currentUid;
+
     final imageBox = imgs.isNotEmpty
         ? SizedBox(
             height: 220,
@@ -1049,6 +1298,7 @@ class _ProductDetailsScreenState extends State<ProductDetailsScreen> {
           const SizedBox(height: 16),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Expanded(
                 child: Text(
@@ -1056,13 +1306,54 @@ class _ProductDetailsScreenState extends State<ProductDetailsScreen> {
                   style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
                 ),
               ),
-              Text(
-                '${p['price']} د.أ',
-                style: const TextStyle(
-                  fontSize: 20,
-                  fontWeight: FontWeight.w800,
-                  color: AppColors.orange,
-                ),
+              const SizedBox(width: 8),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (discountPct > 0) ...[
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 7, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: Colors.red.shade600,
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Text(
+                            'خصم $discountPct%',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 11,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                      ],
+                      Text(
+                        '${p['price']} د.أ',
+                        style: TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.w800,
+                          color: discountPct > 0
+                              ? Colors.red.shade700
+                              : AppColors.orange,
+                        ),
+                      ),
+                    ],
+                  ),
+                  if (discountPct > 0 && origPrice != null)
+                    Text(
+                      '$origPrice د.أ',
+                      style: const TextStyle(
+                        fontSize: 13,
+                        color: AppColors.textSecondary,
+                        decoration: TextDecoration.lineThrough,
+                      ),
+                    ),
+                ],
               ),
             ],
           ),
@@ -1173,25 +1464,46 @@ class _ProductDetailsScreenState extends State<ProductDetailsScreen> {
                                     ],
                                   ],
                                 ),
-                                const SizedBox(height: 3),
-                                Row(
-                                  children: [
-                                    const Icon(Icons.star_rounded,
-                                        color: Colors.amber, size: 16),
-                                    const SizedBox(width: 3),
-                                    Text(
-                                      (_seller?.ratingCount ?? 0) > 0
-                                          ? '${_seller!.ratingAvg.toStringAsFixed(1)} (${_seller!.ratingCount} تقييم)'
-                                          : 'لا توجد تقييمات بعد',
-                                      style: const TextStyle(
-                                        fontSize: 12,
-                                        fontWeight: FontWeight.w600,
-                                        color: AppColors.navy,
+                                const SizedBox(height: 4),
+                                InkWell(
+                                  onTap: _quickRateSeller,
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      const Icon(Icons.star_rounded,
+                                          color: Colors.amber, size: 17),
+                                      const SizedBox(width: 3),
+                                      Text(
+                                        (_seller?.ratingCount ?? 0) > 0
+                                            ? '${_seller!.ratingAvg.toStringAsFixed(1)} (${_seller!.ratingCount} تقييم)'
+                                            : 'لا توجد تقييمات بعد',
+                                        style: const TextStyle(
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.w600,
+                                          color: AppColors.navy,
+                                        ),
                                       ),
-                                    ),
-                                  ],
+                                      const SizedBox(width: 8),
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 8, vertical: 2),
+                                        decoration: BoxDecoration(
+                                          color: Colors.amber.withValues(alpha: 0.18),
+                                          borderRadius: BorderRadius.circular(8),
+                                        ),
+                                        child: const Text(
+                                          'قيّم',
+                                          style: TextStyle(
+                                            fontSize: 11,
+                                            fontWeight: FontWeight.bold,
+                                            color: Color(0xFFB45309),
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
                                 ),
-                                const SizedBox(height: 3),
+                                const SizedBox(height: 4),
                                 InkWell(
                                   onTap: () => _dialPhone(_seller?.phone),
                                   child: Row(
@@ -1246,8 +1558,7 @@ class _ProductDetailsScreenState extends State<ProductDetailsScreen> {
                             label: const Text('عرض بروفايل التاجر وتقييماته'),
                           ),
                         ),
-                        if (widget.viewerProfile != null &&
-                            widget.viewerProfile!.id != p['user_id']) ...[
+                        if (uid != null && uid != p['user_id']) ...[
                           const SizedBox(height: 8),
                           SizedBox(
                             width: double.infinity,
@@ -1276,8 +1587,7 @@ class _ProductDetailsScreenState extends State<ProductDetailsScreen> {
                           ),
                         ],
                       ],
-                      if (widget.viewerProfile != null &&
-                          widget.viewerProfile!.id != p['user_id']) ...[
+                      if (uid != null && uid != p['user_id']) ...[
                         const Divider(height: 24),
                         Row(
                           children: [
@@ -1341,6 +1651,9 @@ class _MerchantPublicProfileScreenState
   Map<String, String> _reviewerNames = {};
   Map<String, dynamic>? _myExistingRating;
 
+  String? get _currentUid =>
+      widget.viewerProfile?.id ?? _db.auth.currentUser?.id;
+
   @override
   void initState() {
     super.initState();
@@ -1384,9 +1697,10 @@ class _MerchantPublicProfileScreenState
       }
 
       Map<String, dynamic>? mine;
-      if (widget.viewerProfile != null) {
+      final uid = _currentUid;
+      if (uid != null) {
         for (final r in rList) {
-          if (r['reviewer_id'] == widget.viewerProfile!.id) {
+          if (r['reviewer_id'] == uid) {
             mine = r;
             break;
           }
@@ -1406,140 +1720,33 @@ class _MerchantPublicProfileScreenState
     } catch (_) {}
   }
 
-  void _openRateDialog() {
-    if (widget.viewerProfile == null) return;
-    int selectedStars = (_myExistingRating?['rating'] as num?)?.toInt() ?? 5;
-    final commentCtrl = TextEditingController(
-      text: (_myExistingRating?['comment'] as String?) ?? '',
-    );
-    bool saving = false;
-
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.white,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
-      ),
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setModal) => Padding(
-          padding: EdgeInsets.fromLTRB(
-            20,
-            20,
-            20,
-            MediaQuery.of(ctx).viewInsets.bottom + 24,
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                _myExistingRating != null ? 'تعديل تقييمك للتاجر' : 'قيّم التاجر',
-                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 6),
-              Text(
-                widget.seller.fullName ?? 'التاجر',
-                style: const TextStyle(color: AppColors.textSecondary, fontSize: 13),
-              ),
-              const SizedBox(height: 14),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: List.generate(5, (index) {
-                  final star = index + 1;
-                  return IconButton(
-                    onPressed: () => setModal(() => selectedStars = star),
-                    icon: Icon(
-                      star <= selectedStars
-                          ? Icons.star_rounded
-                          : Icons.star_border_rounded,
-                      color: Colors.amber,
-                      size: 38,
-                    ),
-                  );
-                }),
-              ),
-              const SizedBox(height: 10),
-              TextField(
-                controller: commentCtrl,
-                maxLines: 3,
-                decoration: InputDecoration(
-                  hintText: 'اكتب تجربتك مع التاجر (اختياري)...',
-                  filled: true,
-                  fillColor: AppColors.background,
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(14),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 16),
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.orange,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14),
-                    ),
-                  ),
-                  onPressed: saving
-                      ? null
-                      : () async {
-                          setModal(() => saving = true);
-                          try {
-                            await _db.from('merchant_ratings').upsert(
-                              {
-                                'merchant_id': widget.seller.id,
-                                'reviewer_id': widget.viewerProfile!.id,
-                                'rating': selectedStars,
-                                'comment': commentCtrl.text.trim(),
-                                'updated_at': DateTime.now().toIso8601String(),
-                              },
-                              onConflict: 'merchant_id,reviewer_id',
-                            );
-                            if (ctx.mounted) Navigator.pop(ctx);
-                            await _refreshRatingSummary();
-                            if (mounted) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                  content: Text('تم حفظ تقييمك بنجاح!'),
-                                  backgroundColor: AppColors.success,
-                                ),
-                              );
-                            }
-                          } catch (e) {
-                            setModal(() => saving = false);
-                            if (mounted) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(
-                                  content: Text('تعذر حفظ التقييم: $e'),
-                                  backgroundColor: Colors.red,
-                                ),
-                              );
-                            }
-                          }
-                        },
-                  child: saving
-                      ? const SizedBox(
-                          width: 20,
-                          height: 20,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: Colors.white,
-                          ),
-                        )
-                      : const Text(
-                          'حفظ التقييم',
-                          style: TextStyle(fontWeight: FontWeight.bold),
-                        ),
-                ),
-              ),
-            ],
-          ),
+  Future<void> _handleRateTap({int? presetStars}) async {
+    final uid = _currentUid;
+    if (uid == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('سجّل دخولك أولاً لتقييم هذا التاجر')),
+      );
+      return;
+    }
+    if (uid == widget.seller.id) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('لا يمكنك تقييم حسابك الشخصي — جرّب بحساب زبون آخر'),
         ),
-      ),
+      );
+      return;
+    }
+
+    await _showRateMerchantSheet(
+      context: context,
+      merchantId: widget.seller.id,
+      merchantName: widget.seller.fullName ?? 'التاجر',
+      reviewerId: uid,
+      initialStars:
+          presetStars ?? (_myExistingRating?['rating'] as num?)?.toInt() ?? 5,
+      initialComment: (_myExistingRating?['comment'] as String?) ?? '',
+      isEditing: _myExistingRating != null,
+      onSaved: _refreshRatingSummary,
     );
   }
 
@@ -1564,8 +1771,9 @@ class _MerchantPublicProfileScreenState
   @override
   Widget build(BuildContext context) {
     final seller = widget.seller;
-    final canRate =
-        widget.viewerProfile != null && widget.viewerProfile!.id != seller.id;
+    final uid = _currentUid;
+    final isOwnProfile = uid != null && uid == seller.id;
+    final myStars = (_myExistingRating?['rating'] as num?)?.toInt() ?? 0;
 
     return Scaffold(
       appBar: AppBar(title: Text(seller.fullName ?? 'بروفايل التاجر')),
@@ -1619,21 +1827,24 @@ class _MerchantPublicProfileScreenState
                                 color: Colors.white70, fontSize: 12),
                           ),
                           const SizedBox(height: 6),
-                          Row(
-                            children: [
-                              _starsRow(_ratingAvg, size: 17),
-                              const SizedBox(width: 6),
-                              Text(
-                                _ratingCount > 0
-                                    ? '${_ratingAvg.toStringAsFixed(1)} ($_ratingCount تقييم)'
-                                    : 'بدون تقييمات بعد',
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.bold,
+                          GestureDetector(
+                            onTap: () => _handleRateTap(),
+                            child: Row(
+                              children: [
+                                _starsRow(_ratingAvg, size: 18),
+                                const SizedBox(width: 6),
+                                Text(
+                                  _ratingCount > 0
+                                      ? '${_ratingAvg.toStringAsFixed(1)} ($_ratingCount تقييم)'
+                                      : 'بدون تقييمات بعد',
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.bold,
+                                  ),
                                 ),
-                              ),
-                            ],
+                              ],
+                            ),
                           ),
                         ],
                       ),
@@ -1664,46 +1875,93 @@ class _MerchantPublicProfileScreenState
                   'العنوان: ${formatWorkshopStreet(seller)}',
                   style: const TextStyle(color: Colors.white70, fontSize: 12),
                 ),
-                if (canRate) ...[
+                if (uid != null && !isOwnProfile) ...[
                   const SizedBox(height: 14),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.orange,
+                        foregroundColor: Colors.white,
+                      ),
+                      onPressed: () => Navigator.push(
+                        context,
+                        animatedRoute(ChatConversationScreen(
+                          otherUserId: seller.id,
+                          otherUserName: seller.fullName ?? 'التاجر',
+                          otherUserPhone: seller.phone,
+                        )),
+                      ),
+                      icon: const Icon(Icons.chat, size: 18),
+                      label: const Text('مراسلة التاجر الآن'),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          const SizedBox(height: 14),
+          Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: AppColors.border),
+            ),
+            child: Column(
+              children: [
+                Text(
+                  isOwnProfile
+                      ? 'تقييم حسابك'
+                      : (_myExistingRating != null
+                          ? 'تقييمك الحالي ($myStars / 5) — اضغط لتعديله'
+                          : 'قيّم تجربتك مع هذا التاجر'),
+                  style: const TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 14,
+                    color: AppColors.navy,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                if (isOwnProfile)
+                  const Text(
+                    'لا يمكنك تقييم حسابك الشخصي. يظهر هذا الكرت للزبائن لتقييمك من 1 إلى 5 نجوم.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: AppColors.textSecondary, fontSize: 12),
+                  )
+                else ...[
                   Row(
-                    children: [
-                      Expanded(
-                        child: ElevatedButton.icon(
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: AppColors.orange,
-                            foregroundColor: Colors.white,
-                          ),
-                          onPressed: () => Navigator.push(
-                            context,
-                            animatedRoute(ChatConversationScreen(
-                              otherUserId: seller.id,
-                              otherUserName: seller.fullName ?? 'التاجر',
-                              otherUserPhone: seller.phone,
-                            )),
-                          ),
-                          icon: const Icon(Icons.chat, size: 18),
-                          label: const Text('مراسلة التاجر'),
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: List.generate(5, (i) {
+                      final star = i + 1;
+                      return IconButton(
+                        onPressed: () => _handleRateTap(presetStars: star),
+                        icon: Icon(
+                          star <= myStars
+                              ? Icons.star_rounded
+                              : Icons.star_border_rounded,
+                          color: Colors.amber,
+                          size: 34,
                         ),
+                      );
+                    }),
+                  ),
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: AppColors.navy,
+                        side: const BorderSide(color: AppColors.navy),
                       ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: OutlinedButton.icon(
-                          style: OutlinedButton.styleFrom(
-                            foregroundColor: Colors.amber,
-                            side: const BorderSide(color: Colors.amber),
-                          ),
-                          onPressed: _openRateDialog,
-                          icon: const Icon(Icons.star_rounded, size: 18),
-                          label: Text(
-                            _myExistingRating != null
-                                ? 'تعديل تقييمك'
-                                : 'قيّم التاجر',
-                            style: const TextStyle(fontWeight: FontWeight.bold),
-                          ),
-                        ),
+                      onPressed: () => _handleRateTap(),
+                      icon: const Icon(Icons.rate_review_outlined, size: 18),
+                      label: Text(
+                        _myExistingRating != null
+                            ? 'تعديل التقييم والتعليق'
+                            : 'إضافة تقييم وتعليق',
+                        style: const TextStyle(fontWeight: FontWeight.bold),
                       ),
-                    ],
+                    ),
                   ),
                 ],
               ],
@@ -1809,6 +2067,9 @@ class _MerchantPublicProfileScreenState
                   final p = items[i];
                   final imgs = List<String>.from(p['images'] ?? []);
                   final qty = (p['quantity'] as num?)?.toInt() ?? 1;
+                  final discountPct =
+                      (p['discount_percent'] as num?)?.toInt() ?? 0;
+                  final origPrice = (p['original_price'] as num?)?.toDouble();
                   final tag = 'seller_${p['id']}';
                   return BounceTap(
                     onTap: () => Navigator.push(
@@ -1829,26 +2090,51 @@ class _MerchantPublicProfileScreenState
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Hero(
-                            tag: tag,
-                            child: Container(
-                              height: 92,
-                              width: double.infinity,
-                              decoration: BoxDecoration(
-                                color: AppColors.placeholder,
-                                borderRadius: BorderRadius.circular(12),
-                                image: imgs.isNotEmpty
-                                    ? DecorationImage(
-                                        image: NetworkImage(imgs.first),
-                                        fit: BoxFit.cover,
-                                      )
-                                    : null,
+                          Stack(
+                            children: [
+                              Hero(
+                                tag: tag,
+                                child: Container(
+                                  height: 92,
+                                  width: double.infinity,
+                                  decoration: BoxDecoration(
+                                    color: AppColors.placeholder,
+                                    borderRadius: BorderRadius.circular(12),
+                                    image: imgs.isNotEmpty
+                                        ? DecorationImage(
+                                            image: NetworkImage(imgs.first),
+                                            fit: BoxFit.cover,
+                                          )
+                                        : null,
+                                  ),
+                                  child: imgs.isEmpty
+                                      ? const Icon(Icons.settings_outlined,
+                                          color: AppColors.textSecondary)
+                                      : null,
+                                ),
                               ),
-                              child: imgs.isEmpty
-                                  ? const Icon(Icons.settings_outlined,
-                                      color: AppColors.textSecondary)
-                                  : null,
-                            ),
+                              if (discountPct > 0)
+                                Positioned(
+                                  bottom: 6,
+                                  right: 6,
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 6, vertical: 2),
+                                    decoration: BoxDecoration(
+                                      color: Colors.red.shade600,
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                    child: Text(
+                                      'خصم $discountPct%',
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 9.5,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                            ],
                           ),
                           const SizedBox(height: 8),
                           Text(
@@ -1871,13 +2157,38 @@ class _MerchantPublicProfileScreenState
                                 color: AppColors.textSecondary, fontSize: 10.5),
                           ),
                           const Spacer(),
-                          Text(
-                            '${p['price']} د.أ',
-                            style: const TextStyle(
-                              fontWeight: FontWeight.w800,
-                              fontSize: 14,
-                              color: AppColors.orange,
-                            ),
+                          Row(
+                            children: [
+                              Flexible(
+                                child: Text(
+                                  '${p['price']} د.أ',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.w800,
+                                    fontSize: 14,
+                                    color: discountPct > 0
+                                        ? Colors.red.shade700
+                                        : AppColors.orange,
+                                  ),
+                                ),
+                              ),
+                              if (discountPct > 0 && origPrice != null) ...[
+                                const SizedBox(width: 5),
+                                Flexible(
+                                  child: Text(
+                                    '$origPrice',
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      fontSize: 11,
+                                      color: AppColors.textSecondary,
+                                      decoration: TextDecoration.lineThrough,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ],
                           ),
                         ],
                       ),
