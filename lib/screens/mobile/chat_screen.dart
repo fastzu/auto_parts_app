@@ -1,5 +1,6 @@
 import 'package:material_ui/material_ui.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/animations.dart';
 
@@ -152,6 +153,17 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
     super.dispose();
   }
 
+  Future<void> _callOtherUser() async {
+    final cleaned = (widget.otherUserPhone ?? '').replaceAll(RegExp(r'[^0-9+]'), '');
+    if (cleaned.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('رقم الهاتف غير متوفر')),
+      );
+      return;
+    }
+    await launchUrl(Uri(scheme: 'tel', path: cleaned), mode: LaunchMode.externalApplication);
+  }
+
   Future<void> _send() async {
     final text = _msgCtrl.text.trim();
     final myId = _db.auth.currentUser?.id;
@@ -168,6 +180,8 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
   @override
   Widget build(BuildContext context) {
     final myId = _db.auth.currentUser?.id;
+    final hasPhone = (widget.otherUserPhone ?? '').trim().isNotEmpty;
+
     return Scaffold(
       appBar: AppBar(
         backgroundColor: AppColors.navy,
@@ -179,9 +193,28 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(widget.otherUserName, style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
-            if (widget.otherUserPhone != null && widget.otherUserPhone!.isNotEmpty) Text(widget.otherUserPhone!, style: const TextStyle(color: Colors.white70, fontSize: 12)),
+            if (hasPhone)
+              GestureDetector(
+                onTap: _callOtherUser,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.call, size: 12, color: AppColors.orange),
+                    const SizedBox(width: 4),
+                    Text(widget.otherUserPhone!, style: const TextStyle(color: Colors.white70, fontSize: 12)),
+                  ],
+                ),
+              ),
           ],
         ),
+        actions: [
+          if (hasPhone)
+            IconButton(
+              tooltip: 'اتصال هاتفي',
+              onPressed: _callOtherUser,
+              icon: const Icon(Icons.phone, color: Colors.white),
+            ),
+        ],
       ),
       body: Column(
         children: [

@@ -12,13 +12,106 @@ class MerchantProductsDashboard extends StatefulWidget {
 }
 
 class _MerchantProductsDashboardState extends State<MerchantProductsDashboard> {
+  final _db = Supabase.instance.client;
   DashboardPeriod _period = DashboardPeriod.month1;
   DateTimeRange? _customRange;
+  String _sortMode = 'newest'; // newest | views | clicks | sales
+
+  Future<void> _editProductDialog(Map<String, dynamic> p) async {
+    final titleCtrl = TextEditingController(text: (p['title'] as String?) ?? '');
+    final priceCtrl = TextEditingController(text: '${p['price'] ?? 0}');
+    final qtyCtrl = TextEditingController(text: '${p['quantity'] ?? 1}');
+
+    await showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('تعديل المنشور (السعر والكمية)'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: titleCtrl,
+              decoration: const InputDecoration(labelText: 'عنوان القطعة'),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: priceCtrl,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(labelText: 'السعر (د.أ)'),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: qtyCtrl,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(labelText: 'الكمية المتوفرة'),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('إلغاء')),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.orange,
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () async {
+              final newPrice = double.tryParse(priceCtrl.text.trim()) ??
+                  ((p['price'] as num?)?.toDouble() ?? 0.0);
+              final rawQty = int.tryParse(qtyCtrl.text.trim()) ?? 1;
+              final newQty = rawQty < 0 ? 0 : rawQty;
+
+              await _db.from('products').update({
+                'title': titleCtrl.text.trim().isEmpty ? p['title'] : titleCtrl.text.trim(),
+                'price': newPrice,
+                'quantity': newQty,
+              }).eq('id', p['id']);
+
+              if (ctx.mounted) Navigator.pop(ctx);
+              if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('تم تحديث السعر والكمية بنجاح!'),
+                    backgroundColor: AppColors.success,
+                  ),
+                );
+              }
+            },
+            child: const Text('حفظ التعديل'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _deleteProductDialog(Map<String, dynamic> p) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('حذف المنشور'),
+        content: Text('هل أنت متأكد من حذف "${p['title'] ?? ''}" نهائياً؟'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('إلغاء')),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('حذف نهائي'),
+          ),
+        ],
+      ),
+    );
+    if (confirm == true) {
+      await _db.from('products').delete().eq('id', p['id']);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('تم حذف المنشور بنجاح')),
+        );
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
-    final db = Supabase.instance.client;
-    final uid = db.auth.currentUser!.id;
+    final uid = _db.auth.currentUser!.id;
     final range = DateRangeFilterBar.resolveRange(_period, _customRange);
 
     return Scaffold(
@@ -32,7 +125,7 @@ class _MerchantProductsDashboardState extends State<MerchantProductsDashboard> {
         ],
       ),
       body: StreamBuilder<List<Map<String, dynamic>>>(
-        stream: db
+        stream: _db
             .from('products')
             .stream(primaryKey: ['id'])
             .eq('user_id', uid)
@@ -51,15 +144,28 @@ class _MerchantProductsDashboardState extends State<MerchantProductsDashboard> {
                 !dt.isAfter(range.end.add(const Duration(days: 1)));
           }).toList();
 
+          if (_sortMode == 'views') {
+            items.sort((a, b) => ((b['views_count'] as int?) ?? 0).compareTo((a['views_count'] as int?) ?? 0));
+          } else if (_sortMode == 'clicks') {
+            items.sort((a, b) => ((b['clicks_count'] as int?) ?? 0).compareTo((a['clicks_count'] as int?) ?? 0));
+          } else if (_sortMode == 'sales') {
+            items.sort((a, b) => ((b['sales_count'] as int?) ?? 0).compareTo((a['sales_count'] as int?) ?? 0));
+          }
+
           final totalViews = items.fold<int>(0, (s, p) => s + ((p['views_count'] as int?) ?? 0));
-          final totalClicks =
-              items.fold<int>(0, (s, p) => s + ((p['clicks_count'] as int?) ?? 0));
+          final totalClicks = items.fold<int>(0, (s, p) => s + ((p['clicks_count'] as int?) ?? 0));
           final totalSales = items.fold<int>(0, (s, p) => s + ((p['sales_count'] as int?) ?? 0));
+
+          final (chartTitle, chartUnit, metricKey) = switch (_sortMode) {
+            'clicks' => ('تفاعل النقرات حسب القطعة', 'نقرة', 'clicks_count'),
+            'sales' => ('المبيعات حسب القطعة', 'مبيعة', 'sales_count'),
+            _ => ('تفاعل المشاهدات حسب القطعة', 'مشاهدة', 'views_count'),
+          };
 
           final chartData = items.take(6).map((p) {
             final title = (p['title'] as String? ?? '');
             final short = title.length > 8 ? title.substring(0, 8) : title;
-            return (label: short, value: ((p['views_count'] as int?) ?? 0).toDouble());
+            return (label: short, value: ((p[metricKey] as int?) ?? 0).toDouble());
           }).toList();
 
           return ListView(
@@ -76,27 +182,41 @@ class _MerchantProductsDashboardState extends State<MerchantProductsDashboard> {
               const SizedBox(height: 14),
               Row(
                 children: [
-                  _statCard('المنشورات', items.length, Icons.inventory_2_outlined),
+                  _statCard('المنشورات', items.length, Icons.inventory_2_outlined, 'newest'),
                   const SizedBox(width: 8),
-                  _statCard('المشاهدات', totalViews, Icons.visibility_outlined),
+                  _statCard('المشاهدات', totalViews, Icons.visibility_outlined, 'views'),
                   const SizedBox(width: 8),
-                  _statCard('النقرات', totalClicks, Icons.touch_app_outlined),
+                  _statCard('النقرات', totalClicks, Icons.touch_app_outlined, 'clicks'),
                   const SizedBox(width: 8),
-                  _statCard('المبيعات', totalSales, Icons.shopping_bag_outlined),
+                  _statCard('المبيعات', totalSales, Icons.shopping_bag_outlined, 'sales'),
                 ],
               ),
               if (chartData.isNotEmpty) ...[
                 const SizedBox(height: 16),
                 InteractiveAnimatedChart(
-                  title: 'تفاعل المشاهدات حسب القطعة',
+                  title: chartTitle,
                   data: chartData,
-                  unit: 'مشاهدة',
+                  unit: chartUnit,
                 ),
               ],
               const SizedBox(height: 18),
-              const Text(
-                'إحصائيات كل قطعة',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text(
+                    'إدارة منشوراتك',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                  ),
+                  Text(
+                    switch (_sortMode) {
+                      'views' => 'مرتبة حسب المشاهدات',
+                      'clicks' => 'مرتبة حسب النقرات',
+                      'sales' => 'مرتبة حسب المبيعات',
+                      _ => 'مرتبة حسب الأحدث',
+                    },
+                    style: const TextStyle(color: AppColors.orange, fontSize: 12, fontWeight: FontWeight.bold),
+                  ),
+                ],
               ),
               const SizedBox(height: 10),
               if (items.isEmpty)
@@ -112,6 +232,7 @@ class _MerchantProductsDashboardState extends State<MerchantProductsDashboard> {
                   final views = (p['views_count'] as int?) ?? 0;
                   final clicks = (p['clicks_count'] as int?) ?? 0;
                   final sales = (p['sales_count'] as int?) ?? 0;
+                  final qty = (p['quantity'] as num?)?.toInt() ?? 1;
                   final isHidden = (p['is_hidden'] as bool?) ?? false;
                   final imgs = List<String>.from(p['images'] ?? []);
 
@@ -145,9 +266,29 @@ class _MerchantProductsDashboardState extends State<MerchantProductsDashboard> {
                                   child: Column(
                                     crossAxisAlignment: CrossAxisAlignment.start,
                                     children: [
-                                      Text(
-                                        p['title'] ?? '',
-                                        style: const TextStyle(fontWeight: FontWeight.bold),
+                                      Row(
+                                        children: [
+                                          Expanded(
+                                            child: Text(
+                                              p['title'] ?? '',
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                              style: const TextStyle(fontWeight: FontWeight.bold),
+                                            ),
+                                          ),
+                                          if (isHidden)
+                                            Container(
+                                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                              decoration: BoxDecoration(
+                                                color: Colors.orange.withValues(alpha: 0.15),
+                                                borderRadius: BorderRadius.circular(8),
+                                              ),
+                                              child: const Text(
+                                                'مخفي',
+                                                style: TextStyle(color: AppColors.orange, fontSize: 10, fontWeight: FontWeight.bold),
+                                              ),
+                                            ),
+                                        ],
                                       ),
                                       Text(
                                         '${p['price']} د.أ · ${p['car_name']}',
@@ -156,19 +297,50 @@ class _MerchantProductsDashboardState extends State<MerchantProductsDashboard> {
                                           fontSize: 12,
                                         ),
                                       ),
+                                      Text(
+                                        'الكمية المتوفرة: $qty',
+                                        style: const TextStyle(
+                                          color: AppColors.success,
+                                          fontSize: 11,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
                                     ],
                                   ),
                                 ),
+                              ],
+                            ),
+                            const SizedBox(height: 8),
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.end,
+                              children: [
+                                OutlinedButton.icon(
+                                  style: OutlinedButton.styleFrom(
+                                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                                  ),
+                                  onPressed: () => _editProductDialog(p),
+                                  icon: const Icon(Icons.edit_outlined, size: 16, color: AppColors.navy),
+                                  label: const Text('تعديل السعر/الكمية', style: TextStyle(fontSize: 11, color: AppColors.navy)),
+                                ),
+                                const SizedBox(width: 6),
                                 IconButton(
-                                  tooltip: isHidden ? 'إظهار' : 'إخفاء',
-                                  icon: Icon(isHidden ? Icons.visibility_off : Icons.visibility),
-                                  onPressed: () => db
+                                  tooltip: isHidden ? 'إظهار المنشور' : 'إخفاء المنشور',
+                                  icon: Icon(
+                                    isHidden ? Icons.visibility_off : Icons.visibility,
+                                    color: isHidden ? AppColors.orange : AppColors.navy,
+                                  ),
+                                  onPressed: () => _db
                                       .from('products')
                                       .update({'is_hidden': !isHidden}).eq('id', p['id']),
                                 ),
+                                IconButton(
+                                  tooltip: 'حذف المنشور',
+                                  icon: const Icon(Icons.delete_outline, color: Colors.red),
+                                  onPressed: () => _deleteProductDialog(p),
+                                ),
                               ],
                             ),
-                            const Divider(),
+                            const Divider(height: 12),
                             Row(
                               mainAxisAlignment: MainAxisAlignment.spaceAround,
                               children: [
@@ -190,25 +362,48 @@ class _MerchantProductsDashboardState extends State<MerchantProductsDashboard> {
     );
   }
 
-  Widget _statCard(String label, int val, IconData icon) {
+  Widget _statCard(String label, int val, IconData icon, String sortKey) {
+    final active = _sortMode == sortKey;
     return Expanded(
-      child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 6),
-        decoration: BoxDecoration(
-          color: AppColors.surface,
+      child: Material(
+        color: active ? AppColors.orangeLight : AppColors.surface,
+        borderRadius: BorderRadius.circular(14),
+        child: InkWell(
           borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: AppColors.border),
-        ),
-        child: Column(
-          children: [
-            PulseBlink(child: Icon(icon, color: AppColors.orange, size: 20)),
-            const SizedBox(height: 4),
-            AnimatedCounter(
-              value: val,
-              style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
+          onTap: () => setState(() => _sortMode = sortKey),
+          child: Container(
+            padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 6),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(
+                color: active ? AppColors.orange : AppColors.border,
+                width: active ? 1.5 : 1,
+              ),
             ),
-            Text(label, style: const TextStyle(color: AppColors.textSecondary, fontSize: 10)),
-          ],
+            child: Column(
+              children: [
+                PulseBlink(child: Icon(icon, color: AppColors.orange, size: 20)),
+                const SizedBox(height: 4),
+                FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: AnimatedCounter(
+                    value: val,
+                    style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
+                  ),
+                ),
+                Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: active ? AppColors.orange : AppColors.textSecondary,
+                    fontWeight: active ? FontWeight.bold : FontWeight.normal,
+                    fontSize: 10,
+                  ),
+                ),
+              ],
+            ),
+          ),
         ),
       ),
     );

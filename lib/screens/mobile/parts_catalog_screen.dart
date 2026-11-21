@@ -25,6 +25,24 @@ class _PartsCatalogScreenState extends State<PartsCatalogScreen> {
   final _db = Supabase.instance.client;
   String _search = '';
   String _selectedCat = 'الكل';
+  Set<String> _trustedMerchantIds = {};
+
+  @override
+  void initState() {
+    super.initState();
+    _loadTrustedMerchants();
+  }
+
+  Future<void> _loadTrustedMerchants() async {
+    try {
+      final rows = await _db.from('customers').select('id').eq('is_trusted_merchant', true);
+      if (mounted) {
+        setState(() {
+          _trustedMerchantIds = rows.map((r) => r['id'] as String).toSet();
+        });
+      }
+    } catch (_) {}
+  }
 
   List<String> get _cats => ['الكل', ...CarPartsCatalogAZ.mainCategories];
 
@@ -124,12 +142,14 @@ class _PartsCatalogScreenState extends State<PartsCatalogScreen> {
                     maxCrossAxisExtent: 230,
                     mainAxisSpacing: 12,
                     crossAxisSpacing: 12,
-                    childAspectRatio: 0.74,
+                    childAspectRatio: 0.72,
                   ),
                   itemCount: parts.length,
                   itemBuilder: (_, i) {
                     final p = parts[i];
                     final imgs = List<String>.from(p['images'] ?? []);
+                    final isTrusted = _trustedMerchantIds.contains(p['user_id']);
+                    final qty = (p['quantity'] as num?)?.toInt() ?? 1;
 
                     return FadeSlideIn(
                       index: i,
@@ -151,23 +171,54 @@ class _PartsCatalogScreenState extends State<PartsCatalogScreen> {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Container(
-                                height: 92,
-                                width: double.infinity,
-                                decoration: BoxDecoration(
-                                  color: AppColors.placeholder,
-                                  borderRadius: BorderRadius.circular(12),
-                                  image: imgs.isNotEmpty
-                                      ? DecorationImage(
-                                          image: NetworkImage(imgs.first),
-                                          fit: BoxFit.cover,
-                                        )
-                                      : null,
-                                ),
-                                child: imgs.isEmpty
-                                    ? const Icon(Icons.settings_outlined,
-                                        color: AppColors.textSecondary, size: 32)
-                                    : null,
+                              Stack(
+                                children: [
+                                  Container(
+                                    height: 92,
+                                    width: double.infinity,
+                                    decoration: BoxDecoration(
+                                      color: AppColors.placeholder,
+                                      borderRadius: BorderRadius.circular(12),
+                                      image: imgs.isNotEmpty
+                                          ? DecorationImage(
+                                              image: NetworkImage(imgs.first),
+                                              fit: BoxFit.cover,
+                                            )
+                                          : null,
+                                    ),
+                                    child: imgs.isEmpty
+                                        ? const Icon(Icons.settings_outlined,
+                                            color: AppColors.textSecondary, size: 32)
+                                        : null,
+                                  ),
+                                  if (isTrusted)
+                                    Positioned(
+                                      top: 6,
+                                      left: 6,
+                                      child: Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                                        decoration: BoxDecoration(
+                                          color: Colors.white.withValues(alpha: 0.94),
+                                          borderRadius: BorderRadius.circular(12),
+                                        ),
+                                        child: const Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            Icon(Icons.verified, color: Colors.blue, size: 12),
+                                            SizedBox(width: 3),
+                                            Text(
+                                              'موثوق',
+                                              style: TextStyle(
+                                                color: Colors.blue,
+                                                fontSize: 9,
+                                                fontWeight: FontWeight.bold,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ),
+                                ],
                               ),
                               const SizedBox(height: 8),
                               Text(
@@ -182,6 +233,14 @@ class _PartsCatalogScreenState extends State<PartsCatalogScreen> {
                                 overflow: TextOverflow.ellipsis,
                                 style: const TextStyle(
                                     color: AppColors.textSecondary, fontSize: 11),
+                              ),
+                              Text(
+                                'الكمية: $qty',
+                                style: const TextStyle(
+                                  color: AppColors.success,
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.bold,
+                                ),
                               ),
                               const Spacer(),
                               Row(

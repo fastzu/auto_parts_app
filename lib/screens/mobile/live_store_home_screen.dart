@@ -1,5 +1,7 @@
+import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../models/car_parts_catalog_az.dart';
 import '../../models/db_models.dart';
 import '../../theme/app_theme.dart';
@@ -9,6 +11,18 @@ import '../../widgets/home_live_progress_banner.dart';
 import 'book_workshop_screen.dart';
 import 'chat_screen.dart';
 import 'parts_catalog_screen.dart';
+
+Future<void> _dialPhoneNumber(BuildContext context, String? rawPhone) async {
+  final cleaned = (rawPhone ?? '').replaceAll(RegExp(r'[^0-9+]'), '');
+  if (cleaned.isEmpty) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('رقم الهاتف غير متوفر حالياً')),
+    );
+    return;
+  }
+  final uri = Uri(scheme: 'tel', path: cleaned);
+  await launchUrl(uri, mode: LaunchMode.externalApplication);
+}
 
 class LiveStoreHomeScreen extends StatefulWidget {
   final CustomerProfile? profile;
@@ -24,11 +38,29 @@ class _LiveStoreHomeScreenState extends State<LiveStoreHomeScreen> {
   final _db = Supabase.instance.client;
   String _search = '';
   String _selectedCat = 'الكل';
+  Set<String> _trustedMerchantIds = {};
 
   String _selectedBrand = JordanCarsCatalog.brands.first;
   String _selectedModel = JordanCarsCatalog.brandsAndModels[JordanCarsCatalog.brands.first]!.first;
   String _selectedYear = 'جميع الموديلات';
   bool _filterByCar = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadTrustedMerchants();
+  }
+
+  Future<void> _loadTrustedMerchants() async {
+    try {
+      final rows = await _db.from('customers').select('id').eq('is_trusted_merchant', true);
+      if (mounted) {
+        setState(() {
+          _trustedMerchantIds = rows.map((r) => r['id'] as String).toSet();
+        });
+      }
+    } catch (_) {}
+  }
 
   List<String> get _cats => ['الكل', ...CarPartsCatalogAZ.mainCategories];
 
@@ -154,6 +186,124 @@ class _LiveStoreHomeScreenState extends State<LiveStoreHomeScreen> {
     );
   }
 
+  Widget _buildActiveDiscountsStrip() {
+    final userRole = widget.profile?.role ?? 'user';
+    final isPro = (widget.profile?.subscriptionPlan ?? 'free') != 'free';
+
+    return StreamBuilder<List<Map<String, dynamic>>>(
+      stream: _db
+          .from('discounts')
+          .stream(primaryKey: ['id'])
+          .eq('is_active', true)
+          .order('created_at', ascending: false),
+      builder: (context, snap) {
+        final now = DateTime.now();
+        final list = (snap.data ?? []).map(DbDiscount.fromMap).where((d) {
+          if (d.expiresAt != null && d.expiresAt!.isBefore(now)) {
+            return false;
+          }
+          final roleOk = d.targetRole == 'all' ||
+              d.targetRole == userRole ||
+              (d.targetRole == 'pro' && isPro);
+          final catOk = d.targetCategory == 'الكل' ||
+              _selectedCat == 'الكل' ||
+              d.targetCategory == _selectedCat;
+          return roleOk && catOk;
+        }).toList();
+
+        if (list.isEmpty) return const SizedBox.shrink();
+
+        return Padding(
+          padding: const EdgeInsets.only(top: 12),
+          child: SizedBox(
+            height: 74,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              itemCount: list.length,
+              separatorBuilder: (_, __) => const SizedBox(width: 10),
+              itemBuilder: (_, i) {
+                final d = list[i];
+                return InkWell(
+                  borderRadius: BorderRadius.circular(14),
+                  onTap: () async {
+                    await Clipboard.setData(ClipboardData(text: d.code));
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text('تم نسخ كود الخصم (${d.code}) — خصم ${d.discountPercent.toStringAsFixed(0)}%'),
+                          backgroundColor: AppColors.success,
+                        ),
+                      );
+                    }
+                  },
+                  child: Container(
+                    width: 245,
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                    decoration: BoxDecoration(
+                      gradient: const LinearGradient(
+                        colors: [AppColors.navy, Color(0xFF1F2D3D)],
+                        begin: Alignment.topRight,
+                        end: Alignment.bottomLeft,
+                      ),
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(color: AppColors.orange.withValues(alpha: 0.7)),
+                    ),
+                    child: Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                          decoration: BoxDecoration(
+                            color: AppColors.orange,
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: Text(
+                            '${d.discountPercent.toStringAsFixed(0)}%',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w900,
+                              fontSize: 15,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                d.title,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 13,
+                                ),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                'الكود: ${d.code} · اضغط للنسخ',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(color: Colors.white70, fontSize: 11),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const Icon(Icons.copy_rounded, color: Colors.white70, size: 16),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return SafeArea(
@@ -266,12 +416,12 @@ class _LiveStoreHomeScreenState extends State<LiveStoreHomeScreen> {
                           },
                         ),
                       ),
+                      _buildActiveDiscountsStrip(),
                     ],
                   ),
                 ),
               ),
 
-              // شيمر متموج أثناء تحميل البيانات من Supabase
               if (isLoading)
                 const SliverToBoxAdapter(
                   child: Padding(
@@ -294,7 +444,7 @@ class _LiveStoreHomeScreenState extends State<LiveStoreHomeScreen> {
                 ),
                 SliverToBoxAdapter(
                   child: SizedBox(
-                    height: 230,
+                    height: 238,
                     child: bestSellers.isEmpty
                         ? const Center(child: Text('لا توجد قطع حالياً لهذه السيارة'))
                         : ListView.separated(
@@ -303,7 +453,7 @@ class _LiveStoreHomeScreenState extends State<LiveStoreHomeScreen> {
                             itemCount: bestSellers.take(8).length,
                             separatorBuilder: (_, __) => const SizedBox(width: 12),
                             itemBuilder: (_, i) => SizedBox(
-                              width: 164,
+                              width: 168,
                               child: FadeSlideIn(index: i, child: _card(bestSellers[i], 'الأكثر مبيعاً', 'best')),
                             ),
                           ),
@@ -324,7 +474,7 @@ class _LiveStoreHomeScreenState extends State<LiveStoreHomeScreen> {
                 SliverPadding(
                   padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
                   sliver: SliverGrid(
-                    gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(maxCrossAxisExtent: 230, mainAxisSpacing: 12, crossAxisSpacing: 12, childAspectRatio: 0.74),
+                    gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(maxCrossAxisExtent: 230, mainAxisSpacing: 12, crossAxisSpacing: 12, childAspectRatio: 0.72),
                     delegate: SliverChildBuilderDelegate((_, i) => FadeSlideIn(index: i, child: _card(all[i], 'جديد', 'new')), childCount: all.length),
                   ),
                 ),
@@ -366,6 +516,8 @@ class _LiveStoreHomeScreenState extends State<LiveStoreHomeScreen> {
   Widget _card(Map<String, dynamic> p, String badge, String heroPrefix) {
     final imgs = List<String>.from(p['images'] ?? []);
     final heroTag = '${heroPrefix}_${p['id']}';
+    final isTrusted = _trustedMerchantIds.contains(p['user_id']);
+    final qty = (p['quantity'] as num?)?.toInt() ?? 1;
 
     return BounceTap(
       onTap: () => Navigator.push(context, animatedRoute(ProductDetailsScreen(product: p, viewerProfile: widget.profile, heroTag: heroTag))),
@@ -399,11 +551,32 @@ class _LiveStoreHomeScreenState extends State<LiveStoreHomeScreen> {
                     child: Text(badge, style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
                   ),
                 ),
+                if (isTrusted)
+                  Positioned(
+                    top: 6,
+                    left: 6,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: 0.94),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: const Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.verified, color: Colors.blue, size: 12),
+                          SizedBox(width: 3),
+                          Text('موثوق', style: TextStyle(color: Colors.blue, fontSize: 9, fontWeight: FontWeight.bold)),
+                        ],
+                      ),
+                    ),
+                  ),
               ],
             ),
             const SizedBox(height: 8),
             Text(p['title'] ?? '', maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
             Text('${p['car_name']} · ${p['car_model']}', maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: AppColors.textSecondary, fontSize: 11)),
+            Text('الكمية: $qty', maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: AppColors.success, fontSize: 10, fontWeight: FontWeight.bold)),
             const Spacer(),
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -494,6 +667,7 @@ class _ProductDetailsScreenState extends State<ProductDetailsScreen> {
   Widget build(BuildContext context) {
     final p = widget.product;
     final imgs = List<String>.from(p['images'] ?? []);
+    final qty = (p['quantity'] as num?)?.toInt() ?? 1;
     final imageBox = imgs.isNotEmpty
         ? SizedBox(
             height: 220,
@@ -519,6 +693,8 @@ class _ProductDetailsScreenState extends State<ProductDetailsScreen> {
           const SizedBox(height: 6),
           Text('${p['main_category'] ?? ''} · ${p['sub_category'] ?? ''}', style: const TextStyle(color: AppColors.textSecondary, fontSize: 13)),
           Text('السيارة: ${p['car_name']} · الموديل: ${p['car_model']}', style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+          const SizedBox(height: 4),
+          Text('الكمية المتوفرة: $qty قطعة', style: const TextStyle(color: AppColors.success, fontWeight: FontWeight.bold, fontSize: 13)),
           if ((p['chassis_number'] as String? ?? '').isNotEmpty) Text('رقم الشاصي: ${p['chassis_number']}', style: const TextStyle(color: AppColors.textSecondary, fontSize: 12)),
           const SizedBox(height: 10),
           Container(padding: const EdgeInsets.all(14), decoration: BoxDecoration(color: AppColors.surface, borderRadius: BorderRadius.circular(14), border: Border.all(color: AppColors.border)), child: Text(p['description'] ?? '')),
@@ -548,9 +724,68 @@ class _ProductDetailsScreenState extends State<ProductDetailsScreen> {
                     children: [
                       const Text('معلومات البائع والتاجر', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
                       const SizedBox(height: 10),
-                      Row(children: [const CircleAvatar(backgroundColor: AppColors.navy, child: Icon(Icons.storefront, color: Colors.white)), const SizedBox(width: 12), Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Row(children: [Text(_seller?.fullName ?? 'التاجر', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)), if (_seller?.isTrustedMerchant == true) ...[const SizedBox(width: 6), const Icon(Icons.verified, color: Colors.blue, size: 17)]]), Text('الهاتف: ${_seller?.phone ?? "غير متوفر"}', style: const TextStyle(color: AppColors.orange, fontWeight: FontWeight.bold)), if (_seller != null) Text(formatWorkshopStreet(_seller!), style: const TextStyle(color: AppColors.textSecondary, fontSize: 12))]))]),
+                      Row(
+                        children: [
+                          const CircleAvatar(backgroundColor: AppColors.navy, child: Icon(Icons.storefront, color: Colors.white)),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  children: [
+                                    Flexible(child: Text(_seller?.fullName ?? 'التاجر', overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15))),
+                                    if (_seller?.isTrustedMerchant == true) ...[
+                                      const SizedBox(width: 6),
+                                      const Icon(Icons.verified, color: Colors.blue, size: 17),
+                                      const SizedBox(width: 3),
+                                      const Text('تاجر موثوق', style: TextStyle(color: Colors.blue, fontSize: 11, fontWeight: FontWeight.bold)),
+                                    ],
+                                  ],
+                                ),
+                                const SizedBox(height: 4),
+                                InkWell(
+                                  borderRadius: BorderRadius.circular(8),
+                                  onTap: () => _dialPhoneNumber(context, _seller?.phone),
+                                  child: Padding(
+                                    padding: const EdgeInsets.symmetric(vertical: 2),
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        const Icon(Icons.call, color: AppColors.orange, size: 16),
+                                        const SizedBox(width: 5),
+                                        Text(
+                                          'اتصال: ${_seller?.phone ?? "غير متوفر"}',
+                                          style: const TextStyle(
+                                            color: AppColors.orange,
+                                            fontWeight: FontWeight.bold,
+                                            decoration: TextDecoration.underline,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                                if (_seller != null) Text(formatWorkshopStreet(_seller!), style: const TextStyle(color: AppColors.textSecondary, fontSize: 12)),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
                       const SizedBox(height: 12),
                       if (_seller != null) ...[
+                        if ((_seller!.phone ?? '').trim().isNotEmpty) ...[
+                          SizedBox(
+                            width: double.infinity,
+                            child: ElevatedButton.icon(
+                              style: ElevatedButton.styleFrom(backgroundColor: AppColors.success, foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(vertical: 12)),
+                              onPressed: () => _dialPhoneNumber(context, _seller!.phone),
+                              icon: const Icon(Icons.phone),
+                              label: Text('اتصال مباشر بالتاجر (${_seller!.phone})'),
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                        ],
                         SizedBox(width: double.infinity, child: ElevatedButton.icon(style: ElevatedButton.styleFrom(backgroundColor: AppColors.navy, foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(vertical: 12)), onPressed: () => Navigator.push(context, animatedRoute(MerchantPublicProfileScreen(seller: _seller!, viewerProfile: widget.viewerProfile))), icon: const Icon(Icons.store_mall_directory_outlined), label: const Text('عرض بروفايل التاجر وجميع منشوراته'))),
                         if (widget.viewerProfile != null && widget.viewerProfile!.id != p['user_id']) ...[
                           const SizedBox(height: 8),
@@ -589,15 +824,49 @@ class MerchantPublicProfileScreen extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Row(children: [const CircleAvatar(radius: 26, backgroundColor: AppColors.orange, child: Icon(Icons.storefront, color: Colors.white, size: 28)), const SizedBox(width: 14), Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Row(children: [Text(seller.fullName ?? 'التاجر', style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)), if (seller.isTrustedMerchant) ...[const SizedBox(width: 6), const Icon(Icons.verified, color: Colors.lightBlueAccent, size: 18)]]), Text('@${seller.username ?? ""}', style: const TextStyle(color: Colors.white70, fontSize: 12))]))]),
+                Row(children: [const CircleAvatar(radius: 26, backgroundColor: AppColors.orange, child: Icon(Icons.storefront, color: Colors.white, size: 28)), const SizedBox(width: 14), Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Row(children: [Flexible(child: Text(seller.fullName ?? 'التاجر', overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold))), if (seller.isTrustedMerchant) ...[const SizedBox(width: 6), const Icon(Icons.verified, color: Colors.lightBlueAccent, size: 18)]]), Text('@${seller.username ?? ""}', style: const TextStyle(color: Colors.white70, fontSize: 12))]))]),
                 const Divider(color: Colors.white24, height: 22),
-                Text('رقم الهاتف للتواصل: ${seller.phone ?? "غير متوفر"}', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                const SizedBox(height: 4),
+                InkWell(
+                  onTap: () => _dialPhoneNumber(context, seller.phone),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.phone, color: AppColors.orange, size: 17),
+                      const SizedBox(width: 6),
+                      Text(
+                        'رقم الهاتف للتواصل: ${seller.phone ?? "غير متوفر"}',
+                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, decoration: TextDecoration.underline),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 6),
                 Text('العنوان: ${formatWorkshopStreet(seller)}', style: const TextStyle(color: Colors.white70, fontSize: 12)),
-                if (viewerProfile != null && viewerProfile!.id != seller.id) ...[
-                  const SizedBox(height: 12),
-                  SizedBox(width: double.infinity, child: ElevatedButton.icon(style: ElevatedButton.styleFrom(backgroundColor: AppColors.orange, foregroundColor: Colors.white), onPressed: () => Navigator.push(context, animatedRoute(ChatConversationScreen(otherUserId: seller.id, otherUserName: seller.fullName ?? 'التاجر', otherUserPhone: seller.phone))), icon: const Icon(Icons.chat), label: const Text('مراسلة التاجر الآن'))),
-                ],
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    if ((seller.phone ?? '').trim().isNotEmpty)
+                      Expanded(
+                        child: ElevatedButton.icon(
+                          style: ElevatedButton.styleFrom(backgroundColor: AppColors.success, foregroundColor: Colors.white),
+                          onPressed: () => _dialPhoneNumber(context, seller.phone),
+                          icon: const Icon(Icons.call, size: 18),
+                          label: const Text('اتصال'),
+                        ),
+                      ),
+                    if ((seller.phone ?? '').trim().isNotEmpty && viewerProfile != null && viewerProfile!.id != seller.id)
+                      const SizedBox(width: 10),
+                    if (viewerProfile != null && viewerProfile!.id != seller.id)
+                      Expanded(
+                        child: ElevatedButton.icon(
+                          style: ElevatedButton.styleFrom(backgroundColor: AppColors.orange, foregroundColor: Colors.white),
+                          onPressed: () => Navigator.push(context, animatedRoute(ChatConversationScreen(otherUserId: seller.id, otherUserName: seller.fullName ?? 'التاجر', otherUserPhone: seller.phone))),
+                          icon: const Icon(Icons.chat, size: 18),
+                          label: const Text('مراسلة التاجر'),
+                        ),
+                      ),
+                  ],
+                ),
               ],
             ),
           ),
@@ -617,11 +886,12 @@ class MerchantPublicProfileScreen extends StatelessWidget {
               return GridView.builder(
                 shrinkWrap: true,
                 physics: const NeverScrollableScrollPhysics(),
-                gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(maxCrossAxisExtent: 230, mainAxisSpacing: 12, crossAxisSpacing: 12, childAspectRatio: 0.76),
+                gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(maxCrossAxisExtent: 230, mainAxisSpacing: 12, crossAxisSpacing: 12, childAspectRatio: 0.74),
                 itemCount: items.length,
                 itemBuilder: (_, i) {
                   final p = items[i];
                   final imgs = List<String>.from(p['images'] ?? []);
+                  final qty = (p['quantity'] as num?)?.toInt() ?? 1;
                   final tag = 'seller_${p['id']}';
                   return BounceTap(
                     onTap: () => Navigator.push(context, animatedRoute(ProductDetailsScreen(product: p, viewerProfile: viewerProfile, heroTag: tag))),
@@ -631,13 +901,35 @@ class MerchantPublicProfileScreen extends StatelessWidget {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Hero(
-                            tag: tag,
-                            child: Container(height: 95, width: double.infinity, decoration: BoxDecoration(color: AppColors.placeholder, borderRadius: BorderRadius.circular(12), image: imgs.isNotEmpty ? DecorationImage(image: NetworkImage(imgs.first), fit: BoxFit.cover) : null), child: imgs.isEmpty ? const Icon(Icons.settings_outlined, color: AppColors.textSecondary) : null),
+                          Stack(
+                            children: [
+                              Hero(
+                                tag: tag,
+                                child: Container(height: 95, width: double.infinity, decoration: BoxDecoration(color: AppColors.placeholder, borderRadius: BorderRadius.circular(12), image: imgs.isNotEmpty ? DecorationImage(image: NetworkImage(imgs.first), fit: BoxFit.cover) : null), child: imgs.isEmpty ? const Icon(Icons.settings_outlined, color: AppColors.textSecondary) : null),
+                              ),
+                              if (seller.isTrustedMerchant)
+                                Positioned(
+                                  top: 6,
+                                  left: 6,
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                                    decoration: BoxDecoration(color: Colors.white.withValues(alpha: 0.94), borderRadius: BorderRadius.circular(12)),
+                                    child: const Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Icon(Icons.verified, color: Colors.blue, size: 12),
+                                        SizedBox(width: 3),
+                                        Text('موثوق', style: TextStyle(color: Colors.blue, fontSize: 9, fontWeight: FontWeight.bold)),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                            ],
                           ),
                           const SizedBox(height: 8),
                           Text(p['title'] ?? '', maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
                           Text('${p['car_name']} · ${p['car_model']}', maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: AppColors.textSecondary, fontSize: 11)),
+                          Text('الكمية: $qty', style: const TextStyle(color: AppColors.success, fontSize: 10, fontWeight: FontWeight.bold)),
                           const Spacer(),
                           Text('${p['price']} د.أ', style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 14, color: AppColors.orange)),
                         ],

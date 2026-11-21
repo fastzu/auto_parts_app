@@ -105,6 +105,7 @@ class DbProduct {
   final String carName;
   final List<String> images;
   final double price;
+  final int quantity;
   final bool isSold;
   final bool isHidden;
   final int viewsCount;
@@ -123,6 +124,7 @@ class DbProduct {
     required this.carName,
     required this.images,
     required this.price,
+    this.quantity = 1,
     this.isSold = false,
     this.isHidden = false,
     this.viewsCount = 0,
@@ -143,6 +145,7 @@ class DbProduct {
       carName: (map['car_name'] as String?) ?? '',
       images: List<String>.from(map['images'] ?? []),
       price: (map['price'] as num?)?.toDouble() ?? 0.0,
+      quantity: (map['quantity'] as int?) ?? 1,
       isSold: (map['is_sold'] as bool?) ?? false,
       isHidden: (map['is_hidden'] as bool?) ?? false,
       viewsCount: (map['views_count'] as int?) ?? 0,
@@ -165,6 +168,8 @@ class DbMechanicRequest {
   final double totalAmount;
   final double commissionAmount;
   final String paymentStatus;
+  final double? latitude;
+  final double? longitude;
   final double? pickupLatitude;
   final double? pickupLongitude;
   final double? dropoffLatitude;
@@ -186,6 +191,8 @@ class DbMechanicRequest {
     required this.totalAmount,
     required this.commissionAmount,
     required this.paymentStatus,
+    this.latitude,
+    this.longitude,
     this.pickupLatitude,
     this.pickupLongitude,
     this.dropoffLatitude,
@@ -209,6 +216,8 @@ class DbMechanicRequest {
       totalAmount: (map['total_amount'] as num?)?.toDouble() ?? 0.0,
       commissionAmount: (map['commission_amount'] as num?)?.toDouble() ?? 0.0,
       paymentStatus: (map['payment_status'] as String?) ?? 'unpaid',
+      latitude: (map['latitude'] as num?)?.toDouble(),
+      longitude: (map['longitude'] as num?)?.toDouble(),
       pickupLatitude: (map['pickup_latitude'] as num?)?.toDouble() ?? (map['latitude'] as num?)?.toDouble(),
       pickupLongitude: (map['pickup_longitude'] as num?)?.toDouble() ?? (map['longitude'] as num?)?.toDouble(),
       dropoffLatitude: (map['dropoff_latitude'] as num?)?.toDouble(),
@@ -310,6 +319,46 @@ class DbWorkshopAppointment {
       platformCommission: (map['platform_commission'] as num?)?.toDouble() ?? 0.0,
       paymentMethod: (map['payment_method'] as String?) ?? 'cash',
       paymentStatus: (map['payment_status'] as String?) ?? 'unpaid',
+    );
+  }
+}
+
+class DbDiscount {
+  final String id;
+  final String title;
+  final String code;
+  final String? description;
+  final double discountPercent;
+  final String targetRole;
+  final String targetCategory;
+  final bool isActive;
+  final DateTime? expiresAt;
+
+  DbDiscount({
+    required this.id,
+    required this.title,
+    required this.code,
+    this.description,
+    required this.discountPercent,
+    this.targetRole = 'all',
+    this.targetCategory = 'الكل',
+    this.isActive = true,
+    this.expiresAt,
+  });
+
+  factory DbDiscount.fromMap(Map<String, dynamic> map) {
+    return DbDiscount(
+      id: map['id'] as String,
+      title: (map['title'] as String?) ?? '',
+      code: (map['code'] as String?) ?? '',
+      description: map['description'] as String?,
+      discountPercent: (map['discount_percent'] as num?)?.toDouble() ?? 0.0,
+      targetRole: (map['target_role'] as String?) ?? 'all',
+      targetCategory: (map['target_category'] as String?) ?? 'الكل',
+      isActive: (map['is_active'] as bool?) ?? true,
+      expiresAt: map['expires_at'] != null
+          ? DateTime.tryParse(map['expires_at'] as String)
+          : null,
     );
   }
 }

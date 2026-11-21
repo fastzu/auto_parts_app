@@ -42,11 +42,13 @@ class _WorkshopEmergencyDashboardState extends State<WorkshopEmergencyDashboard>
 
   late int _tab = widget.initialTab;
   late bool _isAvailable = widget.profile.isAvailable;
+  late int _maxCarCapacity = widget.profile.maxCarCapacity;
   late double? _myLat = widget.profile.latitude ?? widget.profile.workshopLatitude;
   late double? _myLng = widget.profile.longitude ?? widget.profile.workshopLongitude;
   final double _maxRadiusKm = 15.0;
   DashboardPeriod _period = DashboardPeriod.month1;
   DateTimeRange? _customRange;
+  bool _showApptHistory = false;
 
   List<({int id, String label})> get _menuItems {
     final list = <({int id, String label})>[
@@ -66,6 +68,53 @@ class _WorkshopEmergencyDashboardState extends State<WorkshopEmergencyDashboard>
   void initState() {
     super.initState();
     _syncProviderGps();
+  }
+
+  Future<void> _callPhone(String? rawPhone) async {
+    final cleaned = (rawPhone ?? '').replaceAll(RegExp(r'[^0-9+]'), '');
+    if (cleaned.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('رقم هاتف العميل غير متوفر')),
+        );
+      }
+      return;
+    }
+    await launchUrl(Uri(scheme: 'tel', path: cleaned), mode: LaunchMode.externalApplication);
+  }
+
+  Future<void> _editCapacityDialog() async {
+    final ctrl = TextEditingController(text: '$_maxCarCapacity');
+    await showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('تعديل سعة الورشة القصوى'),
+        content: TextField(
+          controller: ctrl,
+          keyboardType: TextInputType.number,
+          decoration: const InputDecoration(
+            labelText: 'الحد الأقصى للسيارات في اليوم',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('إلغاء')),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: AppColors.orange, foregroundColor: Colors.white),
+            onPressed: () async {
+              final val = (int.tryParse(ctrl.text.trim()) ?? _maxCarCapacity).clamp(1, 100);
+              await _db.from('customers').update({'max_car_capacity': val}).eq('id', widget.profile.id);
+              if (mounted) {
+                setState(() => _maxCarCapacity = val);
+              }
+              widget.onRefreshProfile();
+              if (ctx.mounted) Navigator.pop(ctx);
+            },
+            child: const Text('حفظ السعة'),
+          ),
+        ],
+      ),
+    );
   }
 
   bool _inPeriod(String? createdAt) {
@@ -202,33 +251,35 @@ class _WorkshopEmergencyDashboardState extends State<WorkshopEmergencyDashboard>
           Expanded(
             child: Column(
               children: [
-                Container(
+                Material(
                   color: _isAvailable
                       ? AppColors.success.withValues(alpha: 0.10)
                       : Colors.red.withValues(alpha: 0.10),
-                  padding: const EdgeInsets.symmetric(horizontal: 12),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: SwitchListTile(
-                          contentPadding: EdgeInsets.zero,
-                          title: Text(
-                            _isAvailable
-                                ? 'حالة الورشة: متاح لاستقبال الطلبات والمواعيد'
-                                : 'حالة الورشة: غير متاح حالياً',
-                            style: TextStyle(
-                              fontWeight: FontWeight.bold,
-                              fontSize: 13,
-                              color: _isAvailable ? AppColors.success : Colors.red,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: SwitchListTile(
+                            contentPadding: EdgeInsets.zero,
+                            title: Text(
+                              _isAvailable
+                                  ? 'حالة الورشة: متاح لاستقبال الطلبات والمواعيد'
+                                  : 'حالة الورشة: غير متاح حالياً',
+                              style: TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 13,
+                                color: _isAvailable ? AppColors.success : Colors.red,
+                              ),
                             ),
+                            value: _isAvailable,
+                            activeTrackColor: AppColors.success,
+                            onChanged: _toggleAvailability,
                           ),
-                          value: _isAvailable,
-                          activeTrackColor: AppColors.success,
-                          onChanged: _toggleAvailability,
                         ),
-                      ),
-                      if (isWide) const NotificationBellButton(iconColor: AppColors.navy),
-                    ],
+                        if (isWide) const NotificationBellButton(iconColor: AppColors.navy),
+                      ],
+                    ),
                   ),
                 ),
                 Expanded(
@@ -260,81 +311,83 @@ class _WorkshopEmergencyDashboardState extends State<WorkshopEmergencyDashboard>
 
   Widget _buildSidebar({required bool isDrawer}) {
     final items = _menuItems;
-    return Container(
+    return Material(
       color: AppColors.navy,
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 28),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Expanded(
-                child: Text(
-                  widget.profile.fullName ?? 'اسم النشاط',
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ),
-              IconButton(
-                icon: const Icon(Icons.logout, color: Colors.white, size: 20),
-                onPressed: () async {
-                  await _db.auth.signOut();
-                  if (mounted) {
-                    Navigator.popUntil(context, (r) => r.isFirst);
-                  }
-                  widget.onSignedOut();
-                },
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          ListTile(
-            contentPadding: EdgeInsets.zero,
-            leading: const Icon(Icons.storefront, color: Colors.white),
-            title: const Text(
-              'العودة للرئيسية (المتجر)',
-              style: TextStyle(color: Colors.white, fontSize: 13),
-            ),
-            onTap: () => _goHome(closeDrawerFirst: isDrawer),
-          ),
-          const Divider(color: Colors.white24),
-          const SizedBox(height: 12),
-          ...items.map((item) {
-            final active = _tab == item.id;
-            return Padding(
-              padding: const EdgeInsets.only(bottom: 8),
-              child: GestureDetector(
-                onTap: () {
-                  setState(() => _tab = item.id);
-                  if (isDrawer) {
-                    Navigator.pop(context);
-                  }
-                },
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 200),
-                  width: double.infinity,
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                  decoration: BoxDecoration(
-                    color: active ? AppColors.orange : Colors.transparent,
-                    borderRadius: BorderRadius.circular(12),
-                  ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 28),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Expanded(
                   child: Text(
-                    item.label,
-                    style: TextStyle(
-                      color: active ? Colors.white : Colors.white70,
-                      fontWeight: active ? FontWeight.bold : FontWeight.normal,
+                    widget.profile.fullName ?? 'اسم النشاط',
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
                     ),
                   ),
                 ),
+                IconButton(
+                  icon: const Icon(Icons.logout, color: Colors.white, size: 20),
+                  onPressed: () async {
+                    await _db.auth.signOut();
+                    if (mounted) {
+                      Navigator.popUntil(context, (r) => r.isFirst);
+                    }
+                    widget.onSignedOut();
+                  },
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: const Icon(Icons.storefront, color: Colors.white),
+              title: const Text(
+                'العودة للرئيسية (المتجر)',
+                style: TextStyle(color: Colors.white, fontSize: 13),
               ),
-            );
-          }),
-        ],
+              onTap: () => _goHome(closeDrawerFirst: isDrawer),
+            ),
+            const Divider(color: Colors.white24),
+            const SizedBox(height: 12),
+            ...items.map((item) {
+              final active = _tab == item.id;
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: GestureDetector(
+                  onTap: () {
+                    setState(() => _tab = item.id);
+                    if (isDrawer) {
+                      Navigator.pop(context);
+                    }
+                  },
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 200),
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                    decoration: BoxDecoration(
+                      color: active ? AppColors.orange : Colors.transparent,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Text(
+                      item.label,
+                      style: TextStyle(
+                        color: active ? Colors.white : Colors.white70,
+                        fontWeight: active ? FontWeight.bold : FontWeight.normal,
+                      ),
+                    ),
+                  ),
+                ),
+              );
+            }),
+          ],
+        ),
       ),
     );
   }
@@ -351,7 +404,7 @@ class _WorkshopEmergencyDashboardState extends State<WorkshopEmergencyDashboard>
             .map(DbMechanicRequest.fromMap)
             .where((r) => (showWinch || r.serviceType != 'winch') && _isVisibleToMe(r))
             .toList();
-        final activeEmergencies = reqs.where((r) => r.status != 'completed').length;
+        final activeEmergencies = reqs.where((r) => r.status != 'completed' && r.status != 'cancelled').length;
 
         return StreamBuilder<List<Map<String, dynamic>>>(
           stream: _db
@@ -410,14 +463,33 @@ class _WorkshopEmergencyDashboardState extends State<WorkshopEmergencyDashboard>
                     physics: const NeverScrollableScrollPhysics(),
                     crossAxisSpacing: 12,
                     mainAxisSpacing: 12,
-                    childAspectRatio: isWide ? 1.75 : 1.3,
+                    childAspectRatio: isWide ? 1.55 : 1.15,
                     children: [
-                      _kpiCard('طلبات طوارئ نشطة', activeEmergencies, Icons.car_crash),
-                      _kpiCard('حجوزات الورشة', appts.length, Icons.event_available),
-                      _kpiCard('سعة الورشة القصوى', widget.profile.maxCarCapacity, Icons.garage),
+                      _kpiCard(
+                        'طلبات طوارئ نشطة',
+                        activeEmergencies,
+                        Icons.car_crash,
+                        onTap: () => setState(() => _tab = 1),
+                      ),
+                      _kpiCard(
+                        'حجوزات الورشة',
+                        appts.length,
+                        Icons.event_available,
+                        onTap: () => setState(() => _tab = 2),
+                      ),
+                      _kpiCard(
+                        'سعة الورشة القصوى',
+                        _maxCarCapacity,
+                        Icons.garage,
+                        onTap: _editCapacityDialog,
+                      ),
                       if (showPayments)
-                        _kpiCard('رصيد المحفظة (د.أ)', widget.profile.walletBalance.toInt(),
-                            Icons.account_balance_wallet),
+                        _kpiCard(
+                          'رصيد المحفظة (د.أ)',
+                          widget.profile.walletBalance.toInt(),
+                          Icons.account_balance_wallet,
+                          onTap: () => setState(() => _tab = 4),
+                        ),
                     ],
                   ),
                   const SizedBox(height: 16),
@@ -428,24 +500,36 @@ class _WorkshopEmergencyDashboardState extends State<WorkshopEmergencyDashboard>
                   const SizedBox(height: 16),
                   _bottomCard(
                     'أحدث مواعيد الورشة',
-                    appts.isEmpty
+                    actionLabel: 'إدارة المواعيد',
+                    onAction: () => setState(() => _tab = 2),
+                    children: appts.isEmpty
                         ? [const Text('لا توجد مواعيد ضمن هذه الفترة')]
                         : appts
                             .take(4)
-                            .map((a) => Padding(
-                                  padding: const EdgeInsets.symmetric(vertical: 6),
-                                  child: Row(
-                                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                    children: [
-                                      Text(
-                                        '${a['appointment_time']} · ${a['appointment_date']}',
-                                        style: const TextStyle(fontWeight: FontWeight.w600),
-                                      ),
-                                      Text(
-                                        a['service_description'] ?? '',
-                                        style: const TextStyle(color: AppColors.textSecondary),
-                                      ),
-                                    ],
+                            .map((a) => InkWell(
+                                  borderRadius: BorderRadius.circular(10),
+                                  onTap: () => setState(() => _tab = 2),
+                                  child: Padding(
+                                    padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+                                    child: Row(
+                                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                      children: [
+                                        Text(
+                                          '${a['appointment_time']} · ${a['appointment_date']}',
+                                          style: const TextStyle(fontWeight: FontWeight.w600),
+                                        ),
+                                        const SizedBox(width: 8),
+                                        Expanded(
+                                          child: Text(
+                                            a['service_description'] ?? '',
+                                            textAlign: TextAlign.end,
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: const TextStyle(color: AppColors.textSecondary),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
                                   ),
                                 ))
                             .toList(),
@@ -459,40 +543,64 @@ class _WorkshopEmergencyDashboardState extends State<WorkshopEmergencyDashboard>
     );
   }
 
-  Widget _kpiCard(String title, int val, IconData icon) {
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: AppColors.surface,
+  Widget _kpiCard(String title, int val, IconData icon, {VoidCallback? onTap}) {
+    return Material(
+      color: AppColors.surface,
+      borderRadius: BorderRadius.circular(16),
+      child: InkWell(
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppColors.border),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          PulseBlink(child: Icon(icon, color: AppColors.orange, size: 22)),
-          const Spacer(),
-          Text(
-            title,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(color: AppColors.textSecondary, fontSize: 12),
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: AppColors.border),
           ),
-          const SizedBox(height: 4),
-          AnimatedCounter(
-            value: val,
-            style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  PulseBlink(child: Icon(icon, color: AppColors.orange, size: 22)),
+                  if (onTap != null)
+                    const Icon(Icons.arrow_forward_ios, size: 12, color: AppColors.textSecondary),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Text(
+                title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(color: AppColors.textSecondary, fontSize: 12),
+              ),
+              const SizedBox(height: 2),
+              FittedBox(
+                fit: BoxFit.scaleDown,
+                alignment: Alignment.centerRight,
+                child: AnimatedCounter(
+                  value: val,
+                  style: const TextStyle(fontSize: 21, fontWeight: FontWeight.w800, height: 1.15),
+                ),
+              ),
+            ],
           ),
-        ],
+        ),
       ),
     );
   }
 
-  Widget _bottomCard(String title, List<Widget> children) {
+  Widget _bottomCard(
+    String title, {
+    required List<Widget> children,
+    String? actionLabel,
+    VoidCallback? onAction,
+  }) {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(20),
+      padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
         color: AppColors.surface,
         borderRadius: BorderRadius.circular(16),
@@ -501,8 +609,18 @@ class _WorkshopEmergencyDashboardState extends State<WorkshopEmergencyDashboard>
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(title, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-          const SizedBox(height: 12),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(title, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+              if (actionLabel != null && onAction != null)
+                TextButton(
+                  onPressed: onAction,
+                  child: Text(actionLabel, style: const TextStyle(color: AppColors.orange, fontWeight: FontWeight.bold)),
+                ),
+            ],
+          ),
+          const SizedBox(height: 8),
           ...children,
         ],
       ),
@@ -539,6 +657,8 @@ class _WorkshopEmergencyDashboardState extends State<WorkshopEmergencyDashboard>
             final r = reqs[i];
             final distKm = _distanceToRequest(r);
             final hasCoords = r.pickupLatitude != null && r.pickupLongitude != null;
+            final isWinch = r.serviceType == 'winch';
+            final hasPhone = (r.phone ?? '').trim().isNotEmpty;
 
             return Card(
               margin: const EdgeInsets.only(bottom: 14),
@@ -552,7 +672,7 @@ class _WorkshopEmergencyDashboardState extends State<WorkshopEmergencyDashboard>
                       children: [
                         Expanded(
                           child: Text(
-                            '${r.serviceType == 'winch' ? 'طلب ونش' : 'ميكانيكي طوارئ'} · ${r.carDetails}',
+                            '${isWinch ? 'طلب ونش' : 'ميكانيكي طوارئ'} · ${r.carDetails}',
                             style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
                           ),
                         ),
@@ -570,9 +690,60 @@ class _WorkshopEmergencyDashboardState extends State<WorkshopEmergencyDashboard>
                           ),
                       ],
                     ),
-                    Text('المشكلة: ${r.description ?? "-"} · الهاتف: ${r.phone ?? "-"}'),
+                    Text('المشكلة: ${r.description ?? "-"}'),
+                    if (hasPhone)
+                      InkWell(
+                        onTap: () => _callPhone(r.phone),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 3),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(Icons.call, size: 15, color: AppColors.success),
+                              const SizedBox(width: 4),
+                              Text(
+                                'هاتف العميل: ${r.phone} (اضغط للاتصال)',
+                                style: const TextStyle(
+                                  color: AppColors.success,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 13,
+                                  decoration: TextDecoration.underline,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
                     Text('العنوان: ${r.dropoffAddress ?? "موقع العميل"}'),
                     if (showPayments) Text('المبلغ: ${r.totalAmount} د.أ'),
+                    if (r.status == 'accepted' &&
+                        r.mechanicId == widget.profile.id &&
+                        (r.progressStep == 'on_the_way' || r.progressStep == 'arrived_at_pickup')) ...[
+                      const SizedBox(height: 10),
+                      ValueListenableBuilder<double?>(
+                        valueListenable: _tracker.emergencyDistanceKm,
+                        builder: (_, liveKm, __) {
+                          final km = liveKm ?? distKm;
+                          final arrived = r.progressStep == 'arrived_at_pickup';
+                          final p = arrived
+                              ? 1.0
+                              : (km != null ? _tracker.computeGpsProgress('emg_${r.id}', km) : 0.35);
+                          return GpsCarProgressTrack(
+                            progress: p,
+                            isWinch: isWinch,
+                            isArrived: arrived,
+                            trackColor: AppColors.placeholder,
+                            activeColor: AppColors.orange,
+                            labelColor: AppColors.textSecondary,
+                            startLabel: 'موقعك',
+                            endLabel: 'موقع العميل',
+                            distanceLabel: arrived
+                                ? 'وصلت إلى موقع العميل ✓'
+                                : (km != null ? 'متبقي ${km.toStringAsFixed(1)} كم' : 'جاري التتبع بالـ GPS...'),
+                          );
+                        },
+                      ),
+                    ],
                     const SizedBox(height: 10),
                     if (hasCoords) ...[
                       SizedBox(
@@ -606,18 +777,35 @@ class _WorkshopEmergencyDashboardState extends State<WorkshopEmergencyDashboard>
                         ),
                       ),
                       const SizedBox(height: 10),
-                      SizedBox(
-                        width: double.infinity,
-                        child: OutlinedButton.icon(
-                          style: OutlinedButton.styleFrom(side: const BorderSide(color: AppColors.navy)),
-                          onPressed: () =>
-                              _openGpsNavigation(r.pickupLatitude!, r.pickupLongitude!),
-                          icon: const Icon(Icons.navigation, color: AppColors.navy),
-                          label: const Text(
-                            'توجيه GPS لموقع العميل',
-                            style: TextStyle(color: AppColors.navy, fontWeight: FontWeight.bold),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: OutlinedButton.icon(
+                              style: OutlinedButton.styleFrom(side: const BorderSide(color: AppColors.navy)),
+                              onPressed: () =>
+                                  _openGpsNavigation(r.pickupLatitude!, r.pickupLongitude!),
+                              icon: const Icon(Icons.navigation, color: AppColors.navy, size: 17),
+                              label: const Text(
+                                'توجيه GPS',
+                                style: TextStyle(color: AppColors.navy, fontWeight: FontWeight.bold, fontSize: 12),
+                              ),
+                            ),
                           ),
-                        ),
+                          if (hasPhone) ...[
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: ElevatedButton.icon(
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: AppColors.success,
+                                  foregroundColor: Colors.white,
+                                ),
+                                onPressed: () => _callPhone(r.phone),
+                                icon: const Icon(Icons.phone, size: 17),
+                                label: const Text('اتصال بالعميل', style: TextStyle(fontSize: 12)),
+                              ),
+                            ),
+                          ],
+                        ],
                       ),
                       const SizedBox(height: 8),
                     ],
@@ -683,13 +871,15 @@ class _WorkshopEmergencyDashboardState extends State<WorkshopEmergencyDashboard>
       'status': 'accepted',
       'progress_step': 'on_the_way',
       'mechanic_id': widget.profile.id,
+      if (_myLat != null) 'latitude': _myLat,
+      if (_myLng != null) 'longitude': _myLng,
     }).eq('id', r.id);
 
     if (r.userId != null) {
       await _notifs.sendNotification(
         targetUserId: r.userId!,
         title: 'تم قبول طلب الطوارئ',
-        body: 'المزود في طريقه إليك الآن.',
+        body: 'المزود في طريقه إليك الآن ويمكنك متابعته عبر الـ GPS.',
         type: 'order_accepted',
         referenceId: r.id,
       );
@@ -705,6 +895,12 @@ class _WorkshopEmergencyDashboardState extends State<WorkshopEmergencyDashboard>
     }
   }
 
+  bool _isHistoryAppt(Map<String, dynamic> a) {
+    final s = (a['status'] as String?) ?? '';
+    final step = (a['progress_step'] as String?) ?? '';
+    return s == 'completed' || s == 'cancelled' || step == 'completed';
+  }
+
   Widget _buildAppointmentsTab() {
     final showPayments = EnvConfig.paymentsEnabled.value;
     return StreamBuilder<List<Map<String, dynamic>>>(
@@ -717,92 +913,187 @@ class _WorkshopEmergencyDashboardState extends State<WorkshopEmergencyDashboard>
         if (!snap.hasData) {
           return const Center(child: CircularProgressIndicator());
         }
-        final list = snap.data!;
-        if (list.isEmpty) {
-          return const Center(child: Text('لا توجد مواعيد محجوزة حالياً'));
-        }
-        return ListView.builder(
-          padding: const EdgeInsets.all(16),
-          itemCount: list.length,
-          itemBuilder: (_, i) {
-            final a = list[i];
-            final date = a['appointment_date'] as String;
-            final acceptedOnDate =
-                list.where((x) => x['appointment_date'] == date && x['status'] == 'accepted').length;
-            final isFull = acceptedOnDate >= widget.profile.maxCarCapacity;
-            final step = a['progress_step'] as String? ?? 'pending';
+        final allList = snap.data!;
+        final activeList = allList.where((a) => !_isHistoryAppt(a)).toList();
+        final historyList = allList.where(_isHistoryAppt).toList();
+        final list = _showApptHistory ? historyList : activeList;
 
-            return Card(
-              margin: const EdgeInsets.only(bottom: 12),
-              child: Padding(
-                padding: const EdgeInsets.all(14),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+        return Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+              child: Container(
+                padding: const EdgeInsets.all(4),
+                decoration: BoxDecoration(
+                  color: AppColors.surface,
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: AppColors.border),
+                ),
+                child: Row(
                   children: [
-                    Text(
-                      '${a['appointment_date']} · ${a['appointment_time']}',
-                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                    _segTab(
+                      'المواعيد النشطة (${activeList.length})',
+                      !_showApptHistory,
+                      () => setState(() => _showApptHistory = false),
                     ),
-                    Text(a['service_description'] ?? ''),
-                    Text(
-                      'الحالة: ${a['status']} | المرحلة: $step',
-                      style: const TextStyle(color: AppColors.textSecondary, fontSize: 12),
+                    _segTab(
+                      'السجل / الهيستوري (${historyList.length})',
+                      _showApptHistory,
+                      () => setState(() => _showApptHistory = true),
                     ),
-                    const SizedBox(height: 10),
-                    if (a['status'] == 'pending')
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: [
-                          if (!isFull)
-                            ElevatedButton(
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: AppColors.success,
-                                foregroundColor: Colors.white,
-                              ),
-                              onPressed: () => _acceptAppointment(a),
-                              child: const Text('قبول الموعد'),
-                            )
-                          else
-                            const Text(
-                              'الورشة ممتلئة لهذا اليوم!',
-                              style: TextStyle(
-                                color: AppColors.orange,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          OutlinedButton(
-                            onPressed: () => _proposeReschedule(a),
-                            child: const Text('اقتراح موعد آخر (نفس اليوم أو يوم آخر)'),
-                          ),
-                        ],
-                      ),
-                    if (a['status'] == 'accepted') ...[
-                      const Divider(),
-                      Wrap(
-                        spacing: 6,
-                        children: [
-                          _stepBtn(a, 'diagnosis', 'فحص'),
-                          _stepBtn(a, 'repairing', 'قيد الإصلاح'),
-                          _stepBtn(a, 'testing', 'فحص نهائي'),
-                          ActionChip(
-                            backgroundColor: AppColors.orange,
-                            label: Text(
-                              showPayments ? 'جاهزة للتسليم + فاتورة' : 'جاهزة للتسليم',
-                              style: const TextStyle(color: Colors.white),
-                            ),
-                            onPressed: () => _finishAndBill(a),
-                          ),
-                        ],
-                      ),
-                    ],
                   ],
                 ),
               ),
-            );
-          },
+            ),
+            Expanded(
+              child: list.isEmpty
+                  ? Center(
+                      child: Text(
+                        _showApptHistory
+                            ? 'لا توجد مواعيد منتهية في السجل بعد'
+                            : 'لا توجد مواعيد نشطة حالياً',
+                        style: const TextStyle(color: AppColors.textSecondary),
+                      ),
+                    )
+                  : ListView.builder(
+                      padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
+                      itemCount: list.length,
+                      itemBuilder: (_, i) {
+                        final a = list[i];
+                        final date = a['appointment_date'] as String;
+                        final acceptedOnDate = allList
+                            .where((x) => x['appointment_date'] == date && x['status'] == 'accepted')
+                            .length;
+                        final isFull = acceptedOnDate >= _maxCarCapacity;
+                        final step = a['progress_step'] as String? ?? 'pending';
+
+                        return Card(
+                          margin: const EdgeInsets.only(bottom: 12),
+                          child: Padding(
+                            padding: const EdgeInsets.all(14),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                  children: [
+                                    Text(
+                                      '${a['appointment_date']} · ${a['appointment_time']}',
+                                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                                    ),
+                                    Chip(
+                                      label: Text(
+                                        a['status'] == 'completed'
+                                            ? 'مكتمل ✓'
+                                            : (a['status'] == 'cancelled' ? 'ملغي' : '${a['status']}'),
+                                        style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                Text(a['service_description'] ?? ''),
+                                Text(
+                                  'المرحلة: $step',
+                                  style: const TextStyle(color: AppColors.textSecondary, fontSize: 12),
+                                ),
+                                const SizedBox(height: 10),
+                                if (a['status'] == 'pending')
+                                  Wrap(
+                                    spacing: 8,
+                                    runSpacing: 8,
+                                    children: [
+                                      if (!isFull)
+                                        ElevatedButton(
+                                          style: ElevatedButton.styleFrom(
+                                            backgroundColor: AppColors.success,
+                                            foregroundColor: Colors.white,
+                                          ),
+                                          onPressed: () => _acceptAppointment(a),
+                                          child: const Text('قبول الموعد'),
+                                        )
+                                      else
+                                        const Text(
+                                          'الورشة ممتلئة لهذا اليوم!',
+                                          style: TextStyle(
+                                            color: AppColors.orange,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
+                                      OutlinedButton(
+                                        onPressed: () => _proposeReschedule(a),
+                                        child: const Text('اقتراح موعد آخر (نفس اليوم أو يوم آخر)'),
+                                      ),
+                                    ],
+                                  ),
+                                if (a['status'] == 'accepted') ...[
+                                  const Divider(),
+                                  Wrap(
+                                    spacing: 6,
+                                    runSpacing: 6,
+                                    children: [
+                                      _stepBtn(a, 'diagnosis', 'فحص'),
+                                      _stepBtn(a, 'repairing', 'قيد الإصلاح'),
+                                      _stepBtn(a, 'testing', 'فحص نهائي'),
+                                      ActionChip(
+                                        backgroundColor: AppColors.orange,
+                                        label: Text(
+                                          showPayments ? 'جاهزة للتسليم + فاتورة' : 'إنهاء وتسليم (للسجل)',
+                                          style: const TextStyle(color: Colors.white),
+                                        ),
+                                        onPressed: () => _finishAndBill(a),
+                                      ),
+                                      if (showPayments && step == 'awaiting_payment')
+                                        ActionChip(
+                                          backgroundColor: AppColors.success,
+                                          label: const Text(
+                                            'تم التسليم (نقل للسجل)',
+                                            style: TextStyle(color: Colors.white),
+                                          ),
+                                          onPressed: () async {
+                                            await _db.from('workshop_appointments').update({
+                                              'status': 'completed',
+                                              'progress_step': 'completed',
+                                            }).eq('id', a['id']);
+                                          },
+                                        ),
+                                    ],
+                                  ),
+                                ],
+                              ],
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+            ),
+          ],
         );
       },
+    );
+  }
+
+  Widget _segTab(String label, bool selected, VoidCallback onTap) {
+    return Expanded(
+      child: GestureDetector(
+        onTap: onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          padding: const EdgeInsets.symmetric(vertical: 10),
+          decoration: BoxDecoration(
+            color: selected ? AppColors.navy : Colors.transparent,
+            borderRadius: BorderRadius.circular(10),
+          ),
+          alignment: Alignment.center,
+          child: Text(
+            label,
+            style: TextStyle(
+              color: selected ? Colors.white : AppColors.textPrimary,
+              fontWeight: FontWeight.bold,
+              fontSize: 12,
+            ),
+          ),
+        ),
+      ),
     );
   }
 
@@ -906,7 +1197,7 @@ class _WorkshopEmergencyDashboardState extends State<WorkshopEmergencyDashboard>
       await _notifs.sendNotification(
         targetUserId: a['user_id'],
         title: 'سيارتك جاهزة للتسليم!',
-        body: 'انتهى تصليح السيارة في الورشة ويمكنك استلامها الآن.',
+        body: 'انتهى تصليح السيارة في الورشة وتم نقل الموعد إلى السجل.',
         type: 'car_ready',
         referenceId: a['id'],
       );
@@ -1008,16 +1299,16 @@ class _WorkshopEmergencyDashboardState extends State<WorkshopEmergencyDashboard>
             const SizedBox(height: 12),
             Row(
               children: [
-                _walletStatCard('قبل العمولة', gross, Icons.payments_outlined, AppColors.navy),
+                Expanded(child: _miniFinanceCard('قبل العمولة', gross, AppColors.navy)),
                 const SizedBox(width: 8),
-                _walletStatCard('العمولة المقتطعة', comm, Icons.percent, AppColors.orange),
+                Expanded(child: _miniFinanceCard('العمولة المقتطعة', comm, AppColors.orange)),
                 const SizedBox(width: 8),
-                _walletStatCard('الصافي', net, Icons.account_balance_wallet_outlined, AppColors.success),
+                Expanded(child: _miniFinanceCard('الصافي بالمحفظة', net, AppColors.success)),
               ],
             ),
             const SizedBox(height: 14),
             InteractiveAnimatedChart(
-              title: 'التحليل المالي لمحفظة الورشة (د.أ)',
+              title: 'التحليل المالي لمحفظة الورشة',
               unit: 'د.أ',
               data: [
                 (label: 'قبل العمولة', value: gross),
@@ -1026,62 +1317,46 @@ class _WorkshopEmergencyDashboardState extends State<WorkshopEmergencyDashboard>
               ],
             ),
             const SizedBox(height: 16),
-            if (txs.isEmpty)
-              const Card(
-                child: Padding(
-                  padding: EdgeInsets.all(16),
-                  child: Center(child: Text('لا توجد حركات مالية ضمن هذه الفترة')),
-                ),
-              )
-            else
-              ...txs.map((t) => Card(
-                    child: ListTile(
-                      title: Text('${t.transactionType} · ${t.paymentMethod}'),
-                      subtitle: Text(
-                        'قبل العمولة: ${t.grossAmount.toStringAsFixed(2)} | العمولة: -${t.commissionAmount.toStringAsFixed(2)}',
-                      ),
-                      trailing: Text(
-                        '+${t.netAmount.toStringAsFixed(2)} د.أ',
-                        style: const TextStyle(
-                            color: AppColors.success, fontWeight: FontWeight.bold, fontSize: 15),
-                      ),
+            ...txs.map((t) => Card(
+                  child: ListTile(
+                    title: Text('${t.transactionType} · ${t.paymentMethod}'),
+                    subtitle: Text(
+                      'قبل العمولة: ${t.grossAmount.toStringAsFixed(2)} | العمولة: -${t.commissionAmount.toStringAsFixed(2)}',
                     ),
-                  )),
+                    trailing: Text(
+                      '+${t.netAmount.toStringAsFixed(2)} د.أ',
+                      style: const TextStyle(
+                          color: AppColors.success, fontWeight: FontWeight.bold, fontSize: 15),
+                    ),
+                  ),
+                )),
           ],
         );
       },
     );
   }
 
-  Widget _walletStatCard(String label, double amount, IconData icon, Color color) {
-    return Expanded(
-      child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
-        decoration: BoxDecoration(
-          color: AppColors.surface,
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: AppColors.border),
-        ),
-        child: Column(
-          children: [
-            PulseBlink(child: Icon(icon, color: color, size: 20)),
-            const SizedBox(height: 6),
-            Text(
-              label,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(color: AppColors.textSecondary, fontSize: 10),
+  Widget _miniFinanceCard(String title, double val, Color color) {
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 10, color: AppColors.textSecondary)),
+          const SizedBox(height: 4),
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Text(
+              '${val.toStringAsFixed(1)} د.أ',
+              style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: color),
             ),
-            const SizedBox(height: 4),
-            FittedBox(
-              fit: BoxFit.scaleDown,
-              child: Text(
-                '${amount.toStringAsFixed(2)} د.أ',
-                style: TextStyle(fontWeight: FontWeight.w800, fontSize: 14, color: color),
-              ),
-            ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }

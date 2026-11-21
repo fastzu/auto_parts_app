@@ -743,3 +743,195 @@ class _PulsingPinState extends State<PulsingPin> with SingleTickerProviderStateM
     );
   }
 }
+
+/// شريط تتبع حي لسيارة / ونش متحركة على خط الطريق حسب تقدم الـ GPS
+class GpsCarProgressTrack extends StatelessWidget {
+  final double progress;
+  final bool isWinch;
+  final String? distanceLabel;
+  final bool isArrived;
+  final Color? trackColor;
+  final Color? activeColor;
+  final Color? labelColor;
+  final String startLabel;
+  final String endLabel;
+
+  const GpsCarProgressTrack({
+    super.key,
+    required this.progress,
+    this.isWinch = false,
+    this.distanceLabel,
+    this.isArrived = false,
+    this.trackColor,
+    this.activeColor,
+    this.labelColor,
+    this.startLabel = 'الانطلاق',
+    this.endLabel = 'الوجهة',
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final effectiveProgress = isArrived ? 1.0 : progress.clamp(0.04, 1.0);
+    final fillColor = isArrived ? AppColors.success : (activeColor ?? AppColors.orange);
+    final bgTrack = trackColor ?? Colors.white24;
+    final txtColor = labelColor ?? Colors.white70;
+    final dir = Directionality.of(context);
+    final isRtl = dir == TextDirection.rtl;
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        SizedBox(
+          height: 36,
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              const carSize = 30.0;
+              const endPinSize = 22.0;
+              final totalW = constraints.maxWidth;
+              final usableW = (totalW - carSize).clamp(1.0, double.infinity);
+
+              return TweenAnimationBuilder<double>(
+                tween: Tween<double>(end: effectiveProgress),
+                duration: const Duration(milliseconds: 650),
+                curve: Curves.easeOutCubic,
+                builder: (_, animVal, __) {
+                  final val = animVal.clamp(0.0, 1.0);
+                  final carStart = usableW * val;
+                  final lineFillWidth = (carStart + (carSize / 2)).clamp(0.0, totalW);
+
+                  return Stack(
+                    alignment: Alignment.center,
+                    children: [
+                      // خط الطريق الخلفي
+                      Positioned(
+                        left: 6,
+                        right: 6,
+                        child: Container(
+                          height: 6,
+                          decoration: BoxDecoration(
+                            color: bgTrack,
+                            borderRadius: BorderRadius.circular(99),
+                          ),
+                        ),
+                      ),
+                      // الجزء المقطوع من الطريق
+                      Positioned.directional(
+                        textDirection: dir,
+                        start: 6,
+                        child: Container(
+                          width: (lineFillWidth - 6).clamp(0.0, (totalW - 12).clamp(0.0, totalW)),
+                          height: 6,
+                          decoration: BoxDecoration(
+                            color: fillColor,
+                            borderRadius: BorderRadius.circular(99),
+                          ),
+                        ),
+                      ),
+                      // نقطة البداية
+                      Positioned.directional(
+                        textDirection: dir,
+                        start: 0,
+                        child: Container(
+                          width: 12,
+                          height: 12,
+                          decoration: BoxDecoration(
+                            color: fillColor,
+                            shape: BoxShape.circle,
+                            border: Border.all(color: Colors.white, width: 2),
+                          ),
+                        ),
+                      ),
+                      // نقطة الوصول (الوجهة)
+                      Positioned.directional(
+                        textDirection: dir,
+                        end: 0,
+                        child: Container(
+                          width: endPinSize,
+                          height: endPinSize,
+                          decoration: BoxDecoration(
+                            color: isArrived ? AppColors.success : Colors.white,
+                            shape: BoxShape.circle,
+                            border: Border.all(
+                              color: isArrived ? Colors.white : fillColor,
+                              width: 2,
+                            ),
+                          ),
+                          child: Icon(
+                            isArrived ? Icons.check : Icons.location_on,
+                            size: 13,
+                            color: isArrived ? Colors.white : fillColor,
+                          ),
+                        ),
+                      ),
+                      // السيارة / الونش المتحركة على الخط حسب GPS
+                      Positioned.directional(
+                        textDirection: dir,
+                        start: carStart,
+                        child: Container(
+                          width: carSize,
+                          height: carSize,
+                          decoration: BoxDecoration(
+                            color: fillColor,
+                            shape: BoxShape.circle,
+                            border: Border.all(color: Colors.white, width: 2),
+                            boxShadow: [
+                              BoxShadow(
+                                color: fillColor.withValues(alpha: 0.45),
+                                blurRadius: 8,
+                                offset: const Offset(0, 2),
+                              ),
+                            ],
+                          ),
+                          child: Transform.flip(
+                            flipX: isRtl && isWinch,
+                            child: Icon(
+                              isWinch ? Icons.local_shipping_rounded : Icons.directions_car_rounded,
+                              size: 16,
+                              color: Colors.white,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  );
+                },
+              );
+            },
+          ),
+        ),
+        const SizedBox(height: 2),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(startLabel, style: TextStyle(fontSize: 10, color: txtColor)),
+            if (distanceLabel != null && distanceLabel!.isNotEmpty)
+              Flexible(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 6),
+                  child: Text(
+                    distanceLabel!,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.bold,
+                      color: isArrived ? AppColors.success : fillColor,
+                    ),
+                  ),
+                ),
+              ),
+            Text(
+              isArrived ? 'تم الوصول ✓' : endLabel,
+              style: TextStyle(
+                fontSize: 10,
+                fontWeight: isArrived ? FontWeight.bold : FontWeight.normal,
+                color: isArrived ? AppColors.success : txtColor,
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+}

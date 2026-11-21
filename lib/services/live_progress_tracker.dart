@@ -17,9 +17,39 @@ class LiveProgressTracker {
 
   final ValueNotifier<double?> workshopDistanceKm = ValueNotifier<double?>(null);
   final ValueNotifier<double?> emergencyDistanceKm = ValueNotifier<double?>(null);
+  final ValueNotifier<Map<String, double>> workshopDistancesById =
+      ValueNotifier<Map<String, double>>({});
+  final ValueNotifier<Map<String, double>> emergencyDistancesById =
+      ValueNotifier<Map<String, double>>({});
 
+  final Map<String, double> _initialDistances = {};
   String? _activeWorkshopApptId;
   String? _activeEmergencyReqId;
+
+  static double distanceKmBetween(
+    double lat1,
+    double lng1,
+    double lat2,
+    double lng2,
+  ) {
+    final meters = Geolocator.distanceBetween(lat1, lng1, lat2, lng2);
+    return double.parse((meters / 1000).toStringAsFixed(2));
+  }
+
+  double computeGpsProgress(String id, double currentKm) {
+    if (currentKm <= 0.15) {
+      return 1.0;
+    }
+    final initial = _initialDistances.putIfAbsent(
+      id,
+      () => currentKm < 0.5 ? 1.0 : currentKm,
+    );
+    final baseline = initial < currentKm ? currentKm : initial;
+    if (baseline <= 0.15) {
+      return 1.0;
+    }
+    return (1.0 - (currentKm / baseline)).clamp(0.08, 0.96);
+  }
 
   Future<bool> _hasPermission() async {
     try {
@@ -31,13 +61,14 @@ class LiveProgressTracker {
       if (perm == LocationPermission.denied) {
         perm = await Geolocator.requestPermission();
       }
-      return perm == LocationPermission.always || perm == LocationPermission.whileInUse;
+      return perm == LocationPermission.always ||
+          perm == LocationPermission.whileInUse;
     } catch (_) {
       return false;
     }
   }
 
-  /// تتبع العميل في طريقه إلى الورشة + تحديث المسافة + Dynamic Island
+  /// تتبع العميل في طريقه إلى الورشة + تحديث المسافة ونسبة التقدم + Dynamic Island
   Future<void> startTrackingToWorkshop({
     required String appointmentId,
     required double workshopLat,
@@ -69,12 +100,17 @@ class LiveProgressTracker {
         );
         final km = double.parse((meters / 1000).toStringAsFixed(1));
         workshopDistanceKm.value = km;
+        workshopDistancesById.value = {
+          ...workshopDistancesById.value,
+          appointmentId: km,
+        };
+        final gpsProg = computeGpsProgress('appt_$appointmentId', km);
 
         await DynamicIslandService.instance.syncProgress(
           keyId: 'appt_$appointmentId',
           title: 'موعد الورشة',
           statusText: meters <= 150 ? 'وصلت إلى الورشة' : 'في الطريق إلى الورشة',
-          progress: meters <= 150 ? 0.35 : (1.0 - (km / 20.0)).clamp(0.1, 0.3),
+          progress: meters <= 150 ? 1.0 : gpsProg,
           etaOrDistance: meters <= 150 ? 'وصلت ✓' : '$km كم',
         );
 
@@ -96,6 +132,10 @@ class LiveProgressTracker {
     await _workshopSub?.cancel();
     _workshopSub = null;
     workshopDistanceKm.value = 0.0;
+    workshopDistancesById.value = {
+      ...workshopDistancesById.value,
+      appointmentId: 0.0,
+    };
 
     await _db.from('workshop_appointments').update({
       'progress_step': 'arrived_at_workshop',
@@ -110,7 +150,7 @@ class LiveProgressTracker {
     );
   }
 
-  /// تتبع فني الطوارئ في طريقه لموقع العميل + Dynamic Island
+  /// تتبع فني الطوارئ / الونش في طريقه لموقع العميل + بث موقعه الحي لـ Supabase
   Future<void> startTrackingEmergencyArrival({
     required String requestId,
     required String customerUserId,
@@ -143,6 +183,26 @@ class LiveProgressTracker {
         );
         final km = double.parse((meters / 1000).toStringAsFixed(1));
         emergencyDistanceKm.value = km;
+        emergencyDistancesById.value = {
+          ...emergencyDistancesById.value,
+          requestId: km,
+        };
+        final gpsProg = computeGpsProgress('emg_$requestId', km);
+
+        try {
+          await _db.from('mechanic_requests').update({
+            'latitude': pos.latitude,
+            'longitude': pos.longitude,
+          }).eq('id', requestId);
+        } catch (_) {}
+
+        await DynamicIslandService.instance.syncProgress(
+          keyId: 'emg_$requestId',
+          title: serviceType == 'winch' ? 'ونش الطوارئ' : 'ميكانيكي الطوارئ',
+          statusText: meters <= 150 ? 'تم الوصول لموقع العميل' : 'في الطريق لموقع العميل',
+          progress: meters <= 150 ? 1.0 : gpsProg,
+          etaOrDistance: meters <= 150 ? 'وصل ✓' : '$km كم',
+        );
 
         if (meters <= 150) {
           await markEmergencyArrived(
@@ -164,6 +224,10 @@ class LiveProgressTracker {
     await _emergencySub?.cancel();
     _emergencySub = null;
     emergencyDistanceKm.value = 0.0;
+    emergencyDistancesById.value = {
+      ...emergencyDistancesById.value,
+      requestId: 0.0,
+    };
 
     await _db.from('mechanic_requests').update({
       'progress_step': 'arrived_at_pickup',

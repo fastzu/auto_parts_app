@@ -38,9 +38,35 @@ class LiveMobileShell extends StatefulWidget {
 
 class _LiveMobileShellState extends State<LiveMobileShell> {
   final _scaffoldKey = GlobalKey<ScaffoldState>();
-  final _notifs = NotificationsService();
+  final _notifs = NotificationsService.instance;
   final _db = Supabase.instance.client;
   int _index = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && widget.profile != null) {
+        _notifs.startGlobalListener(context);
+      }
+    });
+  }
+
+  @override
+  void didUpdateWidget(covariant LiveMobileShell oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.profile?.id != widget.profile?.id) {
+      if (widget.profile != null) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) {
+            _notifs.startGlobalListener(context);
+          }
+        });
+      } else {
+        _notifs.stopGlobalListener();
+      }
+    }
+  }
 
   void _openDashboardForRole(CustomerProfile p) {
     final isAdmin = p.isAdmin || p.role == 'admin';
@@ -306,45 +332,58 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
             (role == 'towing' && showWinch));
 
     return Drawer(
+      backgroundColor: Colors.white,
+      surfaceTintColor: Colors.white,
       child: ListView(
         padding: EdgeInsets.zero,
         children: [
           Container(
             width: double.infinity,
-            padding: const EdgeInsets.fromLTRB(20, 52, 20, 22),
-            color: AppColors.navy,
+            padding: const EdgeInsets.fromLTRB(20, 52, 20, 20),
+            decoration: const BoxDecoration(
+              color: Colors.white,
+              border: Border(bottom: BorderSide(color: AppColors.border)),
+            ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Row(children: [
-                  GhiyarakLogo(size: 42),
-                  SizedBox(width: 10),
-                  Text('غيارك',
+                const Row(
+                  children: [
+                    GhiyarakLogo(size: 42),
+                    SizedBox(width: 10),
+                    Text(
+                      'غيارك',
                       style: TextStyle(
-                          color: Colors.white,
+                          color: AppColors.navy,
                           fontSize: 22,
-                          fontWeight: FontWeight.w900))
-                ]),
+                          fontWeight: FontWeight.w900),
+                    ),
+                  ],
+                ),
                 const SizedBox(height: 10),
                 Text(
-                    isLoggedIn
-                        ? '${p.fullName ?? ""} · @${p.username ?? ""}'
-                        : 'مرحباً بك في غيارك (تصفح كزائر)',
-                    style:
-                        const TextStyle(color: Colors.white70, fontSize: 13)),
+                  isLoggedIn
+                      ? '${p.fullName ?? ""} · @${p.username ?? ""}'
+                      : 'مرحباً بك في غيارك (تصفح كزائر)',
+                  style: const TextStyle(
+                      color: AppColors.textSecondary, fontSize: 13),
+                ),
                 if (isLoggedIn) ...[
                   const SizedBox(height: 8),
                   Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 10, vertical: 3),
-                      decoration: BoxDecoration(
-                          color: AppColors.orange,
-                          borderRadius: BorderRadius.circular(12)),
-                      child: Text(_roleArabicName(isAdmin ? 'admin' : role),
-                          style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 11,
-                              fontWeight: FontWeight.bold))),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+                    decoration: BoxDecoration(
+                        color: AppColors.orange,
+                        borderRadius: BorderRadius.circular(12)),
+                    child: Text(
+                      _roleArabicName(isAdmin ? 'admin' : role),
+                      style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold),
+                    ),
+                  ),
                 ],
               ],
             ),
@@ -398,17 +437,23 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
             const Divider(),
             if (showPayments)
               ListTile(
-                  leading: const Icon(Icons.account_balance_wallet_outlined,
-                      color: AppColors.navy),
-                  title: const Text('محفظة التاجر والأرباح'),
-                  onTap: () {
-                    Navigator.pop(context);
-                    Navigator.push(
-                        context,
-                        animatedRoute(Scaffold(
-                            appBar: AppBar(title: const Text('محفظة التاجر')),
-                            body: _merchantWalletTab())));
-                  }),
+                leading: const Icon(Icons.account_balance_wallet_outlined,
+                    color: AppColors.navy),
+                title: const Text('محفظة التاجر والأرباح'),
+                onTap: () {
+                  Navigator.pop(context);
+                  Navigator.push(
+                    context,
+                    animatedRoute(
+                      Scaffold(
+                        appBar:
+                            AppBar(title: const Text('محفظة التاجر والأرباح')),
+                        body: _MerchantWalletView(providerId: p!.id),
+                      ),
+                    ),
+                  );
+                },
+              ),
             ListTile(
                 leading:
                     const Icon(Icons.add_box_outlined, color: AppColors.orange),
@@ -472,13 +517,15 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
                 }),
           ] else
             ListTile(
-                leading: const Icon(Icons.logout, color: Colors.red),
-                title: const Text('تسجيل الخروج'),
-                onTap: () async {
-                  Navigator.pop(context);
-                  await _db.auth.signOut();
-                  widget.onSignedOut();
-                }),
+              leading: const Icon(Icons.logout, color: Colors.red),
+              title: const Text('تسجيل الخروج'),
+              onTap: () async {
+                Navigator.pop(context);
+                _notifs.stopGlobalListener();
+                await _db.auth.signOut();
+                widget.onSignedOut();
+              },
+            ),
         ],
       ),
     );
@@ -567,10 +614,6 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
     );
   }
 
-  Widget _merchantWalletTab() {
-    return _MerchantWalletView(providerId: widget.profile!.id);
-  }
-
   Widget _profileTab(bool isProvider) {
     if (widget.profile == null) {
       return SafeArea(
@@ -654,13 +697,16 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
                   onTap: _openSupportScreen)),
           const SizedBox(height: 12),
           Card(
-              child: ListTile(
-                  leading: const Icon(Icons.logout, color: Colors.red),
-                  title: const Text('تسجيل الخروج'),
-                  onTap: () async {
-                    await _db.auth.signOut();
-                    widget.onSignedOut();
-                  })),
+            child: ListTile(
+              leading: const Icon(Icons.logout, color: Colors.red),
+              title: const Text('تسجيل الخروج'),
+              onTap: () async {
+                _notifs.stopGlobalListener();
+                await _db.auth.signOut();
+                widget.onSignedOut();
+              },
+            ),
+          ),
         ],
       ),
     );
@@ -680,18 +726,10 @@ class _MerchantWalletViewState extends State<_MerchantWalletView> {
   DashboardPeriod _period = DashboardPeriod.month1;
   DateTimeRange? _customRange;
 
-  bool _inPeriod(String? createdAt) {
-    final dt = DateTime.tryParse(createdAt ?? '');
-    if (dt == null) {
-      return true;
-    }
-    final range = DateRangeFilterBar.resolveRange(_period, _customRange);
-    return !dt.isBefore(range.start) &&
-        !dt.isAfter(range.end.add(const Duration(days: 1)));
-  }
-
   @override
   Widget build(BuildContext context) {
+    final range = DateRangeFilterBar.resolveRange(_period, _customRange);
+
     return StreamBuilder<List<Map<String, dynamic>>>(
       stream: _db
           .from('wallet_transactions')
@@ -699,10 +737,13 @@ class _MerchantWalletViewState extends State<_MerchantWalletView> {
           .eq('provider_id', widget.providerId)
           .order('created_at', ascending: false),
       builder: (_, snap) {
-        final txs = (snap.data ?? [])
-            .where((t) => _inPeriod(t['created_at'] as String?))
-            .map(DbWalletTransaction.fromMap)
-            .toList();
+        final allTxs =
+            (snap.data ?? []).map(DbWalletTransaction.fromMap).toList();
+        final txs = allTxs.where((t) {
+          return !t.createdAt.isBefore(range.start) &&
+              !t.createdAt.isAfter(range.end.add(const Duration(days: 1)));
+        }).toList();
+
         final gross = txs.fold(0.0, (s, t) => s + t.grossAmount);
         final comm = txs.fold(0.0, (s, t) => s + t.commissionAmount);
         final net = txs.fold(0.0, (s, t) => s + t.netAmount);
@@ -718,7 +759,7 @@ class _MerchantWalletViewState extends State<_MerchantWalletView> {
                 _customRange = r;
               }),
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: 14),
             Container(
               padding: const EdgeInsets.all(18),
               decoration: BoxDecoration(
@@ -729,35 +770,37 @@ class _MerchantWalletViewState extends State<_MerchantWalletView> {
                 children: [
                   const Text('صافي محفظة التاجر (بعد العمولة)',
                       style: TextStyle(color: Colors.white70)),
-                  Text('${net.toStringAsFixed(2)} د.أ',
-                      style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 26,
-                          fontWeight: FontWeight.bold)),
+                  Text(
+                    '${net.toStringAsFixed(2)} د.أ',
+                    style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 26,
+                        fontWeight: FontWeight.bold),
+                  ),
                   const SizedBox(height: 6),
                   Text(
-                      'قبل العمولة: ${gross.toStringAsFixed(2)} | العمولة: ${comm.toStringAsFixed(2)} د.أ',
-                      style:
-                          const TextStyle(color: Colors.white70, fontSize: 12)),
+                    'قبل العمولة: ${gross.toStringAsFixed(2)} د.أ  |  العمولة: ${comm.toStringAsFixed(2)} د.أ',
+                    style: const TextStyle(color: Colors.white70, fontSize: 12),
+                  ),
                 ],
               ),
             ),
             const SizedBox(height: 12),
             Row(
               children: [
-                _walletStatCard('قبل العمولة', gross, Icons.payments_outlined,
-                    AppColors.navy),
+                Expanded(
+                    child: _miniStat('قبل العمولة', gross, AppColors.navy)),
                 const SizedBox(width: 8),
-                _walletStatCard(
-                    'العمولة المقتطعة', comm, Icons.percent, AppColors.orange),
+                Expanded(
+                    child:
+                        _miniStat('العمولة المقتطعة', comm, AppColors.orange)),
                 const SizedBox(width: 8),
-                _walletStatCard('الصافي', net,
-                    Icons.account_balance_wallet_outlined, AppColors.success),
+                Expanded(child: _miniStat('الصافي', net, AppColors.success)),
               ],
             ),
             const SizedBox(height: 14),
             InteractiveAnimatedChart(
-              title: 'التحليل المالي لمحفظة التاجر (د.أ)',
+              title: 'التحليل المالي لأرباح التاجر',
               unit: 'د.أ',
               data: [
                 (label: 'قبل العمولة', value: gross),
@@ -766,64 +809,67 @@ class _MerchantWalletViewState extends State<_MerchantWalletView> {
               ],
             ),
             const SizedBox(height: 14),
+            const Text('سجل الحركات المالية',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+            const SizedBox(height: 8),
             if (txs.isEmpty)
               const Card(
                 child: Padding(
-                  padding: EdgeInsets.all(16),
-                  child:
-                      Center(child: Text('لا توجد حركات مالية ضمن هذه الفترة')),
+                  padding: EdgeInsets.all(20),
+                  child: Center(
+                    child: Text('لا توجد حركات مالية ضمن هذه الفترة',
+                        style: TextStyle(color: AppColors.textSecondary)),
+                  ),
                 ),
               )
             else
-              ...txs.map((t) => Card(
-                    child: ListTile(
-                      title: Text(t.transactionType),
-                      subtitle: Text(
-                          'قبل العمولة: ${t.grossAmount} · عمولة: -${t.commissionAmount}'),
-                      trailing: Text('+${t.netAmount.toStringAsFixed(2)} د.أ',
-                          style: const TextStyle(
-                              color: AppColors.success,
-                              fontWeight: FontWeight.bold)),
+              ...txs.map(
+                (t) => Card(
+                  child: ListTile(
+                    title: Text(t.transactionType),
+                    subtitle: Text(
+                        'قبل العمولة: ${t.grossAmount} · عمولة: -${t.commissionAmount}'),
+                    trailing: Text(
+                      '+${t.netAmount.toStringAsFixed(2)} د.أ',
+                      style: const TextStyle(
+                          color: AppColors.success,
+                          fontWeight: FontWeight.bold),
                     ),
-                  )),
+                  ),
+                ),
+              ),
           ],
         );
       },
     );
   }
 
-  Widget _walletStatCard(
-      String label, double amount, IconData icon, Color color) {
-    return Expanded(
-      child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
-        decoration: BoxDecoration(
-          color: AppColors.surface,
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: AppColors.border),
-        ),
-        child: Column(
-          children: [
-            PulseBlink(child: Icon(icon, color: color, size: 20)),
-            const SizedBox(height: 6),
-            Text(
-              label,
+  Widget _miniStat(String title, double val, Color color) {
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(title,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style:
-                  const TextStyle(color: AppColors.textSecondary, fontSize: 10),
+              style: const TextStyle(
+                  fontSize: 10, color: AppColors.textSecondary)),
+          const SizedBox(height: 4),
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Text(
+              '${val.toStringAsFixed(1)} د.أ',
+              style: TextStyle(
+                  fontSize: 14, fontWeight: FontWeight.bold, color: color),
             ),
-            const SizedBox(height: 4),
-            FittedBox(
-              fit: BoxFit.scaleDown,
-              child: Text(
-                '${amount.toStringAsFixed(2)} د.أ',
-                style: TextStyle(
-                    fontWeight: FontWeight.w800, fontSize: 14, color: color),
-              ),
-            ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }

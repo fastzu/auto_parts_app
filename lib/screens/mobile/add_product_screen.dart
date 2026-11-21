@@ -19,6 +19,7 @@ class _AddProductScreenState extends State<AddProductScreen> {
   final _titleCtrl = TextEditingController();
   final _descCtrl = TextEditingController();
   final _priceCtrl = TextEditingController();
+  final _qtyCtrl = TextEditingController(text: '1');
   final _chassisCtrl = TextEditingController();
 
   String _mainCat = CarPartsCatalogAZ.mainCategories.first;
@@ -36,6 +37,7 @@ class _AddProductScreenState extends State<AddProductScreen> {
     _titleCtrl.dispose();
     _descCtrl.dispose();
     _priceCtrl.dispose();
+    _qtyCtrl.dispose();
     _chassisCtrl.dispose();
     super.dispose();
   }
@@ -118,6 +120,8 @@ class _AddProductScreenState extends State<AddProductScreen> {
 
       final cleanBrand = _selectedBrand.split(' ').first;
       final fullCarName = '$cleanBrand $_selectedModel';
+      final parsedQty = int.tryParse(_qtyCtrl.text.trim()) ?? 1;
+      final safeQty = parsedQty < 1 ? 1 : parsedQty;
 
       await _db.from('products').insert({
         'user_id': uid,
@@ -131,6 +135,7 @@ class _AddProductScreenState extends State<AddProductScreen> {
         'car_model': _selectedYear,
         'chassis_number': _chassisCtrl.text.trim().isEmpty ? null : _chassisCtrl.text.trim(),
         'price': double.tryParse(_priceCtrl.text.trim()) ?? 0.0,
+        'quantity': safeQty,
         'images': imageUrls,
       });
 
@@ -348,7 +353,19 @@ class _AddProductScreenState extends State<AddProductScreen> {
           ),
           const SizedBox(height: 12),
           _field(_titleCtrl, 'عنوان المنشور'),
-          _field(_priceCtrl, 'السعر (د.أ)', type: TextInputType.number),
+          Row(
+            children: [
+              Expanded(
+                flex: 3,
+                child: _field(_priceCtrl, 'السعر (د.أ)', type: TextInputType.number),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                flex: 2,
+                child: _field(_qtyCtrl, 'الكمية المتوفرة', type: TextInputType.number),
+              ),
+            ],
+          ),
           _field(_chassisCtrl, 'رقم الشاصي (VIN / Chassis Number)'),
           _field(_descCtrl, 'وصف وتفاصيل القطعة', maxLines: 3),
           const SizedBox(height: 16),

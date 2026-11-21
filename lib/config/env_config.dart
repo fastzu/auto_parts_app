@@ -7,7 +7,7 @@ class EnvConfig {
 
   static const String supportPhone = '0790322555';
   static const String supportWhatsapp = '962790322555';
-  static const String supportEmail = 'customerservice@ghyarak.com';
+  static const String supportEmail = 'support@ghayarakjo.com';
 
   static final ValueNotifier<bool> paymentsEnabled = ValueNotifier<bool>(false);
   static final ValueNotifier<bool> winchEnabled = ValueNotifier<bool>(false);

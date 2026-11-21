@@ -1,6 +1,8 @@
 import 'package:material_ui/material_ui.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../config/env_config.dart';
+import '../../models/car_parts_catalog_az.dart';
 import '../../models/db_models.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/animations.dart';
@@ -40,6 +42,21 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
   bool _maintenance = false;
   bool _saving = false;
 
+  // متحكمات الخصومات وإرسال الإشعارات
+  final _notifTitleCtrl = TextEditingController();
+  final _notifBodyCtrl = TextEditingController();
+  String _notifTargetRole = 'all';
+  bool _sendingNotif = false;
+
+  final _discTitleCtrl = TextEditingController();
+  final _discCodeCtrl = TextEditingController();
+  final _discPercentCtrl = TextEditingController(text: '10');
+  final _discDescCtrl = TextEditingController();
+  String _discTargetRole = 'all';
+  String _discTargetCategory = 'الكل';
+  bool _notifyOnDiscount = true;
+  bool _savingDiscount = false;
+
   @override
   void initState() {
     super.initState();
@@ -53,7 +70,26 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
     _cliqAliasCtrl.dispose();
     _defaultCommCtrl.dispose();
     _defaultMaxPostsCtrl.dispose();
+    _notifTitleCtrl.dispose();
+    _notifBodyCtrl.dispose();
+    _discTitleCtrl.dispose();
+    _discCodeCtrl.dispose();
+    _discPercentCtrl.dispose();
+    _discDescCtrl.dispose();
     super.dispose();
+  }
+
+  Future<void> _callPhone(String? rawPhone) async {
+    final cleaned = (rawPhone ?? '').replaceAll(RegExp(r'[^0-9+]'), '');
+    if (cleaned.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('رقم الهاتف غير متوفر')),
+        );
+      }
+      return;
+    }
+    await launchUrl(Uri(scheme: 'tel', path: cleaned), mode: LaunchMode.externalApplication);
   }
 
   bool _inPeriod(String? createdAt) {
@@ -174,6 +210,221 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
     }
   }
 
+  Future<int> _broadcastNotification({
+    required String title,
+    required String body,
+    required String targetRole,
+    String type = 'promo',
+  }) async {
+    final rows = await _db.from('customers').select('id, role, subscription_plan');
+    final targetIds = <String>[];
+    for (final r in rows) {
+      final id = r['id'] as String?;
+      if (id == null) continue;
+      final role = (r['role'] as String?) ?? 'user';
+      final plan = (r['subscription_plan'] as String?) ?? 'free';
+      final match = switch (targetRole) {
+        'all' => true,
+        'pro' => plan != 'free',
+        _ => role == targetRole,
+      };
+      if (match) {
+        targetIds.add(id);
+      }
+    }
+    if (targetIds.isEmpty) return 0;
+
+    final payload = targetIds
+        .map((uid) => {
+              'user_id': uid,
+              'title': title,
+              'body': body,
+              'type': type,
+              'is_read': false,
+            })
+        .toList();
+
+    // إدراج على دفعات لحماية الأداء عند عدد مستخدمين كبير
+    for (var i = 0; i < payload.length; i += 100) {
+      final end = (i + 100 > payload.length) ? payload.length : i + 100;
+      await _db.from('notifications').insert(payload.sublist(i, end));
+    }
+    return targetIds.length;
+  }
+
+  Future<void> _sendPromoNotification() async {
+    final title = _notifTitleCtrl.text.trim();
+    final body = _notifBodyCtrl.text.trim();
+    if (title.isEmpty || body.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('يرجى إدخال عنوان ونص الإشعار')),
+      );
+      return;
+    }
+    setState(() => _sendingNotif = true);
+    try {
+      final count = await _broadcastNotification(
+        title: title,
+        body: body,
+        targetRole: _notifTargetRole,
+        type: 'promo',
+      );
+      if (mounted) {
+        _notifTitleCtrl.clear();
+        _notifBodyCtrl.clear();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('تم إرسال الإشعار بنجاح إلى $count مستخدم!'),
+            backgroundColor: AppColors.success,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('خطأ أثناء الإرسال: $e'), backgroundColor: Colors.red),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _sendingNotif = false);
+    }
+  }
+
+  Future<void> _createDiscount() async {
+    final title = _discTitleCtrl.text.trim();
+    final code = _discCodeCtrl.text.trim().toUpperCase();
+    final percent = double.tryParse(_discPercentCtrl.text.trim()) ?? 0;
+
+    if (title.isEmpty || code.isEmpty || percent <= 0 || percent > 100) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('يرجى إدخال عنوان الخصم والكود ونسبة صحيحة (1 إلى 100)')),
+      );
+      return;
+    }
+
+    setState(() => _savingDiscount = true);
+    try {
+      await _db.from('discounts').insert({
+        'title': title,
+        'code': code,
+        'description': _discDescCtrl.text.trim().isEmpty ? null : _discDescCtrl.text.trim(),
+        'discount_percent': percent,
+        'target_role': _discTargetRole,
+        'target_category': _discTargetCategory,
+        'is_active': true,
+      });
+
+      int notified = 0;
+      if (_notifyOnDiscount) {
+        final catNote = _discTargetCategory == 'الكل' ? 'جميع الأقسام' : _discTargetCategory;
+        notified = await _broadcastNotification(
+          title: 'خصم جديد ${percent.toStringAsFixed(0)}%: $title',
+          body: 'استخدم الكود ($code) للحصول على خصم على $catNote في غيارك!',
+          targetRole: _discTargetRole,
+          type: 'discount',
+        );
+      }
+
+      if (mounted) {
+        _discTitleCtrl.clear();
+        _discCodeCtrl.clear();
+        _discDescCtrl.clear();
+        _discPercentCtrl.text = '10';
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              _notifyOnDiscount
+                  ? 'تم إنشاء الخصم وإشعار $notified مستخدم بنجاح!'
+                  : 'تم إنشاء الخصم بنجاح!',
+            ),
+            backgroundColor: AppColors.success,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('خطأ أثناء إنشاء الخصم: $e'), backgroundColor: Colors.red),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _savingDiscount = false);
+    }
+  }
+
+  Future<bool> _confirmDelete(String title, String message) async {
+    final res = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(title),
+        content: Text(message),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('إلغاء')),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('حذف'),
+          ),
+        ],
+      ),
+    );
+    return res == true;
+  }
+
+  Future<void> _editProductDialog(Map<String, dynamic> p) async {
+    final titleCtrl = TextEditingController(text: (p['title'] as String?) ?? '');
+    final priceCtrl = TextEditingController(text: '${p['price'] ?? 0}');
+    final qtyCtrl = TextEditingController(text: '${p['quantity'] ?? 1}');
+
+    await showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('تعديل المنشور (السعر والكمية)'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(controller: titleCtrl, decoration: const InputDecoration(labelText: 'عنوان القطعة')),
+            const SizedBox(height: 10),
+            TextField(
+              controller: priceCtrl,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(labelText: 'السعر (د.أ)'),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: qtyCtrl,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(labelText: 'الكمية المتوفرة'),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('إلغاء')),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: AppColors.orange, foregroundColor: Colors.white),
+            onPressed: () async {
+              final newPrice = double.tryParse(priceCtrl.text.trim()) ??
+                  ((p['price'] as num?)?.toDouble() ?? 0.0);
+              final rawQty = int.tryParse(qtyCtrl.text.trim()) ?? 1;
+              await _db.from('products').update({
+                'title': titleCtrl.text.trim().isEmpty ? p['title'] : titleCtrl.text.trim(),
+                'price': newPrice,
+                'quantity': rawQty < 0 ? 0 : rawQty,
+              }).eq('id', p['id']);
+              if (ctx.mounted) Navigator.pop(ctx);
+              if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('تم تحديث المنشور بنجاح!'), backgroundColor: AppColors.success),
+                );
+              }
+            },
+            child: const Text('حفظ'),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
@@ -185,11 +436,12 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
         final isWide = MediaQuery.of(context).size.width >= 850;
         final menu = <({int id, IconData icon, String title})>[
           (id: 0, icon: Icons.dashboard, title: 'نظرة عامة شاملة'),
-          (id: 1, icon: Icons.campaign, title: 'إعلان الصفحة الرئيسية'),
+          (id: 1, icon: Icons.campaign, title: 'إعلانات الصفحة الرئيسية'),
           (id: 2, icon: Icons.people, title: 'الحسابات والتجار والورش'),
           (id: 3, icon: Icons.tune, title: 'إعدادات النظام والتحكم'),
           (id: 4, icon: Icons.inventory_2, title: 'جميع منشورات القطع'),
           (id: 5, icon: Icons.car_crash, title: 'مراقبة الطوارئ والمواعيد'),
+          (id: 7, icon: Icons.local_offer, title: 'الخصومات والإشعارات'),
           if (showPayments)
             (
               id: 6,
@@ -256,6 +508,7 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
                       4 => _allProductsControlView(),
                       5 => _operationsMonitorView(showWinch),
                       6 => _financeAndSubscriptionsView(),
+                      7 => _discountsAndNotificationsView(showWinch),
                       _ => _overviewView(showPayments, showWinch, isWide),
                     },
                   ),
@@ -270,84 +523,86 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
 
   Widget _sidebar(
       List<({int id, IconData icon, String title})> menu, bool isDrawer) {
-    return Container(
+    return Material(
       color: AppColors.navy,
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 24),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              const Row(
-                children: [
-                  GhiyarakLogo(size: 32),
-                  SizedBox(width: 8),
-                  Text('لوحة غيارك',
-                      style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold)),
-                ],
-              ),
-              IconButton(
-                icon: const Icon(Icons.logout, color: Colors.white, size: 20),
-                onPressed: () async {
-                  await _db.auth.signOut();
-                  if (mounted) {
-                    Navigator.popUntil(context, (r) => r.isFirst);
-                  }
-                  widget.onSignedOut();
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 24),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Row(
+                  children: [
+                    GhiyarakLogo(size: 32),
+                    SizedBox(width: 8),
+                    Text('لوحة غيارك',
+                        style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold)),
+                  ],
+                ),
+                IconButton(
+                  icon: const Icon(Icons.logout, color: Colors.white, size: 20),
+                  onPressed: () async {
+                    await _db.auth.signOut();
+                    if (mounted) {
+                      Navigator.popUntil(context, (r) => r.isFirst);
+                    }
+                    widget.onSignedOut();
+                  },
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: const Icon(Icons.storefront, color: Colors.white),
+              title: const Text('العودة للرئيسية (المتجر)',
+                  style: TextStyle(color: Colors.white, fontSize: 13)),
+              onTap: () => _goHome(closeDrawerFirst: isDrawer),
+            ),
+            const Divider(color: Colors.white24),
+            Expanded(
+              child: ListView.builder(
+                itemCount: menu.length,
+                itemBuilder: (_, i) {
+                  final item = menu[i];
+                  final active = _tab == item.id;
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 6),
+                    child: ListTile(
+                      dense: true,
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12)),
+                      tileColor: active ? AppColors.orange : Colors.transparent,
+                      leading: Icon(item.icon,
+                          color: active ? Colors.white : Colors.white70,
+                          size: 20),
+                      title: Text(
+                        item.title,
+                        style: TextStyle(
+                          color: active ? Colors.white : Colors.white70,
+                          fontWeight:
+                              active ? FontWeight.bold : FontWeight.normal,
+                          fontSize: 13,
+                        ),
+                      ),
+                      onTap: () {
+                        setState(() => _tab = item.id);
+                        if (isDrawer) {
+                          Navigator.pop(context);
+                        }
+                      },
+                    ),
+                  );
                 },
               ),
-            ],
-          ),
-          const SizedBox(height: 6),
-          ListTile(
-            contentPadding: EdgeInsets.zero,
-            leading: const Icon(Icons.storefront, color: Colors.white),
-            title: const Text('العودة للرئيسية (المتجر)',
-                style: TextStyle(color: Colors.white, fontSize: 13)),
-            onTap: () => _goHome(closeDrawerFirst: isDrawer),
-          ),
-          const Divider(color: Colors.white24),
-          Expanded(
-            child: ListView.builder(
-              itemCount: menu.length,
-              itemBuilder: (_, i) {
-                final item = menu[i];
-                final active = _tab == item.id;
-                return Padding(
-                  padding: const EdgeInsets.only(bottom: 6),
-                  child: ListTile(
-                    dense: true,
-                    shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12)),
-                    tileColor: active ? AppColors.orange : Colors.transparent,
-                    leading: Icon(item.icon,
-                        color: active ? Colors.white : Colors.white70,
-                        size: 20),
-                    title: Text(
-                      item.title,
-                      style: TextStyle(
-                        color: active ? Colors.white : Colors.white70,
-                        fontWeight:
-                            active ? FontWeight.bold : FontWeight.normal,
-                        fontSize: 13,
-                      ),
-                    ),
-                    onTap: () {
-                      setState(() => _tab = item.id);
-                      if (isDrawer) {
-                        Navigator.pop(context);
-                      }
-                    },
-                  ),
-                );
-              },
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -395,57 +650,76 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
                 final totalComm =
                     txs.fold(0.0, (s, t) => s + t.commissionAmount);
 
-                final cards = [
+                final cards = <({String title, int val, IconData icon, VoidCallback onTap})>[
                   (
                     title: 'إجمالي الحسابات',
                     val: users.length,
-                    icon: Icons.people
+                    icon: Icons.people,
+                    onTap: () => setState(() {
+                      _roleFilter = 'all';
+                      _tab = 2;
+                    }),
                   ),
                   (
                     title: 'الورش والميكانيكيين',
                     val: workshopsCount,
-                    icon: Icons.build
+                    icon: Icons.build,
+                    onTap: () => setState(() {
+                      _roleFilter = 'mechanic';
+                      _tab = 2;
+                    }),
                   ),
                   (
                     title: 'تجار قطع الغيار',
                     val: merchantsCount,
-                    icon: Icons.storefront
+                    icon: Icons.storefront,
+                    onTap: () => setState(() {
+                      _roleFilter = 'merchant';
+                      _tab = 2;
+                    }),
                   ),
                   (
                     title: 'منشورات القطع',
                     val: prods.length,
-                    icon: Icons.inventory_2
+                    icon: Icons.inventory_2,
+                    onTap: () => setState(() => _tab = 4),
                   ),
                   (
                     title: 'إجمالي المشاهدات',
                     val: totalViews,
-                    icon: Icons.visibility
+                    icon: Icons.visibility,
+                    onTap: () => setState(() => _tab = 4),
                   ),
                   (
                     title: 'إجمالي النقرات',
                     val: totalClicks,
-                    icon: Icons.touch_app
+                    icon: Icons.touch_app,
+                    onTap: () => setState(() => _tab = 4),
                   ),
                   (
                     title: 'طلبات الطوارئ',
                     val: reqs.length,
-                    icon: Icons.car_crash
+                    icon: Icons.car_crash,
+                    onTap: () => setState(() => _tab = 5),
                   ),
                   (
                     title: 'مواعيد الورش',
                     val: appts.length,
-                    icon: Icons.event_available
+                    icon: Icons.event_available,
+                    onTap: () => setState(() => _tab = 5),
                   ),
                   if (showPayments) ...[
                     (
                       title: 'إجمالي المبيعات (د.أ)',
                       val: totalGross.toInt(),
-                      icon: Icons.payments
+                      icon: Icons.payments,
+                      onTap: () => setState(() => _tab = 6),
                     ),
                     (
                       title: 'عمولات المنصة (د.أ)',
                       val: totalComm.toInt(),
-                      icon: Icons.trending_up
+                      icon: Icons.trending_up,
+                      onTap: () => setState(() => _tab = 6),
                     ),
                   ],
                 ];
@@ -483,12 +757,16 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
                         crossAxisCount: isWide ? 4 : 2,
                         mainAxisSpacing: 12,
                         crossAxisSpacing: 12,
-                        childAspectRatio: isWide ? 1.45 : 1.15,
+                        childAspectRatio: isWide ? 1.35 : 1.1,
                       ),
                       itemBuilder: (_, i) => FadeSlideIn(
                         index: i,
-                        child:
-                            _kpi(cards[i].title, cards[i].val, cards[i].icon),
+                        child: _kpi(
+                          cards[i].title,
+                          cards[i].val,
+                          cards[i].icon,
+                          onTap: cards[i].onTap,
+                        ),
                       ),
                     ),
                     const SizedBox(height: 16),
@@ -587,10 +865,35 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
                           Chip(label: Text(m.role)),
                         ],
                       ),
-                      Text(
-                        'الإيميل: ${m.email ?? "-"} | الهاتف: ${m.phone ?? "-"}',
-                        style: const TextStyle(
-                            color: AppColors.textSecondary, fontSize: 12),
+                      Wrap(
+                        spacing: 10,
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        children: [
+                          Text(
+                            'الإيميل: ${m.email ?? "-"}',
+                            style: const TextStyle(color: AppColors.textSecondary, fontSize: 12),
+                          ),
+                          if ((m.phone ?? '').trim().isNotEmpty)
+                            InkWell(
+                              onTap: () => _callPhone(m.phone),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  const Icon(Icons.call, size: 14, color: AppColors.orange),
+                                  const SizedBox(width: 3),
+                                  Text(
+                                    m.phone!,
+                                    style: const TextStyle(
+                                      color: AppColors.orange,
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 12,
+                                      decoration: TextDecoration.underline,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                        ],
                       ),
                       const SizedBox(height: 4),
                       Text(
@@ -844,11 +1147,13 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
           ),
           const SizedBox(height: 12),
         ],
-        SwitchListTile(
-          title: const Text('وضع الصيانة'),
-          value: _maintenance,
-          activeTrackColor: AppColors.orange,
-          onChanged: (v) => setState(() => _maintenance = v),
+        Card(
+          child: SwitchListTile(
+            title: const Text('وضع الصيانة'),
+            value: _maintenance,
+            activeTrackColor: AppColors.orange,
+            onChanged: (v) => setState(() => _maintenance = v),
+          ),
         ),
         const SizedBox(height: 16),
         ElevatedButton(
@@ -888,42 +1193,109 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
           itemBuilder: (_, i) {
             final p = prods[i];
             final isHidden = p['is_hidden'] == true;
+            final qty = (p['quantity'] as num?)?.toInt() ?? 1;
             final imgs = List<String>.from(p['images'] ?? []);
             return Card(
               margin: const EdgeInsets.only(bottom: 10),
-              child: ListTile(
-                leading: Container(
-                  width: 52,
-                  height: 52,
-                  decoration: BoxDecoration(
-                    color: AppColors.placeholder,
-                    borderRadius: BorderRadius.circular(10),
-                    image: imgs.isNotEmpty
-                        ? DecorationImage(
-                            image: NetworkImage(imgs.first), fit: BoxFit.cover)
-                        : null,
-                  ),
-                  child: imgs.isEmpty ? const Icon(Icons.settings) : null,
-                ),
-                title: Text(p['title'] ?? '',
-                    style: const TextStyle(fontWeight: FontWeight.bold)),
-                subtitle: Text(
-                    '${p['car_name']} (${p['car_model']}) · ${p['price']} د.أ · مشاهدات: ${p['views_count'] ?? 0}'),
-                trailing: Row(
-                  mainAxisSize: MainAxisSize.min,
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: Column(
                   children: [
-                    IconButton(
-                      icon: Icon(
-                          isHidden ? Icons.visibility_off : Icons.visibility,
-                          color: isHidden ? Colors.orange : AppColors.navy),
-                      onPressed: () => _db
-                          .from('products')
-                          .update({'is_hidden': !isHidden}).eq('id', p['id']),
+                    Row(
+                      children: [
+                        Container(
+                          width: 54,
+                          height: 54,
+                          decoration: BoxDecoration(
+                            color: AppColors.placeholder,
+                            borderRadius: BorderRadius.circular(10),
+                            image: imgs.isNotEmpty
+                                ? DecorationImage(
+                                    image: NetworkImage(imgs.first),
+                                    fit: BoxFit.cover)
+                                : null,
+                          ),
+                          child: imgs.isEmpty ? const Icon(Icons.settings) : null,
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: Text(
+                                      p['title'] ?? '',
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(fontWeight: FontWeight.bold),
+                                    ),
+                                  ),
+                                  if (isHidden)
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                      decoration: BoxDecoration(
+                                        color: Colors.orange.withValues(alpha: 0.15),
+                                        borderRadius: BorderRadius.circular(8),
+                                      ),
+                                      child: const Text(
+                                        'مخفي',
+                                        style: TextStyle(color: AppColors.orange, fontSize: 10, fontWeight: FontWeight.bold),
+                                      ),
+                                    ),
+                                ],
+                              ),
+                              Text(
+                                '${p['car_name']} (${p['car_model']}) · ${p['price']} د.أ · الكمية: $qty',
+                                style: const TextStyle(color: AppColors.textSecondary, fontSize: 12),
+                              ),
+                              Text(
+                                'مشاهدات: ${p['views_count'] ?? 0} · نقرات: ${p['clicks_count'] ?? 0}',
+                                style: const TextStyle(color: AppColors.textSecondary, fontSize: 11),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
                     ),
-                    IconButton(
-                      icon: const Icon(Icons.delete_outline, color: Colors.red),
-                      onPressed: () =>
-                          _db.from('products').delete().eq('id', p['id']),
+                    const SizedBox(height: 8),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      children: [
+                        OutlinedButton.icon(
+                          style: OutlinedButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                          ),
+                          onPressed: () => _editProductDialog(p),
+                          icon: const Icon(Icons.edit_outlined, size: 16, color: AppColors.navy),
+                          label: const Text('تعديل السعر/الكمية', style: TextStyle(fontSize: 11, color: AppColors.navy)),
+                        ),
+                        const SizedBox(width: 6),
+                        IconButton(
+                          tooltip: isHidden ? 'إظهار المنشور' : 'إخفاء المنشور',
+                          icon: Icon(
+                            isHidden ? Icons.visibility_off : Icons.visibility,
+                            color: isHidden ? Colors.orange : AppColors.navy,
+                          ),
+                          onPressed: () => _db
+                              .from('products')
+                              .update({'is_hidden': !isHidden}).eq('id', p['id']),
+                        ),
+                        IconButton(
+                          tooltip: 'حذف المنشور',
+                          icon: const Icon(Icons.delete_outline, color: Colors.red),
+                          onPressed: () async {
+                            final ok = await _confirmDelete(
+                              'حذف المنشور',
+                              'هل أنت متأكد من حذف منشور "${p['title'] ?? ''}" نهائياً؟',
+                            );
+                            if (ok) {
+                              await _db.from('products').delete().eq('id', p['id']);
+                            }
+                          },
+                        ),
+                      ],
                     ),
                   ],
                 ),
@@ -976,26 +1348,72 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
                         margin: const EdgeInsets.only(bottom: 8),
                         child: ListTile(
                           title: Text(
-                              '${r['service_type']} · ${r['car_details']}'),
-                          subtitle: Text(
-                              'المشكلة: ${r['description'] ?? "-"} · الحالة: ${r['status']} (${r['progress_step']})'),
-                          trailing: PopupMenuButton<String>(
-                            onSelected: (val) => _db
-                                .from('mechanic_requests')
-                                .update({
-                              'status': val,
-                              'progress_step': val
-                            }).eq('id', r['id']),
-                            itemBuilder: (_) => const [
-                              PopupMenuItem(
-                                  value: 'pending',
-                                  child: Text('تعليق (pending)')),
-                              PopupMenuItem(
-                                  value: 'completed',
-                                  child: Text('إنهاء (completed)')),
-                              PopupMenuItem(
-                                  value: 'cancelled',
-                                  child: Text('إلغاء (cancelled)')),
+                            '${r['service_type'] == 'winch' ? 'ونش' : 'ميكانيكي'} · ${r['car_details'] ?? ''}',
+                            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                          ),
+                          subtitle: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'المشكلة: ${r['description'] ?? "-"} · الحالة: ${r['status']} (${r['progress_step']})',
+                                style: const TextStyle(fontSize: 12),
+                              ),
+                              if ((r['phone'] as String? ?? '').isNotEmpty)
+                                InkWell(
+                                  onTap: () => _callPhone(r['phone'] as String?),
+                                  child: Text(
+                                    'اتصال بالعميل: ${r['phone']}',
+                                    style: const TextStyle(
+                                      color: AppColors.orange,
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.bold,
+                                      decoration: TextDecoration.underline,
+                                    ),
+                                  ),
+                                ),
+                            ],
+                          ),
+                          trailing: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              PopupMenuButton<String>(
+                                tooltip: 'تعديل الحالة',
+                                icon: const Icon(Icons.edit_note, color: AppColors.navy),
+                                onSelected: (val) {
+                                  final (newStatus, newStep) = switch (val) {
+                                    'pending' => ('pending', 'pending'),
+                                    'on_the_way' => ('accepted', 'on_the_way'),
+                                    'arrived_at_pickup' => ('accepted', 'arrived_at_pickup'),
+                                    'completed' => ('completed', 'completed'),
+                                    'cancelled' => ('cancelled', 'cancelled'),
+                                    _ => ('pending', 'pending'),
+                                  };
+                                  _db.from('mechanic_requests').update({
+                                    'status': newStatus,
+                                    'progress_step': newStep,
+                                  }).eq('id', r['id']);
+                                },
+                                itemBuilder: (_) => const [
+                                  PopupMenuItem(value: 'pending', child: Text('قيد الانتظار (pending)')),
+                                  PopupMenuItem(value: 'on_the_way', child: Text('مقبول - في الطريق')),
+                                  PopupMenuItem(value: 'arrived_at_pickup', child: Text('وصل لموقع العميل')),
+                                  PopupMenuItem(value: 'completed', child: Text('مكتمل (completed)')),
+                                  PopupMenuItem(value: 'cancelled', child: Text('ملغي (cancelled)')),
+                                ],
+                              ),
+                              IconButton(
+                                tooltip: 'حذف الطلب نهائياً',
+                                icon: const Icon(Icons.delete_outline, color: Colors.red),
+                                onPressed: () async {
+                                  final ok = await _confirmDelete(
+                                    'حذف طلب الطوارئ',
+                                    'هل أنت متأكد من حذف هذا الطلب نهائياً من قاعدة البيانات؟',
+                                  );
+                                  if (ok) {
+                                    await _db.from('mechanic_requests').delete().eq('id', r['id']);
+                                  }
+                                },
+                              ),
                             ],
                           ),
                         ),
@@ -1028,20 +1446,329 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
                         margin: const EdgeInsets.only(bottom: 8),
                         child: ListTile(
                           title: Text(
-                              '${a['appointment_date']} · ${a['appointment_time']}'),
+                            '${a['appointment_date']} · ${a['appointment_time']}',
+                            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                          ),
                           subtitle: Text(
-                              '${a['service_description'] ?? ""} · الحالة: ${a['status']} (${a['progress_step']})'),
-                          trailing: IconButton(
-                            icon: const Icon(Icons.cancel_outlined,
-                                color: Colors.red),
-                            onPressed: () => _db
-                                .from('workshop_appointments')
-                                .update({'status': 'cancelled'}).eq(
-                                    'id', a['id']),
+                            '${a['service_description'] ?? ""} · الحالة: ${a['status']} (${a['progress_step']})',
+                            style: const TextStyle(fontSize: 12),
+                          ),
+                          trailing: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              PopupMenuButton<String>(
+                                tooltip: 'تعديل حالة الموعد',
+                                icon: const Icon(Icons.edit_note, color: AppColors.navy),
+                                onSelected: (val) {
+                                  final (newStatus, newStep) = switch (val) {
+                                    'pending' => ('pending', 'pending'),
+                                    'accepted' => ('accepted', 'on_the_way'),
+                                    'arrived_at_workshop' => ('accepted', 'arrived_at_workshop'),
+                                    'repairing' => ('accepted', 'repairing'),
+                                    'completed' => ('completed', 'completed'),
+                                    'cancelled' => ('cancelled', 'cancelled'),
+                                    _ => ('pending', 'pending'),
+                                  };
+                                  _db.from('workshop_appointments').update({
+                                    'status': newStatus,
+                                    'progress_step': newStep,
+                                  }).eq('id', a['id']);
+                                },
+                                itemBuilder: (_) => const [
+                                  PopupMenuItem(value: 'pending', child: Text('بانتظار التأكيد (pending)')),
+                                  PopupMenuItem(value: 'accepted', child: Text('مقبول - في الطريق للورشة')),
+                                  PopupMenuItem(value: 'arrived_at_workshop', child: Text('وصل للورشة')),
+                                  PopupMenuItem(value: 'repairing', child: Text('قيد الإصلاح')),
+                                  PopupMenuItem(value: 'completed', child: Text('مكتمل (ينتقل للسجل)')),
+                                  PopupMenuItem(value: 'cancelled', child: Text('ملغي (cancelled)')),
+                                ],
+                              ),
+                              IconButton(
+                                tooltip: 'حذف الموعد نهائياً',
+                                icon: const Icon(Icons.delete_outline, color: Colors.red),
+                                onPressed: () async {
+                                  final ok = await _confirmDelete(
+                                    'حذف الموعد',
+                                    'هل أنت متأكد من حذف هذا الموعد نهائياً (مثلاً موعد محجوز بالغلط)؟',
+                                  );
+                                  if (ok) {
+                                    await _db
+                                        .from('workshop_appointments')
+                                        .delete()
+                                        .eq('id', a['id']);
+                                  }
+                                },
+                              ),
+                            ],
                           ),
                         ),
                       ))
                   .toList(),
+            );
+          },
+        ),
+      ],
+    );
+  }
+
+  Widget _discountsAndNotificationsView(bool showWinch) {
+    final roleItems = <DropdownMenuItem<String>>[
+      const DropdownMenuItem(value: 'all', child: Text('جميع المستخدمين')),
+      const DropdownMenuItem(value: 'user', child: Text('الزبائن (مستخدم عادي)')),
+      const DropdownMenuItem(value: 'merchant', child: Text('تجار قطع الغيار')),
+      const DropdownMenuItem(value: 'mechanic', child: Text('الورش والميكانيكيين')),
+      if (showWinch) const DropdownMenuItem(value: 'towing', child: Text('أصحاب الونش')),
+      const DropdownMenuItem(value: 'pro', child: Text('مشتركي البرو / الباقات')),
+    ];
+
+    final categoryItems = ['الكل', ...CarPartsCatalogAZ.mainCategories];
+
+    return ListView(
+      padding: const EdgeInsets.all(20),
+      children: [
+        const Text(
+          'إرسال الإشعارات والخصومات للزبائن',
+          style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+        ),
+        const SizedBox(height: 14),
+
+        // بطاقة إرسال إشعار فوري للخصومات والعروض
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const Row(
+                  children: [
+                    Icon(Icons.notifications_active, color: AppColors.orange),
+                    SizedBox(width: 8),
+                    Text('إرسال إشعار مباشر للهواتف', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                DropdownButtonFormField<String>(
+                  isExpanded: true,
+                  initialValue: _notifTargetRole,
+                  decoration: const InputDecoration(
+                    labelText: 'الفئة المستهدفة بالإشعار',
+                    border: OutlineInputBorder(),
+                  ),
+                  items: roleItems,
+                  onChanged: (v) {
+                    if (v != null) setState(() => _notifTargetRole = v);
+                  },
+                ),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: _notifTitleCtrl,
+                  decoration: const InputDecoration(
+                    labelText: 'عنوان الإشعار (مثال: خصم نهاية الأسبوع!)',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: _notifBodyCtrl,
+                  maxLines: 2,
+                  decoration: const InputDecoration(
+                    labelText: 'نص الإشعار وتفاصيل العرض',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.navy,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                  ),
+                  onPressed: _sendingNotif ? null : _sendPromoNotification,
+                  icon: _sendingNotif
+                      ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                      : const Icon(Icons.send),
+                  label: const Text('إرسال الإشعار للفئة المحددة الآن', style: TextStyle(fontWeight: FontWeight.bold)),
+                ),
+              ],
+            ),
+          ),
+        ),
+
+        const SizedBox(height: 18),
+
+        // بطاقة إنشاء خصم جديد حسب الفئة
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const Row(
+                  children: [
+                    Icon(Icons.local_offer, color: AppColors.orange),
+                    SizedBox(width: 8),
+                    Text('إنشاء كود خصم جديد للزبائن', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _discTitleCtrl,
+                  decoration: const InputDecoration(
+                    labelText: 'اسم العرض / الخصم (مثال: خصم قطع الفرامل)',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Row(
+                  children: [
+                    Expanded(
+                      flex: 3,
+                      child: TextField(
+                        controller: _discCodeCtrl,
+                        decoration: const InputDecoration(
+                          labelText: 'كود الخصم (مثال: GH15)',
+                          border: OutlineInputBorder(),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      flex: 2,
+                      child: TextField(
+                        controller: _discPercentCtrl,
+                        keyboardType: TextInputType.number,
+                        decoration: const InputDecoration(
+                          labelText: 'النسبة %',
+                          border: OutlineInputBorder(),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                DropdownButtonFormField<String>(
+                  isExpanded: true,
+                  initialValue: _discTargetRole,
+                  decoration: const InputDecoration(
+                    labelText: 'فئة المستخدمين المستهدفة',
+                    border: OutlineInputBorder(),
+                  ),
+                  items: roleItems,
+                  onChanged: (v) {
+                    if (v != null) setState(() => _discTargetRole = v);
+                  },
+                ),
+                const SizedBox(height: 10),
+                DropdownButtonFormField<String>(
+                  isExpanded: true,
+                  initialValue: _discTargetCategory,
+                  decoration: const InputDecoration(
+                    labelText: 'فئة قطع الغيار المشمولة بالخصم',
+                    border: OutlineInputBorder(),
+                  ),
+                  items: categoryItems
+                      .map((c) => DropdownMenuItem(
+                            value: c,
+                            child: Text(c, overflow: TextOverflow.ellipsis),
+                          ))
+                      .toList(),
+                  onChanged: (v) {
+                    if (v != null) setState(() => _discTargetCategory = v);
+                  },
+                ),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: _discDescCtrl,
+                  decoration: const InputDecoration(
+                    labelText: 'ملاحظات أو شروط الخصم (اختياري)',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 6),
+                CheckboxListTile(
+                  contentPadding: EdgeInsets.zero,
+                  value: _notifyOnDiscount,
+                  activeColor: AppColors.orange,
+                  title: const Text('إرسال إشعار فوري للفئة المستهدفة بالخصم الجديد', style: TextStyle(fontSize: 13)),
+                  onChanged: (v) => setState(() => _notifyOnDiscount = v ?? true),
+                ),
+                const SizedBox(height: 8),
+                ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.orange,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                  ),
+                  onPressed: _savingDiscount ? null : _createDiscount,
+                  icon: _savingDiscount
+                      ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                      : const Icon(Icons.add_circle_outline),
+                  label: const Text('حفظ وتفعيل الخصم', style: TextStyle(fontWeight: FontWeight.bold)),
+                ),
+              ],
+            ),
+          ),
+        ),
+
+        const SizedBox(height: 18),
+        const Text('الخصومات المسجلة حالياً', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+        const SizedBox(height: 10),
+        StreamBuilder<List<Map<String, dynamic>>>(
+          stream: _db.from('discounts').stream(primaryKey: ['id']).order('created_at', ascending: false),
+          builder: (_, snap) {
+            if (!snap.hasData) {
+              return const Center(child: Padding(padding: EdgeInsets.all(16), child: CircularProgressIndicator()));
+            }
+            final list = snap.data!;
+            if (list.isEmpty) {
+              return const Card(
+                child: Padding(
+                  padding: EdgeInsets.all(16),
+                  child: Text('لا توجد أكواد خصم مضافة حالياً'),
+                ),
+              );
+            }
+            return Column(
+              children: list.map((d) {
+                final active = d['is_active'] == true;
+                return Card(
+                  margin: const EdgeInsets.only(bottom: 8),
+                  child: ListTile(
+                    leading: CircleAvatar(
+                      backgroundColor: active ? AppColors.orange : AppColors.placeholder,
+                      child: Text(
+                        '${(d['discount_percent'] as num?)?.toStringAsFixed(0) ?? "0"}%',
+                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12),
+                      ),
+                    ),
+                    title: Text('${d['title']} (${d['code']})', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                    subtitle: Text(
+                      'الفئة: ${d['target_role']} · القسم: ${d['target_category'] ?? "الكل"}',
+                      style: const TextStyle(fontSize: 12),
+                    ),
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Switch(
+                          value: active,
+                          activeTrackColor: AppColors.orange,
+                          onChanged: (v) => _db.from('discounts').update({'is_active': v}).eq('id', d['id']),
+                        ),
+                        IconButton(
+                          tooltip: 'حذف الخصم',
+                          icon: const Icon(Icons.delete_outline, color: Colors.red),
+                          onPressed: () async {
+                            final ok = await _confirmDelete('حذف الخصم', 'هل تريد حذف كود الخصم "${d['code']}"؟');
+                            if (ok) {
+                              await _db.from('discounts').delete().eq('id', d['id']);
+                            }
+                          },
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              }).toList(),
             );
           },
         ),
@@ -1138,31 +1865,55 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
     );
   }
 
-  Widget _kpi(String title, int val, IconData icon) {
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: AppColors.surface,
+  Widget _kpi(String title, int val, IconData icon, {VoidCallback? onTap}) {
+    return Material(
+      color: AppColors.surface,
+      borderRadius: BorderRadius.circular(16),
+      child: InkWell(
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppColors.border),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          PulseBlink(child: Icon(icon, color: AppColors.orange, size: 24)),
-          const Spacer(),
-          Text(title,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                  color: AppColors.textSecondary, fontSize: 12)),
-          const SizedBox(height: 4),
-          AnimatedCounter(
-              value: val,
-              style:
-                  const TextStyle(fontSize: 22, fontWeight: FontWeight.w800)),
-        ],
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: AppColors.border),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  PulseBlink(child: Icon(icon, color: AppColors.orange, size: 22)),
+                  if (onTap != null)
+                    const Icon(Icons.arrow_forward_ios, size: 12, color: AppColors.textSecondary),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Text(
+                title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(color: AppColors.textSecondary, fontSize: 12),
+              ),
+              const SizedBox(height: 2),
+              FittedBox(
+                fit: BoxFit.scaleDown,
+                alignment: Alignment.centerRight,
+                child: AnimatedCounter(
+                  value: val,
+                  style: const TextStyle(
+                    fontSize: 21,
+                    fontWeight: FontWeight.w800,
+                    height: 1.15,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

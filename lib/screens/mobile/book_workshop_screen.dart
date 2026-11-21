@@ -1,5 +1,6 @@
 import 'package:material_ui/material_ui.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../models/db_models.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/animations.dart';
@@ -26,6 +27,17 @@ String formatWorkshopStreet(CustomerProfile w) {
 class SelectWorkshopScreen extends StatelessWidget {
   final CustomerProfile? viewerProfile;
   const SelectWorkshopScreen({super.key, this.viewerProfile});
+
+  Future<void> _callWorkshop(BuildContext context, String? rawPhone) async {
+    final cleaned = (rawPhone ?? '').replaceAll(RegExp(r'[^0-9+]'), '');
+    if (cleaned.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('رقم هاتف الورشة غير متوفر')),
+      );
+      return;
+    }
+    await launchUrl(Uri(scheme: 'tel', path: cleaned), mode: LaunchMode.externalApplication);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -170,29 +182,35 @@ class SelectWorkshopScreen extends StatelessWidget {
                                       ),
                                     ),
                                     const SizedBox(width: 8),
-                                    Container(
-                                      padding: const EdgeInsets.symmetric(
-                                          horizontal: 10, vertical: 5),
-                                      decoration: BoxDecoration(
-                                        color: AppColors.background,
-                                        borderRadius: BorderRadius.circular(10),
-                                        border: Border.all(color: AppColors.border),
-                                      ),
-                                      child: Row(
-                                        mainAxisSize: MainAxisSize.min,
-                                        children: [
-                                          const Icon(Icons.phone_outlined,
-                                              size: 14, color: AppColors.orange),
-                                          const SizedBox(width: 5),
-                                          Text(
-                                            w.phone ?? '-',
-                                            style: const TextStyle(
-                                              fontWeight: FontWeight.bold,
-                                              fontSize: 12,
-                                              color: AppColors.navy,
-                                            ),
+                                    InkWell(
+                                      borderRadius: BorderRadius.circular(10),
+                                      onTap: () => _callWorkshop(context, w.phone),
+                                      child: Container(
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 10, vertical: 6),
+                                        decoration: BoxDecoration(
+                                          color: AppColors.orangeLight,
+                                          borderRadius: BorderRadius.circular(10),
+                                          border: Border.all(
+                                            color: AppColors.orange.withValues(alpha: 0.45),
                                           ),
-                                        ],
+                                        ),
+                                        child: Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            const Icon(Icons.call,
+                                                size: 14, color: AppColors.orange),
+                                            const SizedBox(width: 5),
+                                            Text(
+                                              w.phone ?? '-',
+                                              style: const TextStyle(
+                                                fontWeight: FontWeight.bold,
+                                                fontSize: 12,
+                                                color: AppColors.navy,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
                                       ),
                                     ),
                                   ],
