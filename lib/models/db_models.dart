@@ -27,6 +27,9 @@ class CustomerProfile {
   final bool isOwnerWinchDriver;
   final String? winchDriverName;
   final String? winchDriverPhone;
+  final DateTime? subscriptionExpiresAt;
+  final double ratingAvg;
+  final int ratingCount;
 
   CustomerProfile({
     required this.id,
@@ -57,7 +60,22 @@ class CustomerProfile {
     this.isOwnerWinchDriver = true,
     this.winchDriverName,
     this.winchDriverPhone,
+    this.subscriptionExpiresAt,
+    this.ratingAvg = 0.0,
+    this.ratingCount = 0,
   });
+  int get seoBoostTier {
+    if (subscriptionExpiresAt != null &&
+        subscriptionExpiresAt!.isBefore(DateTime.now())) {
+      return 0;
+    }
+    return switch (subscriptionPlan) {
+      'provider_12m' => 3,
+      'provider_6m' => 2,
+      'provider_3m' => 1,
+      _ => 0,
+    };
+  }
 
   factory CustomerProfile.fromMap(Map<String, dynamic> map) {
     return CustomerProfile(
@@ -85,10 +103,16 @@ class CustomerProfile {
       commissionRate: (map['commission_rate'] as num?)?.toDouble() ?? 0.15,
       isTrustedMerchant: (map['is_trusted_merchant'] as bool?) ?? false,
       walletBalance: (map['wallet_balance'] as num?)?.toDouble() ?? 0.0,
-      pendingCommissionDebt: (map['pending_commission_debt'] as num?)?.toDouble() ?? 0.0,
+      pendingCommissionDebt:
+          (map['pending_commission_debt'] as num?)?.toDouble() ?? 0.0,
       isOwnerWinchDriver: (map['is_owner_winch_driver'] as bool?) ?? true,
       winchDriverName: map['winch_driver_name'] as String?,
       winchDriverPhone: map['winch_driver_phone'] as String?,
+      subscriptionExpiresAt: map['subscription_expires_at'] != null
+          ? DateTime.tryParse(map['subscription_expires_at'].toString())
+          : null,
+      ratingAvg: (map['rating_avg'] as num?)?.toDouble() ?? 0.0,
+      ratingCount: (map['rating_count'] as num?)?.toInt() ?? 0,
     );
   }
 }
@@ -218,8 +242,10 @@ class DbMechanicRequest {
       paymentStatus: (map['payment_status'] as String?) ?? 'unpaid',
       latitude: (map['latitude'] as num?)?.toDouble(),
       longitude: (map['longitude'] as num?)?.toDouble(),
-      pickupLatitude: (map['pickup_latitude'] as num?)?.toDouble() ?? (map['latitude'] as num?)?.toDouble(),
-      pickupLongitude: (map['pickup_longitude'] as num?)?.toDouble() ?? (map['longitude'] as num?)?.toDouble(),
+      pickupLatitude: (map['pickup_latitude'] as num?)?.toDouble() ??
+          (map['latitude'] as num?)?.toDouble(),
+      pickupLongitude: (map['pickup_longitude'] as num?)?.toDouble() ??
+          (map['longitude'] as num?)?.toDouble(),
       dropoffLatitude: (map['dropoff_latitude'] as num?)?.toDouble(),
       dropoffLongitude: (map['dropoff_longitude'] as num?)?.toDouble(),
       dropoffAddress: map['dropoff_address'] as String?,
@@ -271,7 +297,8 @@ class DbWalletTransaction {
       commissionAmount: (map['commission_amount'] as num?)?.toDouble() ?? 0.0,
       netAmount: (map['net_amount'] as num?)?.toDouble() ?? 0.0,
       status: (map['status'] as String?) ?? 'completed',
-      createdAt: DateTime.tryParse((map['created_at'] as String?) ?? '') ?? DateTime.now(),
+      createdAt: DateTime.tryParse((map['created_at'] as String?) ?? '') ??
+          DateTime.now(),
     );
   }
 }
@@ -316,7 +343,8 @@ class DbWorkshopAppointment {
       status: (map['status'] as String?) ?? 'pending',
       progressStep: (map['progress_step'] as String?) ?? 'pending',
       totalAmount: (map['total_amount'] as num?)?.toDouble() ?? 0.0,
-      platformCommission: (map['platform_commission'] as num?)?.toDouble() ?? 0.0,
+      platformCommission:
+          (map['platform_commission'] as num?)?.toDouble() ?? 0.0,
       paymentMethod: (map['payment_method'] as String?) ?? 'cash',
       paymentStatus: (map['payment_status'] as String?) ?? 'unpaid',
     );

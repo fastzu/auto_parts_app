@@ -14,7 +14,8 @@ String formatWorkshopStreet(CustomerProfile w) {
     parts.add(rawStreet.startsWith('شارع') ? rawStreet : 'شارع $rawStreet');
   }
   if (rawBuilding.isNotEmpty) {
-    parts.add(rawBuilding.startsWith('مبنى') ? rawBuilding : 'مبنى $rawBuilding');
+    parts.add(
+        rawBuilding.startsWith('مبنى') ? rawBuilding : 'مبنى $rawBuilding');
   }
   if (parts.isNotEmpty) {
     return parts.join(' · ');
@@ -36,7 +37,8 @@ class SelectWorkshopScreen extends StatelessWidget {
       );
       return;
     }
-    await launchUrl(Uri(scheme: 'tel', path: cleaned), mode: LaunchMode.externalApplication);
+    await launchUrl(Uri(scheme: 'tel', path: cleaned),
+        mode: LaunchMode.externalApplication);
   }
 
   @override
@@ -51,6 +53,12 @@ class SelectWorkshopScreen extends StatelessWidget {
             return const Center(child: CircularProgressIndicator());
           }
           final workshops = snap.data!.map(CustomerProfile.fromMap).toList();
+          workshops.sort((a, b) {
+            if (a.isAvailable != b.isAvailable) return a.isAvailable ? -1 : 1;
+            final boostCmp = b.seoBoostTier.compareTo(a.seoBoostTier);
+            if (boostCmp != 0) return boostCmp;
+            return b.ratingAvg.compareTo(a.ratingAvg);
+          });
           if (workshops.isEmpty) {
             return const Center(child: Text('لا توجد ورش مسجلة حالياً'));
           }
@@ -67,12 +75,15 @@ class SelectWorkshopScreen extends StatelessWidget {
                   final streetAddress = formatWorkshopStreet(w);
 
                   final badge = Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                     decoration: BoxDecoration(
                       color: w.isAvailable ? AppColors.success : Colors.red,
                       borderRadius: BorderRadius.circular(20),
                       boxShadow: [
-                        BoxShadow(color: Colors.black.withValues(alpha: 0.2), blurRadius: 6),
+                        BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.2),
+                            blurRadius: 6),
                       ],
                     ),
                     child: Row(
@@ -127,7 +138,8 @@ class SelectWorkshopScreen extends StatelessWidget {
                                     ? Image.network(
                                         w.workshopImageUrl!,
                                         fit: BoxFit.cover,
-                                        errorBuilder: (_, __, ___) => _imagePlaceholder(),
+                                        errorBuilder: (_, __, ___) =>
+                                            _imagePlaceholder(),
                                       )
                                     : _imagePlaceholder(),
                               ),
@@ -149,7 +161,9 @@ class SelectWorkshopScreen extends StatelessWidget {
                               Positioned(
                                 top: 12,
                                 right: 12,
-                                child: w.isAvailable ? PulseBlink(child: badge) : badge,
+                                child: w.isAvailable
+                                    ? PulseBlink(child: badge)
+                                    : badge,
                               ),
                             ],
                           ),
@@ -176,7 +190,8 @@ class SelectWorkshopScreen extends StatelessWidget {
                                           ),
                                           if (w.isTrustedMerchant) ...[
                                             const SizedBox(width: 6),
-                                            const Icon(Icons.verified, color: Colors.blue, size: 18),
+                                            const Icon(Icons.verified,
+                                                color: Colors.blue, size: 18),
                                           ],
                                         ],
                                       ),
@@ -184,22 +199,26 @@ class SelectWorkshopScreen extends StatelessWidget {
                                     const SizedBox(width: 8),
                                     InkWell(
                                       borderRadius: BorderRadius.circular(10),
-                                      onTap: () => _callWorkshop(context, w.phone),
+                                      onTap: () =>
+                                          _callWorkshop(context, w.phone),
                                       child: Container(
                                         padding: const EdgeInsets.symmetric(
                                             horizontal: 10, vertical: 6),
                                         decoration: BoxDecoration(
                                           color: AppColors.orangeLight,
-                                          borderRadius: BorderRadius.circular(10),
+                                          borderRadius:
+                                              BorderRadius.circular(10),
                                           border: Border.all(
-                                            color: AppColors.orange.withValues(alpha: 0.45),
+                                            color: AppColors.orange
+                                                .withValues(alpha: 0.45),
                                           ),
                                         ),
                                         child: Row(
                                           mainAxisSize: MainAxisSize.min,
                                           children: [
                                             const Icon(Icons.call,
-                                                size: 14, color: AppColors.orange),
+                                                size: 14,
+                                                color: AppColors.orange),
                                             const SizedBox(width: 5),
                                             Text(
                                               w.phone ?? '-',
@@ -219,7 +238,8 @@ class SelectWorkshopScreen extends StatelessWidget {
                                 Row(
                                   children: [
                                     const Icon(Icons.location_on_outlined,
-                                        size: 16, color: AppColors.textSecondary),
+                                        size: 16,
+                                        color: AppColors.textSecondary),
                                     const SizedBox(width: 4),
                                     Expanded(
                                       child: Text(
@@ -245,16 +265,19 @@ class SelectWorkshopScreen extends StatelessWidget {
                                             return;
                                           }
                                           if (viewerProfile == null) {
-                                            ScaffoldMessenger.of(context).showSnackBar(
+                                            ScaffoldMessenger.of(context)
+                                                .showSnackBar(
                                               const SnackBar(
-                                                content: Text('يرجى تسجيل الدخول أولاً لحجز موعد'),
+                                                content: Text(
+                                                    'يرجى تسجيل الدخول أولاً لحجز موعد'),
                                               ),
                                             );
                                             return;
                                           }
                                           Navigator.push(
                                             context,
-                                            animatedRoute(BookWorkshopScreen(workshop: w)),
+                                            animatedRoute(BookWorkshopScreen(
+                                                workshop: w)),
                                           );
                                         },
                                         child: Container(
@@ -264,10 +287,12 @@ class SelectWorkshopScreen extends StatelessWidget {
                                             color: w.isAvailable
                                                 ? AppColors.orange
                                                 : AppColors.placeholder,
-                                            borderRadius: BorderRadius.circular(12),
+                                            borderRadius:
+                                                BorderRadius.circular(12),
                                           ),
                                           child: Row(
-                                            mainAxisAlignment: MainAxisAlignment.center,
+                                            mainAxisAlignment:
+                                                MainAxisAlignment.center,
                                             children: [
                                               Icon(
                                                 Icons.calendar_today_outlined,
@@ -278,7 +303,9 @@ class SelectWorkshopScreen extends StatelessWidget {
                                               ),
                                               const SizedBox(width: 8),
                                               Text(
-                                                w.isAvailable ? 'حجز موعد' : 'الورشة غير متاحة',
+                                                w.isAvailable
+                                                    ? 'حجز موعد'
+                                                    : 'الورشة غير متاحة',
                                                 style: TextStyle(
                                                   color: w.isAvailable
                                                       ? Colors.white
@@ -298,18 +325,22 @@ class SelectWorkshopScreen extends StatelessWidget {
                                       child: BounceTap(
                                         onTap: () {
                                           if (viewerProfile == null) {
-                                            ScaffoldMessenger.of(context).showSnackBar(
+                                            ScaffoldMessenger.of(context)
+                                                .showSnackBar(
                                               const SnackBar(
-                                                content: Text('يرجى تسجيل الدخول أولاً للدردشة'),
+                                                content: Text(
+                                                    'يرجى تسجيل الدخول أولاً للدردشة'),
                                               ),
                                             );
                                             return;
                                           }
                                           Navigator.push(
                                             context,
-                                            animatedRoute(ChatConversationScreen(
+                                            animatedRoute(
+                                                ChatConversationScreen(
                                               otherUserId: w.id,
-                                              otherUserName: w.fullName ?? 'الورشة',
+                                              otherUserName:
+                                                  w.fullName ?? 'الورشة',
                                               otherUserPhone: w.phone,
                                             )),
                                           );
@@ -319,13 +350,16 @@ class SelectWorkshopScreen extends StatelessWidget {
                                           alignment: Alignment.center,
                                           decoration: BoxDecoration(
                                             color: AppColors.navy,
-                                            borderRadius: BorderRadius.circular(12),
+                                            borderRadius:
+                                                BorderRadius.circular(12),
                                           ),
                                           child: const Row(
-                                            mainAxisAlignment: MainAxisAlignment.center,
+                                            mainAxisAlignment:
+                                                MainAxisAlignment.center,
                                             children: [
                                               Icon(Icons.chat_bubble_outline,
-                                                  size: 16, color: Colors.white),
+                                                  size: 16,
+                                                  color: Colors.white),
                                               SizedBox(width: 6),
                                               Text(
                                                 'دردشة',
@@ -364,7 +398,8 @@ class SelectWorkshopScreen extends StatelessWidget {
       child: const Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(Icons.build_circle_outlined, size: 42, color: AppColors.textSecondary),
+          Icon(Icons.build_circle_outlined,
+              size: 42, color: AppColors.textSecondary),
           SizedBox(height: 4),
           Text('صورة الورشة', style: TextStyle(color: AppColors.textSecondary)),
         ],
@@ -419,8 +454,9 @@ class _BookWorkshopScreenState extends State<BookWorkshopScreen> {
         _selectedDate.day == now.day;
   }
 
-  int _hourForLabel(String label) =>
-      _hourlySlots.firstWhere((s) => s.label == label, orElse: () => _hourlySlots.first).hour24;
+  int _hourForLabel(String label) => _hourlySlots
+      .firstWhere((s) => s.label == label, orElse: () => _hourlySlots.first)
+      .hour24;
 
   bool _isSlotDisabled({
     required ({String label, int hour24}) slot,
@@ -440,7 +476,8 @@ class _BookWorkshopScreenState extends State<BookWorkshopScreen> {
       final hasBookedBeforeNow = bookedHours.any((h) => h <= nowHour);
       final futureBookedHours = bookedHours.where((h) => h > nowHour).toList();
       if (hasBookedBeforeNow && futureBookedHours.isNotEmpty) {
-        final maxFutureBooked = futureBookedHours.reduce((a, b) => a > b ? a : b);
+        final maxFutureBooked =
+            futureBookedHours.reduce((a, b) => a > b ? a : b);
         if (slot.hour24 > nowHour && slot.hour24 < maxFutureBooked) {
           return true;
         }
@@ -464,8 +501,9 @@ class _BookWorkshopScreenState extends State<BookWorkshopScreen> {
         'workshop_id': widget.workshop.id,
         'appointment_date': _formattedDate,
         'appointment_time': _selectedHour ?? 'حسب توفر الورشة',
-        'service_description':
-            _descCtrl.text.trim().isEmpty ? 'فحص وصيانة مركبة' : _descCtrl.text.trim(),
+        'service_description': _descCtrl.text.trim().isEmpty
+            ? 'فحص وصيانة مركبة'
+            : _descCtrl.text.trim(),
         'status': 'pending',
         'progress_step': 'pending',
       });
@@ -490,21 +528,26 @@ class _BookWorkshopScreenState extends State<BookWorkshopScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text('حجز موعد - ${widget.workshop.fullName ?? "الورشة"}')),
+      appBar: AppBar(
+          title: Text('حجز موعد - ${widget.workshop.fullName ?? "الورشة"}')),
       body: StreamBuilder<List<Map<String, dynamic>>>(
         stream: _db
             .from('workshop_appointments')
-            .stream(primaryKey: ['id'])
-            .eq('workshop_id', widget.workshop.id),
+            .stream(primaryKey: ['id']).eq('workshop_id', widget.workshop.id),
         builder: (context, snap) {
           final dayAppts = (snap.data ?? [])
-              .where((a) => a['appointment_date'] == _formattedDate && a['status'] != 'cancelled')
+              .where((a) =>
+                  a['appointment_date'] == _formattedDate &&
+                  a['status'] != 'cancelled')
               .toList();
 
-          final bookedLabels =
-              dayAppts.map((a) => (a['appointment_time'] as String?) ?? '').toSet();
-          final acceptedCount = dayAppts.where((a) => a['status'] == 'accepted').length;
-          final isWorkshopFull = acceptedCount >= widget.workshop.maxCarCapacity;
+          final bookedLabels = dayAppts
+              .map((a) => (a['appointment_time'] as String?) ?? '')
+              .toSet();
+          final acceptedCount =
+              dayAppts.where((a) => a['status'] == 'accepted').length;
+          final isWorkshopFull =
+              acceptedCount >= widget.workshop.maxCarCapacity;
 
           if (_selectedHour != null && bookedLabels.contains(_selectedHour)) {
             _selectedHour = null;
@@ -559,14 +602,18 @@ class _BookWorkshopScreenState extends State<BookWorkshopScreen> {
                 spacing: 8,
                 runSpacing: 8,
                 children: _hourlySlots.map((slot) {
-                  final disabled = _isSlotDisabled(slot: slot, bookedLabels: bookedLabels);
+                  final disabled =
+                      _isSlotDisabled(slot: slot, bookedLabels: bookedLabels);
                   final selected = !disabled && _selectedHour == slot.label;
 
                   return GestureDetector(
-                    onTap: disabled ? null : () => setState(() => _selectedHour = slot.label),
+                    onTap: disabled
+                        ? null
+                        : () => setState(() => _selectedHour = slot.label),
                     child: AnimatedContainer(
                       duration: const Duration(milliseconds: 180),
-                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 14, vertical: 9),
                       decoration: BoxDecoration(
                         color: disabled
                             ? AppColors.placeholder
@@ -583,11 +630,14 @@ class _BookWorkshopScreenState extends State<BookWorkshopScreen> {
                         style: TextStyle(
                           color: disabled
                               ? AppColors.textSecondary
-                              : (selected ? Colors.white : AppColors.textPrimary),
+                              : (selected
+                                  ? Colors.white
+                                  : AppColors.textPrimary),
                           fontWeight: FontWeight.bold,
                           fontSize: 13,
-                          decoration:
-                              disabled ? TextDecoration.lineThrough : TextDecoration.none,
+                          decoration: disabled
+                              ? TextDecoration.lineThrough
+                              : TextDecoration.none,
                         ),
                       ),
                     ),
@@ -602,7 +652,8 @@ class _BookWorkshopScreenState extends State<BookWorkshopScreen> {
                   labelText: 'وصف المشكلة أو الخدمة المطلوبة',
                   filled: true,
                   fillColor: AppColors.surface,
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+                  border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(14)),
                 ),
               ),
               const SizedBox(height: 22),
@@ -611,13 +662,17 @@ class _BookWorkshopScreenState extends State<BookWorkshopScreen> {
                   backgroundColor: AppColors.orange,
                   foregroundColor: Colors.white,
                   padding: const EdgeInsets.symmetric(vertical: 16),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14)),
                 ),
-                onPressed: _submitting ? null : () => _submitBooking(isWorkshopFull),
+                onPressed:
+                    _submitting ? null : () => _submitBooking(isWorkshopFull),
                 child: _submitting
                     ? const CircularProgressIndicator(color: Colors.white)
                     : Text(
-                        isWorkshopFull ? 'إرسال طلب لاقتراح موعد آخر' : 'تأكيد حجز الموعد',
+                        isWorkshopFull
+                            ? 'إرسال طلب لاقتراح موعد آخر'
+                            : 'تأكيد حجز الموعد',
                         style: const TextStyle(fontWeight: FontWeight.bold),
                       ),
               ),

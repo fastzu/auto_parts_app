@@ -12,23 +12,53 @@ import 'book_workshop_screen.dart';
 import 'chat_screen.dart';
 import 'parts_catalog_screen.dart';
 
-Future<void> _dialPhoneNumber(BuildContext context, String? rawPhone) async {
-  final cleaned = (rawPhone ?? '').replaceAll(RegExp(r'[^0-9+]'), '');
-  if (cleaned.isEmpty) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('رقم الهاتف غير متوفر حالياً')),
-    );
-    return;
+class _SellerMeta {
+  final bool isTrusted;
+  final double ratingAvg;
+  final int ratingCount;
+  final int seoBoostTier;
+
+  const _SellerMeta({
+    this.isTrusted = false,
+    this.ratingAvg = 0.0,
+    this.ratingCount = 0,
+    this.seoBoostTier = 0,
+  });
+}
+
+int computeSeoBoostTier(String? plan, dynamic expiresRaw) {
+  if (expiresRaw != null) {
+    final exp = DateTime.tryParse(expiresRaw.toString());
+    if (exp != null && exp.isBefore(DateTime.now())) {
+      return 0;
+    }
   }
-  final uri = Uri(scheme: 'tel', path: cleaned);
-  await launchUrl(uri, mode: LaunchMode.externalApplication);
+  return switch (plan) {
+    'provider_12m' => 3,
+    'provider_6m' => 2,
+    'provider_3m' => 1,
+    _ => 0,
+  };
+}
+
+Future<void> _dialPhone(String? phone) async {
+  final clean = (phone ?? '').replaceAll(RegExp(r'[^0-9+]'), '');
+  if (clean.isEmpty) return;
+  final uri = Uri(scheme: 'tel', path: clean);
+  if (await canLaunchUrl(uri)) {
+    await launchUrl(uri);
+  }
 }
 
 class LiveStoreHomeScreen extends StatefulWidget {
   final CustomerProfile? profile;
   final VoidCallback onOpenDrawer;
 
-  const LiveStoreHomeScreen({super.key, required this.profile, required this.onOpenDrawer});
+  const LiveStoreHomeScreen({
+    super.key,
+    required this.profile,
+    required this.onOpenDrawer,
+  });
 
   @override
   State<LiveStoreHomeScreen> createState() => _LiveStoreHomeScreenState();
@@ -38,26 +68,42 @@ class _LiveStoreHomeScreenState extends State<LiveStoreHomeScreen> {
   final _db = Supabase.instance.client;
   String _search = '';
   String _selectedCat = 'الكل';
-  Set<String> _trustedMerchantIds = {};
 
   String _selectedBrand = JordanCarsCatalog.brands.first;
-  String _selectedModel = JordanCarsCatalog.brandsAndModels[JordanCarsCatalog.brands.first]!.first;
+  String _selectedModel =
+      JordanCarsCatalog.brandsAndModels[JordanCarsCatalog.brands.first]!.first;
   String _selectedYear = 'جميع الموديلات';
   bool _filterByCar = false;
+
+  Map<String, _SellerMeta> _sellerMeta = {};
 
   @override
   void initState() {
     super.initState();
-    _loadTrustedMerchants();
+    _loadSellerMeta();
   }
 
-  Future<void> _loadTrustedMerchants() async {
+  Future<void> _loadSellerMeta() async {
     try {
-      final rows = await _db.from('customers').select('id').eq('is_trusted_merchant', true);
+      final rows = await _db.from('customers').select(
+            'id, is_trusted_merchant, subscription_plan, subscription_expires_at, rating_avg, rating_count',
+          );
+      final map = <String, _SellerMeta>{};
+      for (final r in List<Map<String, dynamic>>.from(rows)) {
+        final id = r['id'] as String?;
+        if (id == null) continue;
+        map[id] = _SellerMeta(
+          isTrusted: r['is_trusted_merchant'] == true,
+          ratingAvg: (r['rating_avg'] as num?)?.toDouble() ?? 0.0,
+          ratingCount: (r['rating_count'] as num?)?.toInt() ?? 0,
+          seoBoostTier: computeSeoBoostTier(
+            r['subscription_plan'] as String?,
+            r['subscription_expires_at'],
+          ),
+        );
+      }
       if (mounted) {
-        setState(() {
-          _trustedMerchantIds = rows.map((r) => r['id'] as String).toSet();
-        });
+        setState(() => _sellerMeta = map);
       }
     } catch (_) {}
   }
@@ -86,7 +132,10 @@ class _LiveStoreHomeScreenState extends State<LiveStoreHomeScreen> {
   }
 
   void _openWorkshopSelector() {
-    Navigator.push(context, animatedRoute(SelectWorkshopScreen(viewerProfile: widget.profile)));
+    Navigator.push(
+      context,
+      animatedRoute(SelectWorkshopScreen(viewerProfile: widget.profile)),
+    );
   }
 
   void _showCarPicker() {
@@ -97,7 +146,10 @@ class _LiveStoreHomeScreenState extends State<LiveStoreHomeScreen> {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(22))),
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+      ),
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setModal) {
           final models = JordanCarsCatalog.brandsAndModels[tempBrand]!;
@@ -110,13 +162,16 @@ class _LiveStoreHomeScreenState extends State<LiveStoreHomeScreen> {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    const Text('اختر سيارتك', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                    const Text('اختر سيارتك',
+                        style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
                     TextButton(
                       onPressed: () {
                         setState(() => _filterByCar = false);
                         Navigator.pop(ctx);
                       },
-                      child: const Text('عرض جميع السيارات', style: TextStyle(color: AppColors.orange, fontWeight: FontWeight.bold)),
+                      child: const Text('عرض جميع السيارات',
+                          style: TextStyle(
+                              color: AppColors.orange, fontWeight: FontWeight.bold)),
                     ),
                   ],
                 ),
@@ -124,12 +179,17 @@ class _LiveStoreHomeScreenState extends State<LiveStoreHomeScreen> {
                 DropdownButtonFormField<String>(
                   isExpanded: true,
                   initialValue: tempBrand,
-                  decoration: InputDecoration(labelText: '1. اختر الشركة (جميع شركات الأردن)', filled: true, fillColor: AppColors.background, border: OutlineInputBorder(borderRadius: BorderRadius.circular(14))),
-                  items: JordanCarsCatalog.brands.map((b) => DropdownMenuItem(value: b, child: Text(b))).toList(),
+                  decoration: InputDecoration(
+                    labelText: '1. اختر الشركة (جميع شركات الأردن)',
+                    filled: true,
+                    fillColor: AppColors.background,
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+                  ),
+                  items: JordanCarsCatalog.brands
+                      .map((b) => DropdownMenuItem(value: b, child: Text(b)))
+                      .toList(),
                   onChanged: (val) {
-                    if (val == null) {
-                      return;
-                    }
+                    if (val == null) return;
                     setModal(() {
                       tempBrand = val;
                       tempModel = JordanCarsCatalog.brandsAndModels[tempBrand]!.first;
@@ -141,8 +201,15 @@ class _LiveStoreHomeScreenState extends State<LiveStoreHomeScreen> {
                   key: ValueKey('modal_$tempBrand'),
                   isExpanded: true,
                   initialValue: tempModel,
-                  decoration: InputDecoration(labelText: '2. اختر الموديل', filled: true, fillColor: AppColors.background, border: OutlineInputBorder(borderRadius: BorderRadius.circular(14))),
-                  items: models.map((m) => DropdownMenuItem(value: m, child: Text(m))).toList(),
+                  decoration: InputDecoration(
+                    labelText: '2. اختر الموديل',
+                    filled: true,
+                    fillColor: AppColors.background,
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+                  ),
+                  items: models
+                      .map((m) => DropdownMenuItem(value: m, child: Text(m)))
+                      .toList(),
                   onChanged: (val) {
                     if (val != null) {
                       setModal(() => tempModel = val);
@@ -153,8 +220,15 @@ class _LiveStoreHomeScreenState extends State<LiveStoreHomeScreen> {
                 DropdownButtonFormField<String>(
                   isExpanded: true,
                   initialValue: tempYear,
-                  decoration: InputDecoration(labelText: '3. سنة الصنع', filled: true, fillColor: AppColors.background, border: OutlineInputBorder(borderRadius: BorderRadius.circular(14))),
-                  items: JordanCarsCatalog.years.map((y) => DropdownMenuItem(value: y, child: Text(y))).toList(),
+                  decoration: InputDecoration(
+                    labelText: '3. سنة الصنع',
+                    filled: true,
+                    fillColor: AppColors.background,
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+                  ),
+                  items: JordanCarsCatalog.years
+                      .map((y) => DropdownMenuItem(value: y, child: Text(y)))
+                      .toList(),
                   onChanged: (val) {
                     if (val != null) {
                       setModal(() => tempYear = val);
@@ -165,7 +239,12 @@ class _LiveStoreHomeScreenState extends State<LiveStoreHomeScreen> {
                 SizedBox(
                   width: double.infinity,
                   child: ElevatedButton(
-                    style: ElevatedButton.styleFrom(backgroundColor: AppColors.orange, foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(vertical: 14), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14))),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.orange,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                    ),
                     onPressed: () {
                       setState(() {
                         _selectedBrand = tempBrand;
@@ -175,7 +254,8 @@ class _LiveStoreHomeScreenState extends State<LiveStoreHomeScreen> {
                       });
                       Navigator.pop(ctx);
                     },
-                    child: const Text('تطبيق الفلتر على المنشورات', style: TextStyle(fontWeight: FontWeight.bold)),
+                    child: const Text('تطبيق الفلتر على المنشورات',
+                        style: TextStyle(fontWeight: FontWeight.bold)),
                   ),
                 ),
               ],
@@ -186,78 +266,70 @@ class _LiveStoreHomeScreenState extends State<LiveStoreHomeScreen> {
     );
   }
 
-  Widget _buildActiveDiscountsStrip() {
-    final userRole = widget.profile?.role ?? 'user';
-    final isPro = (widget.profile?.subscriptionPlan ?? 'free') != 'free';
-
+  Widget _discountsStrip() {
+    final role = widget.profile?.role ?? 'user';
     return StreamBuilder<List<Map<String, dynamic>>>(
       stream: _db
           .from('discounts')
           .stream(primaryKey: ['id'])
           .eq('is_active', true)
           .order('created_at', ascending: false),
-      builder: (context, snap) {
-        final now = DateTime.now();
-        final list = (snap.data ?? []).map(DbDiscount.fromMap).where((d) {
-          if (d.expiresAt != null && d.expiresAt!.isBefore(now)) {
-            return false;
+      builder: (_, snap) {
+        final list = (snap.data ?? []).where((d) {
+          final target = (d['target_role'] as String?) ?? 'all';
+          final expRaw = d['expires_at'];
+          if (expRaw != null) {
+            final exp = DateTime.tryParse(expRaw.toString());
+            if (exp != null && exp.isBefore(DateTime.now())) return false;
           }
-          final roleOk = d.targetRole == 'all' ||
-              d.targetRole == userRole ||
-              (d.targetRole == 'pro' && isPro);
-          final catOk = d.targetCategory == 'الكل' ||
-              _selectedCat == 'الكل' ||
-              d.targetCategory == _selectedCat;
-          return roleOk && catOk;
+          return target == 'all' || target == role;
         }).toList();
 
         if (list.isEmpty) return const SizedBox.shrink();
 
         return Padding(
-          padding: const EdgeInsets.only(top: 12),
+          padding: const EdgeInsets.only(bottom: 12),
           child: SizedBox(
-            height: 74,
+            height: 76,
             child: ListView.separated(
               scrollDirection: Axis.horizontal,
               itemCount: list.length,
               separatorBuilder: (_, __) => const SizedBox(width: 10),
               itemBuilder: (_, i) {
                 final d = list[i];
-                return InkWell(
-                  borderRadius: BorderRadius.circular(14),
-                  onTap: () async {
-                    await Clipboard.setData(ClipboardData(text: d.code));
-                    if (context.mounted) {
+                final code = (d['code'] as String?) ?? '';
+                final pct = (d['discount_percent'] as num?)?.toInt() ?? 0;
+                return GestureDetector(
+                  onTap: () {
+                    if (code.isNotEmpty) {
+                      Clipboard.setData(ClipboardData(text: code));
                       ScaffoldMessenger.of(context).showSnackBar(
                         SnackBar(
-                          content: Text('تم نسخ كود الخصم (${d.code}) — خصم ${d.discountPercent.toStringAsFixed(0)}%'),
+                          content: Text('تم نسخ كود الخصم: $code'),
                           backgroundColor: AppColors.success,
                         ),
                       );
                     }
                   },
                   child: Container(
-                    width: 245,
-                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                    width: 225,
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                     decoration: BoxDecoration(
                       gradient: const LinearGradient(
-                        colors: [AppColors.navy, Color(0xFF1F2D3D)],
-                        begin: Alignment.topRight,
-                        end: Alignment.bottomLeft,
+                        colors: [AppColors.navy, Color(0xFF1E3A5F)],
                       ),
                       borderRadius: BorderRadius.circular(14),
-                      border: Border.all(color: AppColors.orange.withValues(alpha: 0.7)),
                     ),
                     child: Row(
                       children: [
                         Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
                           decoration: BoxDecoration(
                             color: AppColors.orange,
                             borderRadius: BorderRadius.circular(10),
                           ),
                           child: Text(
-                            '${d.discountPercent.toStringAsFixed(0)}%',
+                            '$pct%',
                             style: const TextStyle(
                               color: Colors.white,
                               fontWeight: FontWeight.w900,
@@ -268,30 +340,34 @@ class _LiveStoreHomeScreenState extends State<LiveStoreHomeScreen> {
                         const SizedBox(width: 10),
                         Expanded(
                           child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
                             crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisAlignment: MainAxisAlignment.center,
                             children: [
                               Text(
-                                d.title,
+                                (d['title'] as String?) ?? 'عرض خاص',
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                                 style: const TextStyle(
                                   color: Colors.white,
                                   fontWeight: FontWeight.bold,
-                                  fontSize: 13,
+                                  fontSize: 12,
                                 ),
                               ),
                               const SizedBox(height: 2),
                               Text(
-                                'الكود: ${d.code} · اضغط للنسخ',
+                                code.isNotEmpty
+                                    ? 'الكود: $code (اضغط للنسخ)'
+                                    : (d['target_category'] as String?) ?? 'جميع الفئات',
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(color: Colors.white70, fontSize: 11),
+                                style: const TextStyle(
+                                  color: Colors.white70,
+                                  fontSize: 11,
+                                ),
                               ),
                             ],
                           ),
                         ),
-                        const Icon(Icons.copy_rounded, color: Colors.white70, size: 16),
                       ],
                     ),
                   ),
@@ -308,29 +384,72 @@ class _LiveStoreHomeScreenState extends State<LiveStoreHomeScreen> {
   Widget build(BuildContext context) {
     return SafeArea(
       child: StreamBuilder<List<Map<String, dynamic>>>(
-        stream: _db.from('products').stream(primaryKey: ['id']).eq('is_hidden', false).order('created_at', ascending: false),
+        stream: _db
+            .from('products')
+            .stream(primaryKey: ['id'])
+            .eq('is_hidden', false)
+            .order('created_at', ascending: false),
         builder: (context, snap) {
-          final isLoading = snap.connectionState == ConnectionState.waiting && !snap.hasData;
+          final isLoading =
+              snap.connectionState == ConnectionState.waiting && !snap.hasData;
           final all = (snap.data ?? []).where((p) {
-            if (p['is_sold'] == true) {
-              return false;
-            }
-            final catOk = _selectedCat == 'الكل' || (p['main_category'] ?? '').toString().contains(_selectedCat) || (p['sub_category'] ?? '').toString().contains(_selectedCat);
+            if (p['is_sold'] == true) return false;
+            final catOk = _selectedCat == 'الكل' ||
+                (p['main_category'] ?? '').toString().contains(_selectedCat) ||
+                (p['sub_category'] ?? '').toString().contains(_selectedCat);
             bool carOk = true;
             if (_filterByCar) {
               final cleanBrand = _selectedBrand.split(' ').first.toLowerCase();
               final model = _selectedModel.toLowerCase();
               final pCar = (p['car_name'] ?? '').toString().toLowerCase();
               final pYear = (p['car_model'] ?? '').toString();
-              carOk = pCar.contains(cleanBrand) && pCar.contains(model) && (_selectedYear == 'جميع الموديلات' || pYear == 'جميع الموديلات' || pYear.contains(_selectedYear));
+              carOk = pCar.contains(cleanBrand) &&
+                  pCar.contains(model) &&
+                  (_selectedYear == 'جميع الموديلات' ||
+                      pYear == 'جميع الموديلات' ||
+                      pYear.contains(_selectedYear));
             }
             final q = _search.trim().toLowerCase();
-            final searchOk = q.isEmpty || (p['title'] ?? '').toString().toLowerCase().contains(q) || (p['car_name'] ?? '').toString().toLowerCase().contains(q) || (p['sub_category'] ?? '').toString().toLowerCase().contains(q) || (p['chassis_number'] ?? '').toString().toLowerCase().contains(q);
+            final searchOk = q.isEmpty ||
+                (p['title'] ?? '').toString().toLowerCase().contains(q) ||
+                (p['car_name'] ?? '').toString().toLowerCase().contains(q) ||
+                (p['sub_category'] ?? '').toString().toLowerCase().contains(q) ||
+                (p['chassis_number'] ?? '').toString().toLowerCase().contains(q);
             return catOk && carOk && searchOk;
           }).toList();
 
+          // تفعيل SEO Boost الحقيقي + التقييم في نتائج البحث والرئيسية
+          all.sort((a, b) {
+            final ma = _sellerMeta[a['user_id']] ?? const _SellerMeta();
+            final mb = _sellerMeta[b['user_id']] ?? const _SellerMeta();
+            final boostCmp = mb.seoBoostTier.compareTo(ma.seoBoostTier);
+            if (boostCmp != 0) return boostCmp;
+            if (_search.trim().isNotEmpty) {
+              final ratingCmp = mb.ratingAvg.compareTo(ma.ratingAvg);
+              if (ratingCmp != 0) return ratingCmp;
+            }
+            final ta =
+                DateTime.tryParse((a['created_at'] ?? '').toString()) ?? DateTime(2000);
+            final tb =
+                DateTime.tryParse((b['created_at'] ?? '').toString()) ?? DateTime(2000);
+            return tb.compareTo(ta);
+          });
+
+          // الأكثر مبيعاً مع أولوية SEO Boost + التقييم
           final bestSellers = List<Map<String, dynamic>>.from(all)
-            ..sort((a, b) => (((b['sales_count'] ?? 0) * 10) + (b['clicks_count'] ?? 0)).compareTo(((a['sales_count'] ?? 0) * 10) + (a['clicks_count'] ?? 0)));
+            ..sort((a, b) {
+              final ma = _sellerMeta[a['user_id']] ?? const _SellerMeta();
+              final mb = _sellerMeta[b['user_id']] ?? const _SellerMeta();
+              final scoreA = (((a['sales_count'] ?? 0) as num) * 10) +
+                  ((a['clicks_count'] ?? 0) as num) +
+                  (ma.seoBoostTier * 25) +
+                  (ma.ratingAvg * 4);
+              final scoreB = (((b['sales_count'] ?? 0) as num) * 10) +
+                  ((b['clicks_count'] ?? 0) as num) +
+                  (mb.seoBoostTier * 25) +
+                  (mb.ratingAvg * 4);
+              return scoreB.compareTo(scoreA);
+            });
 
           return CustomScrollView(
             slivers: [
@@ -342,17 +461,34 @@ class _LiveStoreHomeScreenState extends State<LiveStoreHomeScreen> {
                     children: [
                       Row(
                         children: [
-                          IconButton(onPressed: widget.onOpenDrawer, icon: const Icon(Icons.menu, size: 26)),
+                          IconButton(
+                            onPressed: widget.onOpenDrawer,
+                            icon: const Icon(Icons.menu, size: 26),
+                          ),
                           const SizedBox(width: 4),
                           const GhiyarakLogo(size: 36),
                           const SizedBox(width: 8),
-                          const Text('غيارك', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w900)),
+                          const Text('غيارك',
+                              style: TextStyle(fontSize: 22, fontWeight: FontWeight.w900)),
                         ],
                       ),
                       if (widget.profile != null)
                         BounceTap(
-                          onTap: () => Navigator.push(context, animatedRoute(const ChatsListScreen())),
-                          child: Container(width: 42, height: 42, decoration: BoxDecoration(color: AppColors.surface, shape: BoxShape.circle, border: Border.all(color: AppColors.border)), child: const Icon(Icons.chat_bubble_outline, size: 20, color: AppColors.navy)),
+                          onTap: () => Navigator.push(
+                            context,
+                            animatedRoute(const ChatsListScreen()),
+                          ),
+                          child: Container(
+                            width: 42,
+                            height: 42,
+                            decoration: BoxDecoration(
+                              color: AppColors.surface,
+                              shape: BoxShape.circle,
+                              border: Border.all(color: AppColors.border),
+                            ),
+                            child: const Icon(Icons.chat_bubble_outline,
+                                size: 20, color: AppColors.navy),
+                          ),
                         ),
                     ],
                   ),
@@ -365,27 +501,62 @@ class _LiveStoreHomeScreenState extends State<LiveStoreHomeScreen> {
                     children: [
                       const HomeAdBanner(),
                       HomeLiveProgressBanner(viewerProfile: widget.profile),
+                      _discountsStrip(),
                       TextField(
                         onChanged: (v) => setState(() => _search = v),
                         decoration: InputDecoration(
                           hintText: 'ابحث باسم القطعة أو رقمها أو السيارة',
-                          hintStyle: const TextStyle(color: AppColors.textSecondary, fontSize: 13),
+                          hintStyle: const TextStyle(
+                              color: AppColors.textSecondary, fontSize: 13),
                           filled: true,
                           fillColor: AppColors.surface,
-                          contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: const BorderSide(color: AppColors.border)),
-                          enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: const BorderSide(color: AppColors.border)),
+                          contentPadding:
+                              const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(14),
+                            borderSide: const BorderSide(color: AppColors.border),
+                          ),
+                          enabledBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(14),
+                            borderSide: const BorderSide(color: AppColors.border),
+                          ),
                         ),
                       ),
                       const SizedBox(height: 10),
                       Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-                        decoration: BoxDecoration(color: AppColors.surface, borderRadius: BorderRadius.circular(14), border: Border.all(color: _filterByCar ? AppColors.orange : AppColors.border)),
+                        padding:
+                            const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                        decoration: BoxDecoration(
+                          color: AppColors.surface,
+                          borderRadius: BorderRadius.circular(14),
+                          border: Border.all(
+                            color: _filterByCar ? AppColors.orange : AppColors.border,
+                          ),
+                        ),
                         child: Row(
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
-                            Expanded(child: GestureDetector(onTap: _showCarPicker, child: Text('القطع المناسبة لـ $_selectedCarLabel', style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)))),
-                            GestureDetector(onTap: _showCarPicker, child: const Text('تغيير', style: TextStyle(color: AppColors.orange, fontWeight: FontWeight.bold, fontSize: 13))),
+                            Expanded(
+                              child: GestureDetector(
+                                onTap: _showCarPicker,
+                                child: Text(
+                                  'القطع المناسبة لـ $_selectedCarLabel',
+                                  style: const TextStyle(
+                                      fontWeight: FontWeight.w600, fontSize: 13),
+                                ),
+                              ),
+                            ),
+                            GestureDetector(
+                              onTap: _showCarPicker,
+                              child: const Text(
+                                'تغيير',
+                                style: TextStyle(
+                                  color: AppColors.orange,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 13,
+                                ),
+                              ),
+                            ),
                           ],
                         ),
                       ),
@@ -408,20 +579,31 @@ class _LiveStoreHomeScreenState extends State<LiveStoreHomeScreen> {
                                   duration: const Duration(milliseconds: 200),
                                   padding: const EdgeInsets.symmetric(horizontal: 16),
                                   alignment: Alignment.center,
-                                  decoration: BoxDecoration(color: active ? AppColors.navy : AppColors.surface, borderRadius: BorderRadius.circular(20), border: Border.all(color: active ? AppColors.navy : AppColors.border)),
-                                  child: Text(c, style: TextStyle(color: active ? Colors.white : AppColors.textPrimary, fontWeight: FontWeight.w600, fontSize: 12)),
+                                  decoration: BoxDecoration(
+                                    color: active ? AppColors.navy : AppColors.surface,
+                                    borderRadius: BorderRadius.circular(20),
+                                    border: Border.all(
+                                      color: active ? AppColors.navy : AppColors.border,
+                                    ),
+                                  ),
+                                  child: Text(
+                                    c,
+                                    style: TextStyle(
+                                      color: active ? Colors.white : AppColors.textPrimary,
+                                      fontWeight: FontWeight.w600,
+                                      fontSize: 12,
+                                    ),
+                                  ),
                                 ),
                               ),
                             );
                           },
                         ),
                       ),
-                      _buildActiveDiscountsStrip(),
                     ],
                   ),
                 ),
               ),
-
               if (isLoading)
                 const SliverToBoxAdapter(
                   child: Padding(
@@ -436,15 +618,23 @@ class _LiveStoreHomeScreenState extends State<LiveStoreHomeScreen> {
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        const Text('الأكثر مبيعاً', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                        GestureDetector(onTap: _openCatalog, child: const Text('عرض الكل', style: TextStyle(color: AppColors.orange, fontWeight: FontWeight.w600, fontSize: 13))),
+                        const Text('الأكثر مبيعاً',
+                            style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                        GestureDetector(
+                          onTap: _openCatalog,
+                          child: const Text('عرض الكل',
+                              style: TextStyle(
+                                  color: AppColors.orange,
+                                  fontWeight: FontWeight.w600,
+                                  fontSize: 13)),
+                        ),
                       ],
                     ),
                   ),
                 ),
                 SliverToBoxAdapter(
                   child: SizedBox(
-                    height: 238,
+                    height: 256,
                     child: bestSellers.isEmpty
                         ? const Center(child: Text('لا توجد قطع حالياً لهذه السيارة'))
                         : ListView.separated(
@@ -453,8 +643,11 @@ class _LiveStoreHomeScreenState extends State<LiveStoreHomeScreen> {
                             itemCount: bestSellers.take(8).length,
                             separatorBuilder: (_, __) => const SizedBox(width: 12),
                             itemBuilder: (_, i) => SizedBox(
-                              width: 168,
-                              child: FadeSlideIn(index: i, child: _card(bestSellers[i], 'الأكثر مبيعاً', 'best')),
+                              width: 170,
+                              child: FadeSlideIn(
+                                index: i,
+                                child: _card(bestSellers[i], 'الأكثر مبيعاً', 'best'),
+                              ),
                             ),
                           ),
                   ),
@@ -465,8 +658,16 @@ class _LiveStoreHomeScreenState extends State<LiveStoreHomeScreen> {
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        const Text('وصل حديثاً', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                        GestureDetector(onTap: _openCatalog, child: const Text('عرض الكل', style: TextStyle(color: AppColors.orange, fontWeight: FontWeight.w600, fontSize: 13))),
+                        const Text('وصل حديثاً',
+                            style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                        GestureDetector(
+                          onTap: _openCatalog,
+                          child: const Text('عرض الكل',
+                              style: TextStyle(
+                                  color: AppColors.orange,
+                                  fontWeight: FontWeight.w600,
+                                  fontSize: 13)),
+                        ),
                       ],
                     ),
                   ),
@@ -474,31 +675,55 @@ class _LiveStoreHomeScreenState extends State<LiveStoreHomeScreen> {
                 SliverPadding(
                   padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
                   sliver: SliverGrid(
-                    gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(maxCrossAxisExtent: 230, mainAxisSpacing: 12, crossAxisSpacing: 12, childAspectRatio: 0.72),
-                    delegate: SliverChildBuilderDelegate((_, i) => FadeSlideIn(index: i, child: _card(all[i], 'جديد', 'new')), childCount: all.length),
+                    gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+                      maxCrossAxisExtent: 230,
+                      mainAxisSpacing: 12,
+                      crossAxisSpacing: 12,
+                      childAspectRatio: 0.68,
+                    ),
+                    delegate: SliverChildBuilderDelegate(
+                      (_, i) => FadeSlideIn(
+                        index: i,
+                        child: _card(all[i], 'جديد', 'new'),
+                      ),
+                      childCount: all.length,
+                    ),
                   ),
                 ),
               ],
-
               SliverToBoxAdapter(
                 child: Padding(
                   padding: const EdgeInsets.fromLTRB(16, 4, 16, 32),
                   child: Container(
                     padding: const EdgeInsets.all(16),
-                    decoration: BoxDecoration(color: AppColors.surface, borderRadius: BorderRadius.circular(16), border: Border.all(color: AppColors.border)),
+                    decoration: BoxDecoration(
+                      color: AppColors.surface,
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: AppColors.border),
+                    ),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Text('تركيب في ورشة؟', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+                        const Text('تركيب في ورشة؟',
+                            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
                         const SizedBox(height: 4),
-                        const Text('احجز موعد تركيب القطعة في أقرب ورشة معتمدة', style: TextStyle(color: AppColors.textSecondary, fontSize: 12)),
+                        const Text('احجز موعد تركيب القطعة في أقرب ورشة معتمدة',
+                            style: TextStyle(
+                                color: AppColors.textSecondary, fontSize: 12)),
                         const SizedBox(height: 12),
                         SizedBox(
                           width: double.infinity,
                           child: OutlinedButton(
                             onPressed: _openWorkshopSelector,
-                            style: OutlinedButton.styleFrom(side: const BorderSide(color: AppColors.navy, width: 1.4), padding: const EdgeInsets.symmetric(vertical: 14), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
-                            child: const Text('اختيار ورشة وموعد', style: TextStyle(color: AppColors.navy, fontWeight: FontWeight.bold)),
+                            style: OutlinedButton.styleFrom(
+                              side: const BorderSide(color: AppColors.navy, width: 1.4),
+                              padding: const EdgeInsets.symmetric(vertical: 14),
+                              shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12)),
+                            ),
+                            child: const Text('اختيار ورشة وموعد',
+                                style: TextStyle(
+                                    color: AppColors.navy, fontWeight: FontWeight.bold)),
                           ),
                         ),
                       ],
@@ -516,14 +741,33 @@ class _LiveStoreHomeScreenState extends State<LiveStoreHomeScreen> {
   Widget _card(Map<String, dynamic> p, String badge, String heroPrefix) {
     final imgs = List<String>.from(p['images'] ?? []);
     final heroTag = '${heroPrefix}_${p['id']}';
-    final isTrusted = _trustedMerchantIds.contains(p['user_id']);
+    final meta = _sellerMeta[p['user_id']] ?? const _SellerMeta();
     final qty = (p['quantity'] as num?)?.toInt() ?? 1;
 
     return BounceTap(
-      onTap: () => Navigator.push(context, animatedRoute(ProductDetailsScreen(product: p, viewerProfile: widget.profile, heroTag: heroTag))),
+      onTap: () async {
+        await Navigator.push(
+          context,
+          animatedRoute(ProductDetailsScreen(
+            product: p,
+            viewerProfile: widget.profile,
+            heroTag: heroTag,
+          )),
+        );
+        _loadSellerMeta();
+      },
       child: Container(
         padding: const EdgeInsets.all(10),
-        decoration: BoxDecoration(color: AppColors.surface, borderRadius: BorderRadius.circular(16), border: Border.all(color: AppColors.border)),
+        decoration: BoxDecoration(
+          color: AppColors.surface,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+            color: meta.seoBoostTier > 0
+                ? AppColors.orange.withValues(alpha: 0.65)
+                : AppColors.border,
+            width: meta.seoBoostTier > 0 ? 1.4 : 1,
+          ),
+        ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -532,60 +776,144 @@ class _LiveStoreHomeScreenState extends State<LiveStoreHomeScreen> {
                 Hero(
                   tag: heroTag,
                   child: Container(
-                    height: 95,
+                    height: 92,
                     width: double.infinity,
                     decoration: BoxDecoration(
                       color: AppColors.placeholder,
                       borderRadius: BorderRadius.circular(12),
-                      image: imgs.isNotEmpty ? DecorationImage(image: NetworkImage(imgs.first), fit: BoxFit.cover) : null,
+                      image: imgs.isNotEmpty
+                          ? DecorationImage(
+                              image: NetworkImage(imgs.first),
+                              fit: BoxFit.cover,
+                            )
+                          : null,
                     ),
-                    child: imgs.isEmpty ? const Icon(Icons.settings_outlined, color: AppColors.textSecondary, size: 32) : null,
+                    child: imgs.isEmpty
+                        ? const Icon(Icons.settings_outlined,
+                            color: AppColors.textSecondary, size: 32)
+                        : null,
                   ),
                 ),
                 Positioned(
                   top: 6,
                   right: 6,
                   child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                    decoration: BoxDecoration(color: AppColors.orange, borderRadius: BorderRadius.circular(12)),
-                    child: Text(badge, style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
+                    padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: meta.seoBoostTier > 0
+                          ? const Color(0xFFD97706)
+                          : AppColors.orange,
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Text(
+                      meta.seoBoostTier > 0 ? 'مميز' : badge,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 10,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
                   ),
                 ),
-                if (isTrusted)
+                if (meta.isTrusted)
                   Positioned(
                     top: 6,
                     left: 6,
                     child: Container(
                       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
                       decoration: BoxDecoration(
-                        color: Colors.white.withValues(alpha: 0.94),
-                        borderRadius: BorderRadius.circular(12),
+                        color: Colors.blue.shade700,
+                        borderRadius: BorderRadius.circular(10),
                       ),
                       child: const Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          Icon(Icons.verified, color: Colors.blue, size: 12),
-                          SizedBox(width: 3),
-                          Text('موثوق', style: TextStyle(color: Colors.blue, fontSize: 9, fontWeight: FontWeight.bold)),
+                          Icon(Icons.verified, color: Colors.white, size: 11),
+                          SizedBox(width: 2),
+                          Text(
+                            'موثوق',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 9,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
                         ],
                       ),
                     ),
                   ),
               ],
             ),
-            const SizedBox(height: 8),
-            Text(p['title'] ?? '', maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-            Text('${p['car_name']} · ${p['car_model']}', maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: AppColors.textSecondary, fontSize: 11)),
-            Text('الكمية: $qty', maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: AppColors.success, fontSize: 10, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 7),
+            Text(
+              p['title'] ?? '',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+            ),
+            Text(
+              '${p['car_name']} · ${p['car_model']}',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(color: AppColors.textSecondary, fontSize: 11),
+            ),
+            const SizedBox(height: 4),
+            Row(
+              children: [
+                if (meta.ratingCount > 0) ...[
+                  const Icon(Icons.star_rounded, color: Colors.amber, size: 14),
+                  const SizedBox(width: 2),
+                  Text(
+                    '${meta.ratingAvg.toStringAsFixed(1)} (${meta.ratingCount})',
+                    style: const TextStyle(
+                      fontSize: 10.5,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.navy,
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                ],
+                Expanded(
+                  child: Text(
+                    'الكمية: $qty',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 10.5,
+                      color: AppColors.textSecondary,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ],
+            ),
             const Spacer(),
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text('${p['price']} د.أ', style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 14)),
+                Flexible(
+                  child: Text(
+                    '${p['price']} د.أ',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 13.5),
+                  ),
+                ),
+                const SizedBox(width: 4),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                  decoration: BoxDecoration(color: AppColors.navy, borderRadius: BorderRadius.circular(10)),
-                  child: const Text('التفاصيل', style: TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold)),
+                  padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+                  decoration: BoxDecoration(
+                    color: AppColors.navy,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: const Text(
+                    'التفاصيل',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 10.5,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
                 ),
               ],
             ),
@@ -601,7 +929,12 @@ class ProductDetailsScreen extends StatefulWidget {
   final CustomerProfile? viewerProfile;
   final String? heroTag;
 
-  const ProductDetailsScreen({super.key, required this.product, this.viewerProfile, this.heroTag});
+  const ProductDetailsScreen({
+    super.key,
+    required this.product,
+    this.viewerProfile,
+    this.heroTag,
+  });
 
   @override
   State<ProductDetailsScreen> createState() => _ProductDetailsScreenState();
@@ -630,7 +963,19 @@ class _ProductDetailsScreenState extends State<ProductDetailsScreen> {
     try {
       await _db.rpc('increment_product_click', params: {'p_id': widget.product['id']});
       await _db.rpc('increment_product_view', params: {'p_id': widget.product['id']});
-      final sellerMap = await _db.from('customers').select().eq('id', widget.product['user_id']).maybeSingle();
+      await _reloadSeller();
+    } catch (_) {
+      await _reloadSeller();
+    }
+  }
+
+  Future<void> _reloadSeller() async {
+    try {
+      final sellerMap = await _db
+          .from('customers')
+          .select()
+          .eq('id', widget.product['user_id'])
+          .maybeSingle();
       if (mounted) {
         setState(() {
           _seller = sellerMap != null ? CustomerProfile.fromMap(sellerMap) : null;
@@ -646,20 +991,26 @@ class _ProductDetailsScreenState extends State<ProductDetailsScreen> {
 
   Future<void> _sendMessage() async {
     final text = _msgCtrl.text.trim();
-    if (text.isEmpty || widget.viewerProfile == null) {
-      return;
-    }
+    if (text.isEmpty || widget.viewerProfile == null) return;
     setState(() => _sending = true);
     try {
-      await _db.from('messages').insert({'sender_id': widget.viewerProfile!.id, 'receiver_id': widget.product['user_id'], 'product_id': widget.product['id'], 'message': text});
+      await _db.from('messages').insert({
+        'sender_id': widget.viewerProfile!.id,
+        'receiver_id': widget.product['user_id'],
+        'product_id': widget.product['id'],
+        'message': text,
+      });
       _msgCtrl.clear();
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تم إرسال رسالتك إلى البائع بنجاح!'), backgroundColor: AppColors.success));
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('تم إرسال رسالتك إلى البائع بنجاح!'),
+            backgroundColor: AppColors.success,
+          ),
+        );
       }
     } finally {
-      if (mounted) {
-        setState(() => _sending = false);
-      }
+      if (mounted) setState(() => _sending = false);
     }
   }
 
@@ -673,13 +1024,20 @@ class _ProductDetailsScreenState extends State<ProductDetailsScreen> {
             height: 220,
             child: PageView.builder(
               itemCount: imgs.length,
-              itemBuilder: (_, i) => ClipRRect(borderRadius: BorderRadius.circular(16), child: Image.network(imgs[i], fit: BoxFit.cover)),
+              itemBuilder: (_, i) => ClipRRect(
+                borderRadius: BorderRadius.circular(16),
+                child: Image.network(imgs[i], fit: BoxFit.cover),
+              ),
             ),
           )
         : Container(
             height: 180,
-            decoration: BoxDecoration(color: AppColors.placeholder, borderRadius: BorderRadius.circular(16)),
-            child: const Icon(Icons.settings_outlined, size: 54, color: AppColors.textSecondary),
+            decoration: BoxDecoration(
+              color: AppColors.placeholder,
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: const Icon(Icons.settings_outlined,
+                size: 54, color: AppColors.textSecondary),
           );
 
     return Scaffold(
@@ -689,44 +1047,110 @@ class _ProductDetailsScreenState extends State<ProductDetailsScreen> {
         children: [
           if (widget.heroTag != null) Hero(tag: widget.heroTag!, child: imageBox) else imageBox,
           const SizedBox(height: 16),
-          Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [Expanded(child: Text(p['title'] ?? '', style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold))), Text('${p['price']} د.أ', style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800, color: AppColors.orange))]),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Expanded(
+                child: Text(
+                  p['title'] ?? '',
+                  style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                ),
+              ),
+              Text(
+                '${p['price']} د.أ',
+                style: const TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.w800,
+                  color: AppColors.orange,
+                ),
+              ),
+            ],
+          ),
           const SizedBox(height: 6),
-          Text('${p['main_category'] ?? ''} · ${p['sub_category'] ?? ''}', style: const TextStyle(color: AppColors.textSecondary, fontSize: 13)),
-          Text('السيارة: ${p['car_name']} · الموديل: ${p['car_model']}', style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
-          const SizedBox(height: 4),
-          Text('الكمية المتوفرة: $qty قطعة', style: const TextStyle(color: AppColors.success, fontWeight: FontWeight.bold, fontSize: 13)),
-          if ((p['chassis_number'] as String? ?? '').isNotEmpty) Text('رقم الشاصي: ${p['chassis_number']}', style: const TextStyle(color: AppColors.textSecondary, fontSize: 12)),
+          Text(
+            '${p['main_category'] ?? ''} · ${p['sub_category'] ?? ''}',
+            style: const TextStyle(color: AppColors.textSecondary, fontSize: 13),
+          ),
+          Text(
+            'السيارة: ${p['car_name']} · الموديل: ${p['car_model']} · الكمية المتوفرة: $qty',
+            style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+          ),
+          if ((p['chassis_number'] as String? ?? '').isNotEmpty)
+            Text(
+              'رقم الشاصي: ${p['chassis_number']}',
+              style: const TextStyle(color: AppColors.textSecondary, fontSize: 12),
+            ),
           const SizedBox(height: 10),
-          Container(padding: const EdgeInsets.all(14), decoration: BoxDecoration(color: AppColors.surface, borderRadius: BorderRadius.circular(14), border: Border.all(color: AppColors.border)), child: Text(p['description'] ?? '')),
+          Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: AppColors.surface,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: AppColors.border),
+            ),
+            child: Text(p['description'] ?? ''),
+          ),
           const SizedBox(height: 16),
           Container(
             padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(color: AppColors.surface, borderRadius: BorderRadius.circular(16), border: Border.all(color: AppColors.border)),
+            decoration: BoxDecoration(
+              color: AppColors.surface,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: AppColors.border),
+            ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text('تركيب في ورشة؟', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+                const Text('تركيب في ورشة؟',
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
                 const SizedBox(height: 4),
-                const Text('احجز موعد تركيب هذه القطعة في ورشة معتمدة', style: TextStyle(color: AppColors.textSecondary, fontSize: 12)),
+                const Text('احجز موعد تركيب هذه القطعة في ورشة معتمدة',
+                    style: TextStyle(color: AppColors.textSecondary, fontSize: 12)),
                 const SizedBox(height: 10),
-                SizedBox(width: double.infinity, child: OutlinedButton(onPressed: () => Navigator.push(context, animatedRoute(SelectWorkshopScreen(viewerProfile: widget.viewerProfile))), style: OutlinedButton.styleFrom(side: const BorderSide(color: AppColors.navy, width: 1.4), padding: const EdgeInsets.symmetric(vertical: 13), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))), child: const Text('اختيار ورشة وموعد', style: TextStyle(color: AppColors.navy, fontWeight: FontWeight.bold)))),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton(
+                    onPressed: () => Navigator.push(
+                      context,
+                      animatedRoute(
+                          SelectWorkshopScreen(viewerProfile: widget.viewerProfile)),
+                    ),
+                    style: OutlinedButton.styleFrom(
+                      side: const BorderSide(color: AppColors.navy, width: 1.4),
+                      padding: const EdgeInsets.symmetric(vertical: 13),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12)),
+                    ),
+                    child: const Text('اختيار ورشة وموعد',
+                        style: TextStyle(
+                            color: AppColors.navy, fontWeight: FontWeight.bold)),
+                  ),
+                ),
               ],
             ),
           ),
           const SizedBox(height: 16),
           Container(
             padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(color: AppColors.surface, borderRadius: BorderRadius.circular(16), border: Border.all(color: AppColors.border)),
+            decoration: BoxDecoration(
+              color: AppColors.surface,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: AppColors.border),
+            ),
             child: _loadingSeller
                 ? const Center(child: CircularProgressIndicator())
                 : Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text('معلومات البائع والتاجر', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+                      const Text('معلومات البائع والتاجر',
+                          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
                       const SizedBox(height: 10),
                       Row(
                         children: [
-                          const CircleAvatar(backgroundColor: AppColors.navy, child: Icon(Icons.storefront, color: Colors.white)),
+                          const CircleAvatar(
+                            backgroundColor: AppColors.navy,
+                            child: Icon(Icons.storefront, color: Colors.white),
+                          ),
                           const SizedBox(width: 12),
                           Expanded(
                             child: Column(
@@ -734,39 +1158,65 @@ class _ProductDetailsScreenState extends State<ProductDetailsScreen> {
                               children: [
                                 Row(
                                   children: [
-                                    Flexible(child: Text(_seller?.fullName ?? 'التاجر', overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15))),
+                                    Flexible(
+                                      child: Text(
+                                        _seller?.fullName ?? 'التاجر',
+                                        overflow: TextOverflow.ellipsis,
+                                        style: const TextStyle(
+                                            fontWeight: FontWeight.bold, fontSize: 15),
+                                      ),
+                                    ),
                                     if (_seller?.isTrustedMerchant == true) ...[
                                       const SizedBox(width: 6),
-                                      const Icon(Icons.verified, color: Colors.blue, size: 17),
-                                      const SizedBox(width: 3),
-                                      const Text('تاجر موثوق', style: TextStyle(color: Colors.blue, fontSize: 11, fontWeight: FontWeight.bold)),
+                                      const Icon(Icons.verified,
+                                          color: Colors.blue, size: 17),
                                     ],
                                   ],
                                 ),
-                                const SizedBox(height: 4),
-                                InkWell(
-                                  borderRadius: BorderRadius.circular(8),
-                                  onTap: () => _dialPhoneNumber(context, _seller?.phone),
-                                  child: Padding(
-                                    padding: const EdgeInsets.symmetric(vertical: 2),
-                                    child: Row(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        const Icon(Icons.call, color: AppColors.orange, size: 16),
-                                        const SizedBox(width: 5),
-                                        Text(
-                                          'اتصال: ${_seller?.phone ?? "غير متوفر"}',
-                                          style: const TextStyle(
-                                            color: AppColors.orange,
-                                            fontWeight: FontWeight.bold,
-                                            decoration: TextDecoration.underline,
-                                          ),
-                                        ),
-                                      ],
+                                const SizedBox(height: 3),
+                                Row(
+                                  children: [
+                                    const Icon(Icons.star_rounded,
+                                        color: Colors.amber, size: 16),
+                                    const SizedBox(width: 3),
+                                    Text(
+                                      (_seller?.ratingCount ?? 0) > 0
+                                          ? '${_seller!.ratingAvg.toStringAsFixed(1)} (${_seller!.ratingCount} تقييم)'
+                                          : 'لا توجد تقييمات بعد',
+                                      style: const TextStyle(
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w600,
+                                        color: AppColors.navy,
+                                      ),
                                     ),
+                                  ],
+                                ),
+                                const SizedBox(height: 3),
+                                InkWell(
+                                  onTap: () => _dialPhone(_seller?.phone),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      const Icon(Icons.call,
+                                          color: AppColors.orange, size: 15),
+                                      const SizedBox(width: 4),
+                                      Text(
+                                        _seller?.phone ?? 'غير متوفر',
+                                        style: const TextStyle(
+                                          color: AppColors.orange,
+                                          fontWeight: FontWeight.bold,
+                                          decoration: TextDecoration.underline,
+                                        ),
+                                      ),
+                                    ],
                                   ),
                                 ),
-                                if (_seller != null) Text(formatWorkshopStreet(_seller!), style: const TextStyle(color: AppColors.textSecondary, fontSize: 12)),
+                                if (_seller != null)
+                                  Text(
+                                    formatWorkshopStreet(_seller!),
+                                    style: const TextStyle(
+                                        color: AppColors.textSecondary, fontSize: 12),
+                                  ),
                               ],
                             ),
                           ),
@@ -774,27 +1224,90 @@ class _ProductDetailsScreenState extends State<ProductDetailsScreen> {
                       ),
                       const SizedBox(height: 12),
                       if (_seller != null) ...[
-                        if ((_seller!.phone ?? '').trim().isNotEmpty) ...[
+                        SizedBox(
+                          width: double.infinity,
+                          child: ElevatedButton.icon(
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: AppColors.navy,
+                              foregroundColor: Colors.white,
+                              padding: const EdgeInsets.symmetric(vertical: 12),
+                            ),
+                            onPressed: () async {
+                              await Navigator.push(
+                                context,
+                                animatedRoute(MerchantPublicProfileScreen(
+                                  seller: _seller!,
+                                  viewerProfile: widget.viewerProfile,
+                                )),
+                              );
+                              _reloadSeller();
+                            },
+                            icon: const Icon(Icons.store_mall_directory_outlined),
+                            label: const Text('عرض بروفايل التاجر وتقييماته'),
+                          ),
+                        ),
+                        if (widget.viewerProfile != null &&
+                            widget.viewerProfile!.id != p['user_id']) ...[
+                          const SizedBox(height: 8),
                           SizedBox(
                             width: double.infinity,
-                            child: ElevatedButton.icon(
-                              style: ElevatedButton.styleFrom(backgroundColor: AppColors.success, foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(vertical: 12)),
-                              onPressed: () => _dialPhoneNumber(context, _seller!.phone),
-                              icon: const Icon(Icons.phone),
-                              label: Text('اتصال مباشر بالتاجر (${_seller!.phone})'),
+                            child: OutlinedButton.icon(
+                              style: OutlinedButton.styleFrom(
+                                side: const BorderSide(color: AppColors.orange),
+                                padding: const EdgeInsets.symmetric(vertical: 12),
+                              ),
+                              onPressed: () => Navigator.push(
+                                context,
+                                animatedRoute(ChatConversationScreen(
+                                  otherUserId: _seller!.id,
+                                  otherUserName: _seller!.fullName ?? 'التاجر',
+                                  otherUserPhone: _seller!.phone,
+                                  productId: p['id'] as String?,
+                                  productTitle: p['title'] as String?,
+                                  productPrice: (p['price'] as num?)?.toDouble(),
+                                )),
+                              ),
+                              icon: const Icon(Icons.chat, color: AppColors.orange),
+                              label: const Text('فتح الدردشة المباشرة',
+                                  style: TextStyle(
+                                      color: AppColors.orange,
+                                      fontWeight: FontWeight.bold)),
                             ),
                           ),
-                          const SizedBox(height: 8),
-                        ],
-                        SizedBox(width: double.infinity, child: ElevatedButton.icon(style: ElevatedButton.styleFrom(backgroundColor: AppColors.navy, foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(vertical: 12)), onPressed: () => Navigator.push(context, animatedRoute(MerchantPublicProfileScreen(seller: _seller!, viewerProfile: widget.viewerProfile))), icon: const Icon(Icons.store_mall_directory_outlined), label: const Text('عرض بروفايل التاجر وجميع منشوراته'))),
-                        if (widget.viewerProfile != null && widget.viewerProfile!.id != p['user_id']) ...[
-                          const SizedBox(height: 8),
-                          SizedBox(width: double.infinity, child: OutlinedButton.icon(style: OutlinedButton.styleFrom(side: const BorderSide(color: AppColors.orange), padding: const EdgeInsets.symmetric(vertical: 12)), onPressed: () => Navigator.push(context, animatedRoute(ChatConversationScreen(otherUserId: _seller!.id, otherUserName: _seller!.fullName ?? 'التاجر', otherUserPhone: _seller!.phone, productId: p['id'] as String?, productTitle: p['title'] as String?, productPrice: (p['price'] as num?)?.toDouble()))), icon: const Icon(Icons.chat, color: AppColors.orange), label: const Text('فتح الدردشة المباشرة', style: TextStyle(color: AppColors.orange, fontWeight: FontWeight.bold)))),
                         ],
                       ],
-                      if (widget.viewerProfile != null && widget.viewerProfile!.id != p['user_id']) ...[
+                      if (widget.viewerProfile != null &&
+                          widget.viewerProfile!.id != p['user_id']) ...[
                         const Divider(height: 24),
-                        Row(children: [Expanded(child: TextField(controller: _msgCtrl, decoration: InputDecoration(hintText: 'أو أرسل رسالة سريعة للتاجر...', filled: true, fillColor: AppColors.background, contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10), border: OutlineInputBorder(borderRadius: BorderRadius.circular(12))))), const SizedBox(width: 8), ElevatedButton(style: ElevatedButton.styleFrom(backgroundColor: AppColors.orange, foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14)), onPressed: _sending ? null : _sendMessage, child: const Text('إرسال'))]),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: TextField(
+                                controller: _msgCtrl,
+                                decoration: InputDecoration(
+                                  hintText: 'أو أرسل رسالة سريعة للتاجر...',
+                                  filled: true,
+                                  fillColor: AppColors.background,
+                                  contentPadding: const EdgeInsets.symmetric(
+                                      horizontal: 14, vertical: 10),
+                                  border: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(12)),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            ElevatedButton(
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: AppColors.orange,
+                                foregroundColor: Colors.white,
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 16, vertical: 14),
+                              ),
+                              onPressed: _sending ? null : _sendMessage,
+                              child: const Text('إرسال'),
+                            ),
+                          ],
+                        ),
                       ],
                     ],
                   ),
@@ -805,14 +1318,255 @@ class _ProductDetailsScreenState extends State<ProductDetailsScreen> {
   }
 }
 
-class MerchantPublicProfileScreen extends StatelessWidget {
+class MerchantPublicProfileScreen extends StatefulWidget {
   final CustomerProfile seller;
   final CustomerProfile? viewerProfile;
-  const MerchantPublicProfileScreen({super.key, required this.seller, this.viewerProfile});
+
+  const MerchantPublicProfileScreen({
+    super.key,
+    required this.seller,
+    this.viewerProfile,
+  });
+
+  @override
+  State<MerchantPublicProfileScreen> createState() =>
+      _MerchantPublicProfileScreenState();
+}
+
+class _MerchantPublicProfileScreenState
+    extends State<MerchantPublicProfileScreen> {
+  final _db = Supabase.instance.client;
+  late double _ratingAvg;
+  late int _ratingCount;
+  Map<String, String> _reviewerNames = {};
+  Map<String, dynamic>? _myExistingRating;
+
+  @override
+  void initState() {
+    super.initState();
+    _ratingAvg = widget.seller.ratingAvg;
+    _ratingCount = widget.seller.ratingCount;
+    _refreshRatingSummary();
+  }
+
+  Future<void> _refreshRatingSummary() async {
+    try {
+      final row = await _db
+          .from('customers')
+          .select('rating_avg, rating_count')
+          .eq('id', widget.seller.id)
+          .maybeSingle();
+
+      final ratings = await _db
+          .from('merchant_ratings')
+          .select('reviewer_id, rating, comment')
+          .eq('merchant_id', widget.seller.id);
+
+      final rList = List<Map<String, dynamic>>.from(ratings);
+      final ids = rList
+          .map((e) => e['reviewer_id'] as String?)
+          .whereType<String>()
+          .toSet()
+          .toList();
+
+      final names = <String, String>{};
+      if (ids.isNotEmpty) {
+        final users = await _db
+            .from('customers')
+            .select('id, full_name, username')
+            .inFilter('id', ids);
+        for (final u in List<Map<String, dynamic>>.from(users)) {
+          names[u['id'] as String] =
+              (u['full_name'] as String?)?.trim().isNotEmpty == true
+                  ? u['full_name'] as String
+                  : (u['username'] as String?) ?? 'زبون غيارك';
+        }
+      }
+
+      Map<String, dynamic>? mine;
+      if (widget.viewerProfile != null) {
+        for (final r in rList) {
+          if (r['reviewer_id'] == widget.viewerProfile!.id) {
+            mine = r;
+            break;
+          }
+        }
+      }
+
+      if (mounted) {
+        setState(() {
+          if (row != null) {
+            _ratingAvg = (row['rating_avg'] as num?)?.toDouble() ?? 0.0;
+            _ratingCount = (row['rating_count'] as num?)?.toInt() ?? 0;
+          }
+          _reviewerNames = names;
+          _myExistingRating = mine;
+        });
+      }
+    } catch (_) {}
+  }
+
+  void _openRateDialog() {
+    if (widget.viewerProfile == null) return;
+    int selectedStars = (_myExistingRating?['rating'] as num?)?.toInt() ?? 5;
+    final commentCtrl = TextEditingController(
+      text: (_myExistingRating?['comment'] as String?) ?? '',
+    );
+    bool saving = false;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+      ),
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setModal) => Padding(
+          padding: EdgeInsets.fromLTRB(
+            20,
+            20,
+            20,
+            MediaQuery.of(ctx).viewInsets.bottom + 24,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                _myExistingRating != null ? 'تعديل تقييمك للتاجر' : 'قيّم التاجر',
+                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                widget.seller.fullName ?? 'التاجر',
+                style: const TextStyle(color: AppColors.textSecondary, fontSize: 13),
+              ),
+              const SizedBox(height: 14),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: List.generate(5, (index) {
+                  final star = index + 1;
+                  return IconButton(
+                    onPressed: () => setModal(() => selectedStars = star),
+                    icon: Icon(
+                      star <= selectedStars
+                          ? Icons.star_rounded
+                          : Icons.star_border_rounded,
+                      color: Colors.amber,
+                      size: 38,
+                    ),
+                  );
+                }),
+              ),
+              const SizedBox(height: 10),
+              TextField(
+                controller: commentCtrl,
+                maxLines: 3,
+                decoration: InputDecoration(
+                  hintText: 'اكتب تجربتك مع التاجر (اختياري)...',
+                  filled: true,
+                  fillColor: AppColors.background,
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.orange,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                  ),
+                  onPressed: saving
+                      ? null
+                      : () async {
+                          setModal(() => saving = true);
+                          try {
+                            await _db.from('merchant_ratings').upsert(
+                              {
+                                'merchant_id': widget.seller.id,
+                                'reviewer_id': widget.viewerProfile!.id,
+                                'rating': selectedStars,
+                                'comment': commentCtrl.text.trim(),
+                                'updated_at': DateTime.now().toIso8601String(),
+                              },
+                              onConflict: 'merchant_id,reviewer_id',
+                            );
+                            if (ctx.mounted) Navigator.pop(ctx);
+                            await _refreshRatingSummary();
+                            if (mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text('تم حفظ تقييمك بنجاح!'),
+                                  backgroundColor: AppColors.success,
+                                ),
+                              );
+                            }
+                          } catch (e) {
+                            setModal(() => saving = false);
+                            if (mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text('تعذر حفظ التقييم: $e'),
+                                  backgroundColor: Colors.red,
+                                ),
+                              );
+                            }
+                          }
+                        },
+                  child: saving
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        )
+                      : const Text(
+                          'حفظ التقييم',
+                          style: TextStyle(fontWeight: FontWeight.bold),
+                        ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _starsRow(double value, {double size = 18}) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: List.generate(5, (i) {
+        final idx = i + 1;
+        IconData icon;
+        if (value >= idx) {
+          icon = Icons.star_rounded;
+        } else if (value >= idx - 0.5) {
+          icon = Icons.star_half_rounded;
+        } else {
+          icon = Icons.star_border_rounded;
+        }
+        return Icon(icon, color: Colors.amber, size: size);
+      }),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
-    final db = Supabase.instance.client;
+    final seller = widget.seller;
+    final canRate =
+        widget.viewerProfile != null && widget.viewerProfile!.id != seller.id;
+
     return Scaffold(
       appBar: AppBar(title: Text(seller.fullName ?? 'بروفايل التاجر')),
       body: ListView(
@@ -820,73 +1574,236 @@ class MerchantPublicProfileScreen extends StatelessWidget {
         children: [
           Container(
             padding: const EdgeInsets.all(18),
-            decoration: BoxDecoration(color: AppColors.navy, borderRadius: BorderRadius.circular(16)),
+            decoration: BoxDecoration(
+              color: AppColors.navy,
+              borderRadius: BorderRadius.circular(16),
+            ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Row(children: [const CircleAvatar(radius: 26, backgroundColor: AppColors.orange, child: Icon(Icons.storefront, color: Colors.white, size: 28)), const SizedBox(width: 14), Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Row(children: [Flexible(child: Text(seller.fullName ?? 'التاجر', overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold))), if (seller.isTrustedMerchant) ...[const SizedBox(width: 6), const Icon(Icons.verified, color: Colors.lightBlueAccent, size: 18)]]), Text('@${seller.username ?? ""}', style: const TextStyle(color: Colors.white70, fontSize: 12))]))]),
+                Row(
+                  children: [
+                    const CircleAvatar(
+                      radius: 26,
+                      backgroundColor: AppColors.orange,
+                      child: Icon(Icons.storefront, color: Colors.white, size: 28),
+                    ),
+                    const SizedBox(width: 14),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Flexible(
+                                child: Text(
+                                  seller.fullName ?? 'التاجر',
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 18,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ),
+                              if (seller.isTrustedMerchant) ...[
+                                const SizedBox(width: 6),
+                                const Icon(Icons.verified,
+                                    color: Colors.lightBlueAccent, size: 18),
+                              ],
+                            ],
+                          ),
+                          Text(
+                            '@${seller.username ?? ""}',
+                            style: const TextStyle(
+                                color: Colors.white70, fontSize: 12),
+                          ),
+                          const SizedBox(height: 6),
+                          Row(
+                            children: [
+                              _starsRow(_ratingAvg, size: 17),
+                              const SizedBox(width: 6),
+                              Text(
+                                _ratingCount > 0
+                                    ? '${_ratingAvg.toStringAsFixed(1)} ($_ratingCount تقييم)'
+                                    : 'بدون تقييمات بعد',
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
                 const Divider(color: Colors.white24, height: 22),
                 InkWell(
-                  onTap: () => _dialPhoneNumber(context, seller.phone),
+                  onTap: () => _dialPhone(seller.phone),
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      const Icon(Icons.phone, color: AppColors.orange, size: 17),
+                      const Icon(Icons.call, color: AppColors.orange, size: 18),
                       const SizedBox(width: 6),
                       Text(
                         'رقم الهاتف للتواصل: ${seller.phone ?? "غير متوفر"}',
-                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, decoration: TextDecoration.underline),
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                          decoration: TextDecoration.underline,
+                        ),
                       ),
                     ],
                   ),
                 ),
-                const SizedBox(height: 6),
-                Text('العنوان: ${formatWorkshopStreet(seller)}', style: const TextStyle(color: Colors.white70, fontSize: 12)),
-                const SizedBox(height: 12),
-                Row(
-                  children: [
-                    if ((seller.phone ?? '').trim().isNotEmpty)
+                const SizedBox(height: 4),
+                Text(
+                  'العنوان: ${formatWorkshopStreet(seller)}',
+                  style: const TextStyle(color: Colors.white70, fontSize: 12),
+                ),
+                if (canRate) ...[
+                  const SizedBox(height: 14),
+                  Row(
+                    children: [
                       Expanded(
                         child: ElevatedButton.icon(
-                          style: ElevatedButton.styleFrom(backgroundColor: AppColors.success, foregroundColor: Colors.white),
-                          onPressed: () => _dialPhoneNumber(context, seller.phone),
-                          icon: const Icon(Icons.call, size: 18),
-                          label: const Text('اتصال'),
-                        ),
-                      ),
-                    if ((seller.phone ?? '').trim().isNotEmpty && viewerProfile != null && viewerProfile!.id != seller.id)
-                      const SizedBox(width: 10),
-                    if (viewerProfile != null && viewerProfile!.id != seller.id)
-                      Expanded(
-                        child: ElevatedButton.icon(
-                          style: ElevatedButton.styleFrom(backgroundColor: AppColors.orange, foregroundColor: Colors.white),
-                          onPressed: () => Navigator.push(context, animatedRoute(ChatConversationScreen(otherUserId: seller.id, otherUserName: seller.fullName ?? 'التاجر', otherUserPhone: seller.phone))),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: AppColors.orange,
+                            foregroundColor: Colors.white,
+                          ),
+                          onPressed: () => Navigator.push(
+                            context,
+                            animatedRoute(ChatConversationScreen(
+                              otherUserId: seller.id,
+                              otherUserName: seller.fullName ?? 'التاجر',
+                              otherUserPhone: seller.phone,
+                            )),
+                          ),
                           icon: const Icon(Icons.chat, size: 18),
                           label: const Text('مراسلة التاجر'),
                         ),
                       ),
-                  ],
-                ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: Colors.amber,
+                            side: const BorderSide(color: Colors.amber),
+                          ),
+                          onPressed: _openRateDialog,
+                          icon: const Icon(Icons.star_rounded, size: 18),
+                          label: Text(
+                            _myExistingRating != null
+                                ? 'تعديل تقييمك'
+                                : 'قيّم التاجر',
+                            style: const TextStyle(fontWeight: FontWeight.bold),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
               ],
             ),
           ),
           const SizedBox(height: 18),
-          const Text('جميع منشورات التاجر', style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
+          const Text('تقييمات الزبائن',
+              style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 8),
+          StreamBuilder<List<Map<String, dynamic>>>(
+            stream: _db
+                .from('merchant_ratings')
+                .stream(primaryKey: ['id'])
+                .eq('merchant_id', seller.id)
+                .order('created_at', ascending: false),
+            builder: (_, snap) {
+              final reviews = snap.data ?? [];
+              if (reviews.isEmpty) {
+                return Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: AppColors.surface,
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(color: AppColors.border),
+                  ),
+                  child: const Text(
+                    'لا توجد تقييمات لهذا التاجر بعد. كن أول من يقيّم تجربته!',
+                    style: TextStyle(color: AppColors.textSecondary, fontSize: 13),
+                  ),
+                );
+              }
+              return Column(
+                children: reviews.take(5).map((r) {
+                  final stars = (r['rating'] as num?)?.toDouble() ?? 0.0;
+                  final comment = (r['comment'] as String?)?.trim() ?? '';
+                  final reviewerName =
+                      _reviewerNames[r['reviewer_id']] ?? 'زبون غيارك';
+                  return Container(
+                    margin: const EdgeInsets.only(bottom: 8),
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: AppColors.surface,
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(color: AppColors.border),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text(
+                              reviewerName,
+                              style: const TextStyle(
+                                  fontWeight: FontWeight.bold, fontSize: 13),
+                            ),
+                            _starsRow(stars, size: 15),
+                          ],
+                        ),
+                        if (comment.isNotEmpty) ...[
+                          const SizedBox(height: 6),
+                          Text(comment, style: const TextStyle(fontSize: 12.5)),
+                        ],
+                      ],
+                    ),
+                  );
+                }).toList(),
+              );
+            },
+          ),
+          const SizedBox(height: 18),
+          const Text('جميع منشورات التاجر',
+              style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
           const SizedBox(height: 10),
           StreamBuilder<List<Map<String, dynamic>>>(
-            stream: db.from('products').stream(primaryKey: ['id']).eq('user_id', seller.id).order('created_at', ascending: false),
+            stream: _db
+                .from('products')
+                .stream(primaryKey: ['id'])
+                .eq('user_id', seller.id)
+                .order('created_at', ascending: false),
             builder: (_, snap) {
-              if (!snap.hasData) {
-                return const ShimmerProductsLoading();
-              }
-              final items = snap.data!.where((p) => p['is_hidden'] != true && p['is_sold'] != true).toList();
+              if (!snap.hasData) return const ShimmerProductsLoading();
+              final items = snap.data!
+                  .where((p) => p['is_hidden'] != true && p['is_sold'] != true)
+                  .toList();
               if (items.isEmpty) {
-                return const Padding(padding: EdgeInsets.all(24), child: Center(child: Text('لا توجد منشورات أخرى حالياً')));
+                return const Padding(
+                  padding: EdgeInsets.all(24),
+                  child: Center(child: Text('لا توجد منشورات أخرى حالياً')),
+                );
               }
               return GridView.builder(
                 shrinkWrap: true,
                 physics: const NeverScrollableScrollPhysics(),
-                gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(maxCrossAxisExtent: 230, mainAxisSpacing: 12, crossAxisSpacing: 12, childAspectRatio: 0.74),
+                gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+                  maxCrossAxisExtent: 230,
+                  mainAxisSpacing: 12,
+                  crossAxisSpacing: 12,
+                  childAspectRatio: 0.72,
+                ),
                 itemCount: items.length,
                 itemBuilder: (_, i) {
                   final p = items[i];
@@ -894,44 +1811,74 @@ class MerchantPublicProfileScreen extends StatelessWidget {
                   final qty = (p['quantity'] as num?)?.toInt() ?? 1;
                   final tag = 'seller_${p['id']}';
                   return BounceTap(
-                    onTap: () => Navigator.push(context, animatedRoute(ProductDetailsScreen(product: p, viewerProfile: viewerProfile, heroTag: tag))),
+                    onTap: () => Navigator.push(
+                      context,
+                      animatedRoute(ProductDetailsScreen(
+                        product: p,
+                        viewerProfile: widget.viewerProfile,
+                        heroTag: tag,
+                      )),
+                    ),
                     child: Container(
                       padding: const EdgeInsets.all(10),
-                      decoration: BoxDecoration(color: AppColors.surface, borderRadius: BorderRadius.circular(16), border: Border.all(color: AppColors.border)),
+                      decoration: BoxDecoration(
+                        color: AppColors.surface,
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(color: AppColors.border),
+                      ),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Stack(
-                            children: [
-                              Hero(
-                                tag: tag,
-                                child: Container(height: 95, width: double.infinity, decoration: BoxDecoration(color: AppColors.placeholder, borderRadius: BorderRadius.circular(12), image: imgs.isNotEmpty ? DecorationImage(image: NetworkImage(imgs.first), fit: BoxFit.cover) : null), child: imgs.isEmpty ? const Icon(Icons.settings_outlined, color: AppColors.textSecondary) : null),
+                          Hero(
+                            tag: tag,
+                            child: Container(
+                              height: 92,
+                              width: double.infinity,
+                              decoration: BoxDecoration(
+                                color: AppColors.placeholder,
+                                borderRadius: BorderRadius.circular(12),
+                                image: imgs.isNotEmpty
+                                    ? DecorationImage(
+                                        image: NetworkImage(imgs.first),
+                                        fit: BoxFit.cover,
+                                      )
+                                    : null,
                               ),
-                              if (seller.isTrustedMerchant)
-                                Positioned(
-                                  top: 6,
-                                  left: 6,
-                                  child: Container(
-                                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
-                                    decoration: BoxDecoration(color: Colors.white.withValues(alpha: 0.94), borderRadius: BorderRadius.circular(12)),
-                                    child: const Row(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        Icon(Icons.verified, color: Colors.blue, size: 12),
-                                        SizedBox(width: 3),
-                                        Text('موثوق', style: TextStyle(color: Colors.blue, fontSize: 9, fontWeight: FontWeight.bold)),
-                                      ],
-                                    ),
-                                  ),
-                                ),
-                            ],
+                              child: imgs.isEmpty
+                                  ? const Icon(Icons.settings_outlined,
+                                      color: AppColors.textSecondary)
+                                  : null,
+                            ),
                           ),
                           const SizedBox(height: 8),
-                          Text(p['title'] ?? '', maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-                          Text('${p['car_name']} · ${p['car_model']}', maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: AppColors.textSecondary, fontSize: 11)),
-                          Text('الكمية: $qty', style: const TextStyle(color: AppColors.success, fontSize: 10, fontWeight: FontWeight.bold)),
+                          Text(
+                            p['title'] ?? '',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                                fontWeight: FontWeight.bold, fontSize: 13),
+                          ),
+                          Text(
+                            '${p['car_name']} · ${p['car_model']}',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                                color: AppColors.textSecondary, fontSize: 11),
+                          ),
+                          Text(
+                            'الكمية: $qty',
+                            style: const TextStyle(
+                                color: AppColors.textSecondary, fontSize: 10.5),
+                          ),
                           const Spacer(),
-                          Text('${p['price']} د.أ', style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 14, color: AppColors.orange)),
+                          Text(
+                            '${p['price']} د.أ',
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w800,
+                              fontSize: 14,
+                              color: AppColors.orange,
+                            ),
+                          ),
                         ],
                       ),
                     ),
