@@ -1005,23 +1005,84 @@ class _WorkshopEmergencyDashboardState extends State<WorkshopEmergencyDashboard>
                 ),
               ),
             ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                _walletStatCard('قبل العمولة', gross, Icons.payments_outlined, AppColors.navy),
+                const SizedBox(width: 8),
+                _walletStatCard('العمولة المقتطعة', comm, Icons.percent, AppColors.orange),
+                const SizedBox(width: 8),
+                _walletStatCard('الصافي', net, Icons.account_balance_wallet_outlined, AppColors.success),
+              ],
+            ),
+            const SizedBox(height: 14),
+            InteractiveAnimatedChart(
+              title: 'التحليل المالي لمحفظة الورشة (د.أ)',
+              unit: 'د.أ',
+              data: [
+                (label: 'قبل العمولة', value: gross),
+                (label: 'العمولة', value: comm),
+                (label: 'الصافي', value: net),
+              ],
+            ),
             const SizedBox(height: 16),
-            ...txs.map((t) => Card(
-                  child: ListTile(
-                    title: Text('${t.transactionType} · ${t.paymentMethod}'),
-                    subtitle: Text(
-                      'قبل العمولة: ${t.grossAmount.toStringAsFixed(2)} | العمولة: -${t.commissionAmount.toStringAsFixed(2)}',
+            if (txs.isEmpty)
+              const Card(
+                child: Padding(
+                  padding: EdgeInsets.all(16),
+                  child: Center(child: Text('لا توجد حركات مالية ضمن هذه الفترة')),
+                ),
+              )
+            else
+              ...txs.map((t) => Card(
+                    child: ListTile(
+                      title: Text('${t.transactionType} · ${t.paymentMethod}'),
+                      subtitle: Text(
+                        'قبل العمولة: ${t.grossAmount.toStringAsFixed(2)} | العمولة: -${t.commissionAmount.toStringAsFixed(2)}',
+                      ),
+                      trailing: Text(
+                        '+${t.netAmount.toStringAsFixed(2)} د.أ',
+                        style: const TextStyle(
+                            color: AppColors.success, fontWeight: FontWeight.bold, fontSize: 15),
+                      ),
                     ),
-                    trailing: Text(
-                      '+${t.netAmount.toStringAsFixed(2)} د.أ',
-                      style: const TextStyle(
-                          color: AppColors.success, fontWeight: FontWeight.bold, fontSize: 15),
-                    ),
-                  ),
-                )),
+                  )),
           ],
         );
       },
+    );
+  }
+
+  Widget _walletStatCard(String label, double amount, IconData icon, Color color) {
+    return Expanded(
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
+        decoration: BoxDecoration(
+          color: AppColors.surface,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: AppColors.border),
+        ),
+        child: Column(
+          children: [
+            PulseBlink(child: Icon(icon, color: color, size: 20)),
+            const SizedBox(height: 6),
+            Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(color: AppColors.textSecondary, fontSize: 10),
+            ),
+            const SizedBox(height: 4),
+            FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Text(
+                '${amount.toStringAsFixed(2)} د.أ',
+                style: TextStyle(fontWeight: FontWeight.w800, fontSize: 14, color: color),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

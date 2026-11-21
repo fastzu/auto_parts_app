@@ -506,22 +506,83 @@ class _TowingDashboardScreenState extends State<TowingDashboardScreen> {
                 ],
               ),
             ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                _walletStatCard('قبل العمولة', gross, Icons.payments_outlined, AppColors.navy),
+                const SizedBox(width: 8),
+                _walletStatCard('العمولة المقتطعة', comm, Icons.percent, AppColors.orange),
+                const SizedBox(width: 8),
+                _walletStatCard('الصافي', net, Icons.account_balance_wallet_outlined, AppColors.success),
+              ],
+            ),
             const SizedBox(height: 14),
-            ...txs.map((t) => Card(
-                  child: ListTile(
-                    title: Text('رحلة ونش #${t.referenceId?.substring(0, 6) ?? ""}'),
-                    subtitle: Text(
-                      'قبل العمولة: ${t.grossAmount} · العمولة: -${t.commissionAmount.toStringAsFixed(2)}',
+            InteractiveAnimatedChart(
+              title: 'التحليل المالي لمحفظة الونش (د.أ)',
+              unit: 'د.أ',
+              data: [
+                (label: 'قبل العمولة', value: gross),
+                (label: 'العمولة', value: comm),
+                (label: 'الصافي', value: net),
+              ],
+            ),
+            const SizedBox(height: 14),
+            if (txs.isEmpty)
+              const Card(
+                child: Padding(
+                  padding: EdgeInsets.all(16),
+                  child: Center(child: Text('لا توجد حركات مالية ضمن هذه الفترة')),
+                ),
+              )
+            else
+              ...txs.map((t) => Card(
+                    child: ListTile(
+                      title: Text('رحلة ونش #${t.referenceId?.substring(0, 6) ?? ""}'),
+                      subtitle: Text(
+                        'قبل العمولة: ${t.grossAmount} · العمولة: -${t.commissionAmount.toStringAsFixed(2)}',
+                      ),
+                      trailing: Text(
+                        '+${t.netAmount.toStringAsFixed(2)} د.أ',
+                        style: const TextStyle(color: AppColors.success, fontWeight: FontWeight.bold),
+                      ),
                     ),
-                    trailing: Text(
-                      '+${t.netAmount.toStringAsFixed(2)} د.أ',
-                      style: const TextStyle(color: AppColors.success, fontWeight: FontWeight.bold),
-                    ),
-                  ),
-                )),
+                  )),
           ],
         );
       },
+    );
+  }
+
+  Widget _walletStatCard(String label, double amount, IconData icon, Color color) {
+    return Expanded(
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
+        decoration: BoxDecoration(
+          color: AppColors.surface,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: AppColors.border),
+        ),
+        child: Column(
+          children: [
+            PulseBlink(child: Icon(icon, color: color, size: 20)),
+            const SizedBox(height: 6),
+            Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(color: AppColors.textSecondary, fontSize: 10),
+            ),
+            const SizedBox(height: 4),
+            FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Text(
+                '${amount.toStringAsFixed(2)} د.أ',
+                style: TextStyle(fontWeight: FontWeight.w800, fontSize: 14, color: color),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

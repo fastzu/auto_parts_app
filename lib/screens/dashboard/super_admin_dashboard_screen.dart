@@ -20,7 +20,8 @@ class SuperAdminDashboardScreen extends StatefulWidget {
   });
 
   @override
-  State<SuperAdminDashboardScreen> createState() => _SuperAdminDashboardScreenState();
+  State<SuperAdminDashboardScreen> createState() =>
+      _SuperAdminDashboardScreenState();
 }
 
 class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
@@ -61,7 +62,8 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
       return true;
     }
     final range = DateRangeFilterBar.resolveRange(_period, _customRange);
-    return !dt.isBefore(range.start) && !dt.isAfter(range.end.add(const Duration(days: 1)));
+    return !dt.isBefore(range.start) &&
+        !dt.isAfter(range.end.add(const Duration(days: 1)));
   }
 
   void _goHome({bool closeDrawerFirst = false}) {
@@ -85,7 +87,9 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
   Future<void> _loadSettings() async {
     try {
       final rows = await _db.from('system_settings').select();
-      final map = {for (final r in rows) r['key'] as String: r['value'] as String};
+      final map = {
+        for (final r in rows) r['key'] as String: r['value'] as String
+      };
       if (!mounted) {
         return;
       }
@@ -122,23 +126,31 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
   Future<void> _saveSettings() async {
     setState(() => _saving = true);
     try {
-      final newDefaultLimit = int.tryParse(_defaultMaxPostsCtrl.text.trim()) ?? 5;
+      final newDefaultLimit =
+          int.tryParse(_defaultMaxPostsCtrl.text.trim()) ?? 5;
       final updates = [
         {'key': 'winch_price_per_km', 'value': _kmPriceCtrl.text.trim()},
         {'key': 'min_withdrawal_amount', 'value': _minWithdrawCtrl.text.trim()},
         {'key': 'cliq_alias', 'value': _cliqAliasCtrl.text.trim()},
-        {'key': 'default_parts_commission', 'value': _defaultCommCtrl.text.trim()},
+        {
+          'key': 'default_parts_commission',
+          'value': _defaultCommCtrl.text.trim()
+        },
         {'key': 'enable_post_limits', 'value': _postLimitsEnabled.toString()},
         {'key': 'default_max_posts', 'value': '$newDefaultLimit'},
         {'key': 'maintenance_mode', 'value': _maintenance.toString()},
-        {'key': 'enable_payments', 'value': EnvConfig.paymentsEnabled.value.toString()},
-        {'key': 'enable_winch', 'value': EnvConfig.winchEnabled.value.toString()},
+        {
+          'key': 'enable_payments',
+          'value': EnvConfig.paymentsEnabled.value.toString()
+        },
+        {
+          'key': 'enable_winch',
+          'value': EnvConfig.winchEnabled.value.toString()
+        },
       ];
       await _db.from('system_settings').upsert(updates);
-      await _db
-          .from('customers')
-          .update({'max_posts_limit': newDefaultLimit})
-          .eq('subscription_plan', 'free');
+      await _db.from('customers').update(
+          {'max_posts_limit': newDefaultLimit}).eq('subscription_plan', 'free');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -150,7 +162,9 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('خطأ أثناء الحفظ: $e'), backgroundColor: Colors.red),
+          SnackBar(
+              content: Text('خطأ أثناء الحفظ: $e'),
+              backgroundColor: Colors.red),
         );
       }
     } finally {
@@ -163,7 +177,8 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
-      listenable: Listenable.merge([EnvConfig.paymentsEnabled, EnvConfig.winchEnabled]),
+      listenable:
+          Listenable.merge([EnvConfig.paymentsEnabled, EnvConfig.winchEnabled]),
       builder: (context, _) {
         final showPayments = EnvConfig.paymentsEnabled.value;
         final showWinch = EnvConfig.winchEnabled.value;
@@ -176,12 +191,18 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
           (id: 4, icon: Icons.inventory_2, title: 'جميع منشورات القطع'),
           (id: 5, icon: Icons.car_crash, title: 'مراقبة الطوارئ والمواعيد'),
           if (showPayments)
-            (id: 6, icon: Icons.account_balance, title: 'الاشتراكات و CliQ والمالية'),
+            (
+              id: 6,
+              icon: Icons.account_balance,
+              title: 'الاشتراكات و CliQ والمالية'
+            ),
         ];
         if (!showPayments && _tab == 6) {
           _tab = 0;
         }
-        final currentTitle = menu.firstWhere((m) => m.id == _tab, orElse: () => menu.first).title;
+        final currentTitle = menu
+            .firstWhere((m) => m.id == _tab, orElse: () => menu.first)
+            .title;
 
         return Scaffold(
           appBar: isWide
@@ -198,7 +219,8 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
                     ),
                   ),
                   title: Text(currentTitle,
-                      style: const TextStyle(color: Colors.white, fontSize: 16)),
+                      style:
+                          const TextStyle(color: Colors.white, fontSize: 16)),
                   actions: [
                     IconButton(
                       tooltip: 'العودة للرئيسية',
@@ -246,7 +268,8 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
     );
   }
 
-  Widget _sidebar(List<({int id, IconData icon, String title})> menu, bool isDrawer) {
+  Widget _sidebar(
+      List<({int id, IconData icon, String title})> menu, bool isDrawer) {
     return Container(
       color: AppColors.navy,
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 24),
@@ -262,7 +285,9 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
                   SizedBox(width: 8),
                   Text('لوحة غيارك',
                       style: TextStyle(
-                          color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+                          color: Colors.white,
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold)),
                 ],
               ),
               IconButton(
@@ -296,15 +321,18 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
                   padding: const EdgeInsets.only(bottom: 6),
                   child: ListTile(
                     dense: true,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12)),
                     tileColor: active ? AppColors.orange : Colors.transparent,
                     leading: Icon(item.icon,
-                        color: active ? Colors.white : Colors.white70, size: 20),
+                        color: active ? Colors.white : Colors.white70,
+                        size: 20),
                     title: Text(
                       item.title,
                       style: TextStyle(
                         color: active ? Colors.white : Colors.white70,
-                        fontWeight: active ? FontWeight.bold : FontWeight.normal,
+                        fontWeight:
+                            active ? FontWeight.bold : FontWeight.normal,
                         fontSize: 13,
                       ),
                     ),
@@ -331,86 +359,162 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
         stream: _db.from('mechanic_requests').stream(primaryKey: ['id']),
         builder: (_, reqSnap) => StreamBuilder<List<Map<String, dynamic>>>(
           stream: _db.from('workshop_appointments').stream(primaryKey: ['id']),
-          builder: (_, apptSnap) => FutureBuilder<List<Map<String, dynamic>>>(
-            future: _db.from('customers').select('id, role, created_at'),
-            builder: (_, userSnap) {
-              final users =
-                  (userSnap.data ?? []).where((u) => _inPeriod(u['created_at'] as String?)).toList();
-              final prods =
-                  (prodSnap.data ?? []).where((p) => _inPeriod(p['created_at'] as String?)).toList();
-              final reqs = (reqSnap.data ?? [])
-                  .where((r) =>
-                      (showWinch || r['service_type'] != 'winch') &&
-                      _inPeriod(r['created_at'] as String?))
-                  .toList();
-              final appts =
-                  (apptSnap.data ?? []).where((a) => _inPeriod(a['created_at'] as String?)).toList();
+          builder: (_, apptSnap) => StreamBuilder<List<Map<String, dynamic>>>(
+            stream: _db.from('wallet_transactions').stream(primaryKey: ['id']),
+            builder: (_, txSnap) => FutureBuilder<List<Map<String, dynamic>>>(
+              future: _db.from('customers').select('id, role, created_at'),
+              builder: (_, userSnap) {
+                final users = (userSnap.data ?? [])
+                    .where((u) => _inPeriod(u['created_at'] as String?))
+                    .toList();
+                final prods = (prodSnap.data ?? [])
+                    .where((p) => _inPeriod(p['created_at'] as String?))
+                    .toList();
+                final reqs = (reqSnap.data ?? [])
+                    .where((r) =>
+                        (showWinch || r['service_type'] != 'winch') &&
+                        _inPeriod(r['created_at'] as String?))
+                    .toList();
+                final appts = (apptSnap.data ?? [])
+                    .where((a) => _inPeriod(a['created_at'] as String?))
+                    .toList();
+                final txs = (txSnap.data ?? [])
+                    .where((t) => _inPeriod(t['created_at'] as String?))
+                    .map(DbWalletTransaction.fromMap)
+                    .toList();
 
-              final totalViews =
-                  prods.fold<int>(0, (s, p) => s + ((p['views_count'] as int?) ?? 0));
-              final totalClicks =
-                  prods.fold<int>(0, (s, p) => s + ((p['clicks_count'] as int?) ?? 0));
-              final workshopsCount = users.where((u) => u['role'] == 'mechanic').length;
-              final merchantsCount = users.where((u) => u['role'] == 'merchant').length;
+                final totalViews = prods.fold<int>(
+                    0, (s, p) => s + ((p['views_count'] as int?) ?? 0));
+                final totalClicks = prods.fold<int>(
+                    0, (s, p) => s + ((p['clicks_count'] as int?) ?? 0));
+                final workshopsCount =
+                    users.where((u) => u['role'] == 'mechanic').length;
+                final merchantsCount =
+                    users.where((u) => u['role'] == 'merchant').length;
+                final totalGross = txs.fold(0.0, (s, t) => s + t.grossAmount);
+                final totalComm =
+                    txs.fold(0.0, (s, t) => s + t.commissionAmount);
 
-              final cards = [
-                (title: 'إجمالي الحسابات', val: users.length, icon: Icons.people),
-                (title: 'الورش والميكانيكيين', val: workshopsCount, icon: Icons.build),
-                (title: 'تجار قطع الغيار', val: merchantsCount, icon: Icons.storefront),
-                (title: 'منشورات القطع', val: prods.length, icon: Icons.inventory_2),
-                (title: 'إجمالي المشاهدات', val: totalViews, icon: Icons.visibility),
-                (title: 'إجمالي النقرات', val: totalClicks, icon: Icons.touch_app),
-                (title: 'طلبات الطوارئ', val: reqs.length, icon: Icons.car_crash),
-                (title: 'مواعيد الورش', val: appts.length, icon: Icons.event_available),
-              ];
-
-              final chartData = [
-                (label: 'حسابات', value: users.length.toDouble()),
-                (label: 'ورش', value: workshopsCount.toDouble()),
-                (label: 'تجار', value: merchantsCount.toDouble()),
-                (label: 'منشورات', value: prods.length.toDouble()),
-                (label: 'طوارئ', value: reqs.length.toDouble()),
-                (label: 'مواعيد', value: appts.length.toDouble()),
-              ];
-
-              return ListView(
-                padding: const EdgeInsets.all(16),
-                children: [
-                  const Text('الرؤية الشاملة للمنصة',
-                      style: TextStyle(fontSize: 21, fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 8),
-                  DateRangeFilterBar(
-                    period: _period,
-                    customRange: _customRange,
-                    onChanged: (p, r) => setState(() {
-                      _period = p;
-                      _customRange = r;
-                    }),
+                final cards = [
+                  (
+                    title: 'إجمالي الحسابات',
+                    val: users.length,
+                    icon: Icons.people
                   ),
-                  const SizedBox(height: 14),
-                  GridView.builder(
-                    shrinkWrap: true,
-                    physics: const NeverScrollableScrollPhysics(),
-                    itemCount: cards.length,
-                    gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                      crossAxisCount: isWide ? 4 : 2,
-                      mainAxisSpacing: 12,
-                      crossAxisSpacing: 12,
-                      childAspectRatio: isWide ? 1.45 : 1.15,
+                  (
+                    title: 'الورش والميكانيكيين',
+                    val: workshopsCount,
+                    icon: Icons.build
+                  ),
+                  (
+                    title: 'تجار قطع الغيار',
+                    val: merchantsCount,
+                    icon: Icons.storefront
+                  ),
+                  (
+                    title: 'منشورات القطع',
+                    val: prods.length,
+                    icon: Icons.inventory_2
+                  ),
+                  (
+                    title: 'إجمالي المشاهدات',
+                    val: totalViews,
+                    icon: Icons.visibility
+                  ),
+                  (
+                    title: 'إجمالي النقرات',
+                    val: totalClicks,
+                    icon: Icons.touch_app
+                  ),
+                  (
+                    title: 'طلبات الطوارئ',
+                    val: reqs.length,
+                    icon: Icons.car_crash
+                  ),
+                  (
+                    title: 'مواعيد الورش',
+                    val: appts.length,
+                    icon: Icons.event_available
+                  ),
+                  if (showPayments) ...[
+                    (
+                      title: 'إجمالي المبيعات (د.أ)',
+                      val: totalGross.toInt(),
+                      icon: Icons.payments
                     ),
-                    itemBuilder: (_, i) => FadeSlideIn(
-                      index: i,
-                      child: _kpi(cards[i].title, cards[i].val, cards[i].icon),
+                    (
+                      title: 'عمولات المنصة (د.أ)',
+                      val: totalComm.toInt(),
+                      icon: Icons.trending_up
                     ),
-                  ),
-                  const SizedBox(height: 16),
-                  InteractiveAnimatedChart(
-                    title: 'تحليل نشاط المنصة التفاعلي (مرّر الماوس أو اضغط)',
-                    data: chartData,
-                  ),
-                ],
-              );
-            },
+                  ],
+                ];
+
+                final chartData = [
+                  (label: 'حسابات', value: users.length.toDouble()),
+                  (label: 'ورش', value: workshopsCount.toDouble()),
+                  (label: 'تجار', value: merchantsCount.toDouble()),
+                  (label: 'منشورات', value: prods.length.toDouble()),
+                  (label: 'طوارئ', value: reqs.length.toDouble()),
+                  (label: 'مواعيد', value: appts.length.toDouble()),
+                ];
+
+                return ListView(
+                  padding: const EdgeInsets.all(16),
+                  children: [
+                    const Text('الرؤية الشاملة للمنصة',
+                        style: TextStyle(
+                            fontSize: 21, fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 8),
+                    DateRangeFilterBar(
+                      period: _period,
+                      customRange: _customRange,
+                      onChanged: (p, r) => setState(() {
+                        _period = p;
+                        _customRange = r;
+                      }),
+                    ),
+                    const SizedBox(height: 14),
+                    GridView.builder(
+                      shrinkWrap: true,
+                      physics: const NeverScrollableScrollPhysics(),
+                      itemCount: cards.length,
+                      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                        crossAxisCount: isWide ? 4 : 2,
+                        mainAxisSpacing: 12,
+                        crossAxisSpacing: 12,
+                        childAspectRatio: isWide ? 1.45 : 1.15,
+                      ),
+                      itemBuilder: (_, i) => FadeSlideIn(
+                        index: i,
+                        child:
+                            _kpi(cards[i].title, cards[i].val, cards[i].icon),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    InteractiveAnimatedChart(
+                      title: 'تحليل نشاط المنصة التفاعلي',
+                      data: chartData,
+                    ),
+                    if (showPayments) ...[
+                      const SizedBox(height: 16),
+                      InteractiveAnimatedChart(
+                        title: 'التحليل المالي للمنصة (د.أ)',
+                        unit: 'د.أ',
+                        data: [
+                          (label: 'المبيعات', value: totalGross),
+                          (label: 'العمولات', value: totalComm),
+                          (
+                            label: 'صافي المزودين',
+                            value: (totalGross - totalComm).clamp(0, totalGross)
+                          ),
+                        ],
+                      ),
+                    ],
+                  ],
+                );
+              },
+            ),
           ),
         ),
       ),
@@ -419,7 +523,8 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
 
   Widget _accountsControlView(bool showPayments, bool showWinch) {
     return FutureBuilder<List<Map<String, dynamic>>>(
-      future: _db.from('customers').select().order('created_at', ascending: false),
+      future:
+          _db.from('customers').select().order('created_at', ascending: false),
       builder: (_, snap) {
         if (!snap.hasData) {
           return const Center(child: CircularProgressIndicator());
@@ -471,24 +576,29 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
                           Expanded(
                             child: Text(
                               '${m.fullName ?? "بدون اسم"} (@${m.username ?? "-"})',
-                              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                              style: const TextStyle(
+                                  fontWeight: FontWeight.bold, fontSize: 15),
                             ),
                           ),
                           if (m.isTrustedMerchant)
-                            const Icon(Icons.verified, color: Colors.blue, size: 20),
+                            const Icon(Icons.verified,
+                                color: Colors.blue, size: 20),
                           const SizedBox(width: 6),
                           Chip(label: Text(m.role)),
                         ],
                       ),
                       Text(
                         'الإيميل: ${m.email ?? "-"} | الهاتف: ${m.phone ?? "-"}',
-                        style: const TextStyle(color: AppColors.textSecondary, fontSize: 12),
+                        style: const TextStyle(
+                            color: AppColors.textSecondary, fontSize: 12),
                       ),
                       const SizedBox(height: 4),
                       Text(
                         'المنشورات المستخدمة: $postsUsed / الحد الأقصى: $postsLimit منشور',
                         style: const TextStyle(
-                            color: AppColors.orange, fontWeight: FontWeight.bold, fontSize: 12),
+                            color: AppColors.orange,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 12),
                       ),
                       const Divider(),
                       Wrap(
@@ -499,14 +609,16 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
                           Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              const Text('تاجر موثوق:', style: TextStyle(fontSize: 12)),
+                              const Text('تاجر موثوق:',
+                                  style: TextStyle(fontSize: 12)),
                               Switch(
                                 value: m.isTrustedMerchant,
                                 activeTrackColor: AppColors.orange,
                                 onChanged: (val) async {
                                   await _db
                                       .from('customers')
-                                      .update({'is_trusted_merchant': val}).eq('id', m.id);
+                                      .update({'is_trusted_merchant': val}).eq(
+                                          'id', m.id);
                                   if (mounted) {
                                     setState(() {});
                                   }
@@ -515,7 +627,8 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
                             ],
                           ),
                           OutlinedButton.icon(
-                            onPressed: () => _editAccountDialog(raw, showPayments, showWinch),
+                            onPressed: () => _editAccountDialog(
+                                raw, showPayments, showWinch),
                             icon: const Icon(Icons.edit, size: 16),
                             label: const Text('تعديل الدور وحد المنشورات'),
                           ),
@@ -540,7 +653,8 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
         label: Text(label),
         selected: active,
         selectedColor: AppColors.navy,
-        labelStyle: TextStyle(color: active ? Colors.white : AppColors.textPrimary),
+        labelStyle:
+            TextStyle(color: active ? Colors.white : AppColors.textPrimary),
         onSelected: (_) => setState(() => _roleFilter = key),
       ),
     );
@@ -549,8 +663,10 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
   Future<void> _editAccountDialog(
       Map<String, dynamic> raw, bool showPayments, bool showWinch) async {
     String role = (raw['role'] as String?) ?? 'user';
-    final limitCtrl = TextEditingController(text: '${raw['max_posts_limit'] ?? 5}');
-    final commCtrl = TextEditingController(text: '${raw['commission_rate'] ?? 0.15}');
+    final limitCtrl =
+        TextEditingController(text: '${raw['max_posts_limit'] ?? 5}');
+    final commCtrl =
+        TextEditingController(text: '${raw['commission_rate'] ?? 0.15}');
 
     await showDialog(
       context: context,
@@ -564,12 +680,18 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
                 initialValue: role,
                 decoration: const InputDecoration(labelText: 'الدور (Role)'),
                 items: [
-                  const DropdownMenuItem(value: 'user', child: Text('مستخدم عادي (user)')),
-                  const DropdownMenuItem(value: 'merchant', child: Text('تاجر قطع (merchant)')),
-                  const DropdownMenuItem(value: 'mechanic', child: Text('ميكانيكي/ورشة (mechanic)')),
+                  const DropdownMenuItem(
+                      value: 'user', child: Text('مستخدم عادي (user)')),
+                  const DropdownMenuItem(
+                      value: 'merchant', child: Text('تاجر قطع (merchant)')),
+                  const DropdownMenuItem(
+                      value: 'mechanic',
+                      child: Text('ميكانيكي/ورشة (mechanic)')),
                   if (showWinch)
-                    const DropdownMenuItem(value: 'towing', child: Text('صاحب ونش (towing)')),
-                  const DropdownMenuItem(value: 'admin', child: Text('مدير نظام (admin)')),
+                    const DropdownMenuItem(
+                        value: 'towing', child: Text('صاحب ونش (towing)')),
+                  const DropdownMenuItem(
+                      value: 'admin', child: Text('مدير نظام (admin)')),
                 ],
                 onChanged: (v) {
                   if (v != null) {
@@ -581,21 +703,24 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
               TextField(
                 controller: limitCtrl,
                 keyboardType: TextInputType.number,
-                decoration:
-                    const InputDecoration(labelText: 'عدد المنشورات المسموح لهذا الحساب'),
+                decoration: const InputDecoration(
+                    labelText: 'عدد المنشورات المسموح لهذا الحساب'),
               ),
               if (showPayments) ...[
                 const SizedBox(height: 10),
                 TextField(
                   controller: commCtrl,
                   keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(labelText: 'نسبة العمولة (مثال: 0.10 = 10%)'),
+                  decoration: const InputDecoration(
+                      labelText: 'نسبة العمولة (مثال: 0.10 = 10%)'),
                 ),
               ],
             ],
           ),
           actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('إلغاء')),
+            TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('إلغاء')),
             ElevatedButton(
               style: ElevatedButton.styleFrom(
                 backgroundColor: AppColors.orange,
@@ -606,7 +731,8 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
                   'role': role,
                   'is_admin': role == 'admin',
                   'max_posts_limit': int.tryParse(limitCtrl.text) ?? 5,
-                  if (showPayments) 'commission_rate': double.tryParse(commCtrl.text) ?? 0.15,
+                  if (showPayments)
+                    'commission_rate': double.tryParse(commCtrl.text) ?? 0.15,
                 }).eq('id', raw['id']);
                 if (ctx.mounted) {
                   Navigator.pop(ctx);
@@ -689,7 +815,8 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
             controller: _kmPriceCtrl,
             keyboardType: TextInputType.number,
             decoration: const InputDecoration(
-                labelText: 'تسعيرة الونش لكل كيلومتر (د.أ)', border: OutlineInputBorder()),
+                labelText: 'تسعيرة الونش لكل كيلومتر (د.أ)',
+                border: OutlineInputBorder()),
           ),
           const SizedBox(height: 12),
         ],
@@ -698,14 +825,16 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
             controller: _defaultCommCtrl,
             keyboardType: TextInputType.number,
             decoration: const InputDecoration(
-                labelText: 'نسبة العمولة الافتراضية (0.15 = 15%)', border: OutlineInputBorder()),
+                labelText: 'نسبة العمولة الافتراضية (0.15 = 15%)',
+                border: OutlineInputBorder()),
           ),
           const SizedBox(height: 12),
           TextField(
             controller: _minWithdrawCtrl,
             keyboardType: TextInputType.number,
             decoration: const InputDecoration(
-                labelText: 'الحد الأدنى لسحب الأرباح (د.أ)', border: OutlineInputBorder()),
+                labelText: 'الحد الأدنى لسحب الأرباح (د.أ)',
+                border: OutlineInputBorder()),
           ),
           const SizedBox(height: 12),
           TextField(
@@ -731,7 +860,8 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
           onPressed: _saving ? null : _saveSettings,
           child: _saving
               ? const CircularProgressIndicator(color: Colors.white)
-              : const Text('حفظ جميع الإعدادات', style: TextStyle(fontWeight: FontWeight.bold)),
+              : const Text('حفظ جميع الإعدادات',
+                  style: TextStyle(fontWeight: FontWeight.bold)),
         ),
       ],
     );
@@ -739,12 +869,16 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
 
   Widget _allProductsControlView() {
     return StreamBuilder<List<Map<String, dynamic>>>(
-      stream: _db.from('products').stream(primaryKey: ['id']).order('created_at', ascending: false),
+      stream: _db
+          .from('products')
+          .stream(primaryKey: ['id']).order('created_at', ascending: false),
       builder: (_, snap) {
         if (!snap.hasData) {
           return const Center(child: CircularProgressIndicator());
         }
-        final prods = snap.data!.where((p) => _inPeriod(p['created_at'] as String?)).toList();
+        final prods = snap.data!
+            .where((p) => _inPeriod(p['created_at'] as String?))
+            .toList();
         if (prods.isEmpty) {
           return const Center(child: Text('لا توجد منشورات ضمن هذه الفترة'));
         }
@@ -765,26 +899,31 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
                     color: AppColors.placeholder,
                     borderRadius: BorderRadius.circular(10),
                     image: imgs.isNotEmpty
-                        ? DecorationImage(image: NetworkImage(imgs.first), fit: BoxFit.cover)
+                        ? DecorationImage(
+                            image: NetworkImage(imgs.first), fit: BoxFit.cover)
                         : null,
                   ),
                   child: imgs.isEmpty ? const Icon(Icons.settings) : null,
                 ),
-                title: Text(p['title'] ?? '', style: const TextStyle(fontWeight: FontWeight.bold)),
+                title: Text(p['title'] ?? '',
+                    style: const TextStyle(fontWeight: FontWeight.bold)),
                 subtitle: Text(
                     '${p['car_name']} (${p['car_model']}) · ${p['price']} د.أ · مشاهدات: ${p['views_count'] ?? 0}'),
                 trailing: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     IconButton(
-                      icon: Icon(isHidden ? Icons.visibility_off : Icons.visibility,
+                      icon: Icon(
+                          isHidden ? Icons.visibility_off : Icons.visibility,
                           color: isHidden ? Colors.orange : AppColors.navy),
-                      onPressed: () =>
-                          _db.from('products').update({'is_hidden': !isHidden}).eq('id', p['id']),
+                      onPressed: () => _db
+                          .from('products')
+                          .update({'is_hidden': !isHidden}).eq('id', p['id']),
                     ),
                     IconButton(
                       icon: const Icon(Icons.delete_outline, color: Colors.red),
-                      onPressed: () => _db.from('products').delete().eq('id', p['id']),
+                      onPressed: () =>
+                          _db.from('products').delete().eq('id', p['id']),
                     ),
                   ],
                 ),
@@ -812,13 +951,13 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
           }),
         ),
         const SizedBox(height: 14),
-        const Text('طلبات الطوارئ', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+        const Text('طلبات الطوارئ',
+            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
         const SizedBox(height: 8),
         StreamBuilder<List<Map<String, dynamic>>>(
           stream: _db
               .from('mechanic_requests')
-              .stream(primaryKey: ['id'])
-              .order('created_at', ascending: false),
+              .stream(primaryKey: ['id']).order('created_at', ascending: false),
           builder: (_, snap) {
             final reqs = (snap.data ?? [])
                 .where((r) =>
@@ -827,24 +966,36 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
                 .toList();
             if (reqs.isEmpty) {
               return const Card(
-                  child: Padding(padding: EdgeInsets.all(16), child: Text('لا توجد طلبات طوارئ')));
+                  child: Padding(
+                      padding: EdgeInsets.all(16),
+                      child: Text('لا توجد طلبات طوارئ')));
             }
             return Column(
               children: reqs
                   .map((r) => Card(
                         margin: const EdgeInsets.only(bottom: 8),
                         child: ListTile(
-                          title: Text('${r['service_type']} · ${r['car_details']}'),
+                          title: Text(
+                              '${r['service_type']} · ${r['car_details']}'),
                           subtitle: Text(
                               'المشكلة: ${r['description'] ?? "-"} · الحالة: ${r['status']} (${r['progress_step']})'),
                           trailing: PopupMenuButton<String>(
                             onSelected: (val) => _db
                                 .from('mechanic_requests')
-                                .update({'status': val, 'progress_step': val}).eq('id', r['id']),
+                                .update({
+                              'status': val,
+                              'progress_step': val
+                            }).eq('id', r['id']),
                             itemBuilder: (_) => const [
-                              PopupMenuItem(value: 'pending', child: Text('تعليق (pending)')),
-                              PopupMenuItem(value: 'completed', child: Text('إنهاء (completed)')),
-                              PopupMenuItem(value: 'cancelled', child: Text('إلغاء (cancelled)')),
+                              PopupMenuItem(
+                                  value: 'pending',
+                                  child: Text('تعليق (pending)')),
+                              PopupMenuItem(
+                                  value: 'completed',
+                                  child: Text('إنهاء (completed)')),
+                              PopupMenuItem(
+                                  value: 'cancelled',
+                                  child: Text('إلغاء (cancelled)')),
                             ],
                           ),
                         ),
@@ -854,33 +1005,39 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
           },
         ),
         const SizedBox(height: 20),
-        const Text('مواعيد الورش', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+        const Text('مواعيد الورش',
+            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
         const SizedBox(height: 8),
         StreamBuilder<List<Map<String, dynamic>>>(
           stream: _db
               .from('workshop_appointments')
-              .stream(primaryKey: ['id'])
-              .order('created_at', ascending: false),
+              .stream(primaryKey: ['id']).order('created_at', ascending: false),
           builder: (_, snap) {
-            final appts =
-                (snap.data ?? []).where((a) => _inPeriod(a['created_at'] as String?)).toList();
+            final appts = (snap.data ?? [])
+                .where((a) => _inPeriod(a['created_at'] as String?))
+                .toList();
             if (appts.isEmpty) {
               return const Card(
-                  child: Padding(padding: EdgeInsets.all(16), child: Text('لا توجد مواعيد ورش')));
+                  child: Padding(
+                      padding: EdgeInsets.all(16),
+                      child: Text('لا توجد مواعيد ورش')));
             }
             return Column(
               children: appts
                   .map((a) => Card(
                         margin: const EdgeInsets.only(bottom: 8),
                         child: ListTile(
-                          title: Text('${a['appointment_date']} · ${a['appointment_time']}'),
+                          title: Text(
+                              '${a['appointment_date']} · ${a['appointment_time']}'),
                           subtitle: Text(
                               '${a['service_description'] ?? ""} · الحالة: ${a['status']} (${a['progress_step']})'),
                           trailing: IconButton(
-                            icon: const Icon(Icons.cancel_outlined, color: Colors.red),
+                            icon: const Icon(Icons.cancel_outlined,
+                                color: Colors.red),
                             onPressed: () => _db
                                 .from('workshop_appointments')
-                                .update({'status': 'cancelled'}).eq('id', a['id']),
+                                .update({'status': 'cancelled'}).eq(
+                                    'id', a['id']),
                           ),
                         ),
                       ))
@@ -911,27 +1068,69 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
         StreamBuilder<List<Map<String, dynamic>>>(
           stream: _db
               .from('wallet_transactions')
-              .stream(primaryKey: ['id'])
-              .order('created_at', ascending: false),
+              .stream(primaryKey: ['id']).order('created_at', ascending: false),
           builder: (_, snap) {
             final txs = (snap.data ?? [])
                 .where((t) => _inPeriod(t['created_at'] as String?))
                 .map(DbWalletTransaction.fromMap)
                 .toList();
-            if (txs.isEmpty) {
-              return const Card(
-                  child: Padding(padding: EdgeInsets.all(16), child: Text('لا توجد حركات مالية')));
-            }
+
+            final totalGross = txs.fold(0.0, (s, t) => s + t.grossAmount);
+            final totalComm = txs.fold(0.0, (s, t) => s + t.commissionAmount);
+            final totalNet = txs.fold(0.0, (s, t) => s + t.netAmount);
+            final partsTotal = txs
+                .where((t) => t.transactionType.contains('part'))
+                .fold(0.0, (s, t) => s + t.grossAmount);
+            final servicesTotal = totalGross - partsTotal;
+
             return Column(
-              children: txs
-                  .map((t) => Card(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                        child: _kpi('إجمالي المبيعات (د.أ)', totalGross.toInt(),
+                            Icons.payments)),
+                    const SizedBox(width: 10),
+                    Expanded(
+                        child: _kpi('عمولات المنصة (د.أ)', totalComm.toInt(),
+                            Icons.trending_up)),
+                    const SizedBox(width: 10),
+                    Expanded(
+                        child: _kpi('صافي المزودين (د.أ)', totalNet.toInt(),
+                            Icons.account_balance_wallet)),
+                  ],
+                ),
+                const SizedBox(height: 14),
+                InteractiveAnimatedChart(
+                  title: 'الرسم البياني للحركة المالية والعمولات',
+                  unit: 'د.أ',
+                  data: [
+                    (label: 'قبل العمولة', value: totalGross),
+                    (label: 'العمولات', value: totalComm),
+                    (label: 'للمزودين', value: totalNet),
+                    (label: 'القطع', value: partsTotal),
+                    (label: 'الورش/طوارئ', value: servicesTotal),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                if (txs.isEmpty)
+                  const Card(
+                    child: Padding(
+                        padding: EdgeInsets.all(16),
+                        child: Text('لا توجد حركات مالية')),
+                  )
+                else
+                  ...txs.map((t) => Card(
                         child: ListTile(
-                          title: Text('${t.transactionType} · ${t.paymentMethod}'),
+                          title:
+                              Text('${t.transactionType} · ${t.paymentMethod}'),
                           subtitle: Text(
-                              'الإجمالي: ${t.grossAmount.toStringAsFixed(2)} | العمولة: ${t.commissionAmount.toStringAsFixed(2)} | الصافي: ${t.netAmount.toStringAsFixed(2)}'),
+                            'الإجمالي: ${t.grossAmount.toStringAsFixed(2)} | العمولة: ${t.commissionAmount.toStringAsFixed(2)} | الصافي: ${t.netAmount.toStringAsFixed(2)}',
+                          ),
                         ),
-                      ))
-                  .toList(),
+                      )),
+              ],
             );
           },
         ),
@@ -956,10 +1155,13 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
           Text(title,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(color: AppColors.textSecondary, fontSize: 12)),
+              style: const TextStyle(
+                  color: AppColors.textSecondary, fontSize: 12)),
           const SizedBox(height: 4),
           AnimatedCounter(
-              value: val, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800)),
+              value: val,
+              style:
+                  const TextStyle(fontSize: 22, fontWeight: FontWeight.w800)),
         ],
       ),
     );
