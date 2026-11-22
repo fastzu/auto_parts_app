@@ -28,9 +28,9 @@
 		<string>LaunchScreen</string>
 		<key>UIMainStoryboardFile</key>
 		<string>Main</string>
-		<key>UISupportedInterfaceOrientations</key>
 		<key>GADApplicationIdentifier</key>
-        <string>ca-app-pub-9603448958879862~5759723902</string>
+		<string>ca-app-pub-9603448958879862~5759723902</string>
+		<key>UISupportedInterfaceOrientations</key>
 		<array>
 			<string>UIInterfaceOrientationPortrait</string>
 			<string>UIInterfaceOrientationLandscapeLeft</string>
@@ -89,7 +89,7 @@
 		</array>
 		<key>UIStatusBarHidden</key>
 		<false/>
-	<key>NSMicrophoneUsageDescription</key>
-<string>نحتاج إلى الميكروفون لتسجيل صوت عطل السيارة وتشخيصه بالذكاء الاصطناعي.</string>
+		<key>NSMicrophoneUsageDescription</key>
+		<string>نحتاج إلى الميكروفون لتسجيل صوت عطل السيارة وتشخيصه بالذكاء الاصطناعي.</string>
 	</dict>
 </plist>
