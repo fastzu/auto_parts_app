@@ -21,13 +21,14 @@ class _EmergencyScreenState extends State<EmergencyScreen> {
   final _db = Supabase.instance.client;
   final _locationService = LocationService();
   final _mapController = MapController();
-  final _carCtrl = TextEditingController(text: 'تويوتا كامري 2022');
+  final _carCtrl = TextEditingController();
 
   late String _serviceType =
       EnvConfig.winchEnabled.value ? 'winch' : 'mechanic';
   String _selectedProblem = 'بطارية';
   bool _pickingDropoff = false;
   bool _loadingGps = false;
+  bool _loadingRate = true;
   bool _submitting = false;
 
   LatLng _pickupLatLng = const LatLng(31.9720, 35.8450);
@@ -65,34 +66,43 @@ class _EmergencyScreenState extends State<EmergencyScreen> {
           .select('value')
           .eq('key', 'winch_price_per_km')
           .maybeSingle();
-      if (row != null && mounted) {
-        setState(
-            () => _kmRate = double.tryParse(row['value'] as String) ?? 1.5);
+      if (mounted) {
+        final parsed = double.tryParse(row?['value']?.toString() ?? '');
+        setState(() {
+          if (parsed != null && parsed > 0) {
+            _kmRate = parsed;
+          }
+          _loadingRate = false;
+        });
       }
-    } catch (_) {}
+    } catch (_) {
+      if (mounted) setState(() => _loadingRate = false);
+    }
   }
 
   Future<void> _detectMyLocation() async {
     setState(() => _loadingGps = true);
-    final res = await _locationService.getCurrentLocation();
-    if (!mounted) {
-      return;
+    try {
+      final res = await _locationService.getCurrentLocation();
+      if (!mounted) return;
+      final dist =
+          _locationService.calculateDistanceKm(res.coordinates, _dropoffLatLng);
+      setState(() {
+        _pickupLatLng = res.coordinates;
+        _pickupAddress = res.address;
+        _distanceKm = dist < 0.5 ? 1.0 : double.parse(dist.toStringAsFixed(2));
+        _loadingGps = false;
+      });
+      _mapController.move(_pickupLatLng, 13.5);
+    } catch (_) {
+      if (mounted) setState(() => _loadingGps = false);
     }
-    setState(() {
-      _pickupLatLng = res.coordinates;
-      _pickupAddress = res.address;
-      _distanceKm =
-          _locationService.calculateDistanceKm(_pickupLatLng, _dropoffLatLng);
-      _loadingGps = false;
-    });
-    _mapController.move(_pickupLatLng, 13.5);
   }
 
   Future<void> _onMapTap(LatLng latLng) async {
+    FocusScope.of(context).unfocus();
     final addr = await _locationService.getAddressFromLatLng(latLng);
-    if (!mounted) {
-      return;
-    }
+    if (!mounted) return;
     setState(() {
       if (_pickingDropoff &&
           _serviceType == 'winch' &&
@@ -103,29 +113,46 @@ class _EmergencyScreenState extends State<EmergencyScreen> {
         _pickupLatLng = latLng;
         _pickupAddress = addr;
       }
-      _distanceKm =
+      final dist =
           _locationService.calculateDistanceKm(_pickupLatLng, _dropoffLatLng);
+      _distanceKm = dist < 0.5 ? 1.0 : double.parse(dist.toStringAsFixed(2));
     });
   }
 
   Future<void> _submitOrder(double finalPrice, int etaMinutes) async {
+    FocusScope.of(context).unfocus();
+    final carText = _carCtrl.text.trim();
+    if (carText.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('يرجى كتابة نوع وموديل السيارة أولاً'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
     final useWinch = EnvConfig.winchEnabled.value && _serviceType == 'winch';
     setState(() => _submitting = true);
     try {
+      // نرسل latitude/longitude كـ null عند الإنشاء لكي يكتبها الفني/سائق الونش
+      // بموقعه الفعلي ويتحرك شريط التقدم حسب المسافة الحقيقية
       await _db.from('mechanic_requests').insert({
         'user_id': widget.profile.id,
         'service_type': useWinch ? 'winch' : 'mechanic',
-        'car_details': _carCtrl.text.trim(),
+        'car_details': carText,
         'phone': widget.profile.phone,
         'description': _selectedProblem,
-        'latitude': _pickupLatLng.latitude,
-        'longitude': _pickupLatLng.longitude,
+        'latitude': null,
+        'longitude': null,
         'pickup_latitude': _pickupLatLng.latitude,
         'pickup_longitude': _pickupLatLng.longitude,
         'dropoff_latitude': useWinch ? _dropoffLatLng.latitude : null,
         'dropoff_longitude': useWinch ? _dropoffLatLng.longitude : null,
         'dropoff_address': useWinch ? _dropoffAddress : _pickupAddress,
-        'total_amount': EnvConfig.paymentsEnabled.value ? finalPrice : 0.0,
+        'total_amount': (useWinch || EnvConfig.paymentsEnabled.value)
+            ? finalPrice
+            : 0.0,
         'estimated_time': '$etaMinutes دقيقة',
         'status': 'pending',
         'progress_step': 'pending',
@@ -133,9 +160,22 @@ class _EmergencyScreenState extends State<EmergencyScreen> {
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('تم إرسال طلب الطوارئ بنجاح!'),
+          SnackBar(
+            content: Text(
+              useWinch
+                  ? 'تم إرسال طلب الونش بنجاح! السعر التقديري ${finalPrice.toStringAsFixed(2)} د.أ'
+                  : 'تم إرسال طلب الطوارئ بنجاح! جاري تعيين أقرب فني',
+            ),
             backgroundColor: AppColors.success,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('تعذر إرسال الطلب: $e'),
+            backgroundColor: Colors.red,
           ),
         );
       }
@@ -163,13 +203,18 @@ class _EmergencyScreenState extends State<EmergencyScreen> {
         }
 
         final isWinch = showWinch && _serviceType == 'winch';
-        final base = _baseFees[_selectedProblem]!;
-        final raw = base + (isWinch ? (_distanceKm * _kmRate) : 5.0);
+        final baseFee = _baseFees[_selectedProblem] ?? 15.0;
+        final winchDistanceCost =
+            isWinch ? double.parse((_distanceKm * _kmRate).toStringAsFixed(2)) : 5.0;
+        final rawTotal = baseFee + winchDistanceCost;
         final isPro = AppSubscriptionCatalog.customerFeeRate(
                 widget.profile.subscriptionPlan) ==
             0.0;
+        final proDiscount = isPro
+            ? double.parse((rawTotal * 0.15).toStringAsFixed(2))
+            : 0.0;
         final finalPrice =
-            double.parse((isPro ? raw * 0.85 : raw).toStringAsFixed(2));
+            double.parse((rawTotal - proDiscount).toStringAsFixed(2));
         final eta = (_distanceKm * 2.4).round().clamp(8, 45);
 
         return SafeArea(
@@ -177,16 +222,32 @@ class _EmergencyScreenState extends State<EmergencyScreen> {
             children: [
               Expanded(
                 child: ListView(
+                  keyboardDismissBehavior:
+                      ScrollViewKeyboardDismissBehavior.onDrag,
                   padding: const EdgeInsets.all(16),
                   children: [
-                    Text(
-                      showWinch ? 'طلب مساعدة طارئة' : 'طلب ميكانيكي طوارئ',
-                      style: const TextStyle(
-                          fontSize: 20, fontWeight: FontWeight.bold),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            showWinch
+                                ? 'طلب مساعدة طارئة'
+                                : 'طلب ميكانيكي طوارئ',
+                            style: const TextStyle(
+                                fontSize: 20, fontWeight: FontWeight.bold),
+                          ),
+                        ),
+                        if (isWinch)
+                          IconButton(
+                            tooltip: 'تحديث تسعيرة الونش',
+                            onPressed: _loadKmRate,
+                            icon: const Icon(Icons.refresh,
+                                color: AppColors.navy, size: 20),
+                          ),
+                      ],
                     ),
                     const SizedBox(height: 12),
 
-                    // يظهر خيار ونش / ميكانيكي فقط عندما يكون الونش مفعلاً
                     if (showWinch) ...[
                       Container(
                         padding: const EdgeInsets.all(4),
@@ -197,12 +258,17 @@ class _EmergencyScreenState extends State<EmergencyScreen> {
                         ),
                         child: Row(
                           children: [
-                            _segTab('ونش', isWinch,
-                                () => setState(() => _serviceType = 'winch')),
+                            _segTab('ونش سحب', isWinch, () {
+                              setState(() => _serviceType = 'winch');
+                              _loadKmRate();
+                            }),
                             _segTab(
                               'ميكانيكي طوارئ',
                               !isWinch,
-                              () => setState(() => _serviceType = 'mechanic'),
+                              () => setState(() {
+                                _serviceType = 'mechanic';
+                                _pickingDropoff = false;
+                              }),
                             ),
                           ],
                         ),
@@ -218,8 +284,8 @@ class _EmergencyScreenState extends State<EmergencyScreen> {
                             Expanded(
                               child: ChoiceChip(
                                 label: const Center(
-                                    child:
-                                        Text('تحديد نقطة الالتقاط (Pickup)')),
+                                  child: Text('نقطة الالتقاط (موقعك)'),
+                                ),
                                 selected: !_pickingDropoff,
                                 selectedColor: AppColors.navy,
                                 labelStyle: TextStyle(
@@ -227,6 +293,7 @@ class _EmergencyScreenState extends State<EmergencyScreen> {
                                       ? Colors.white
                                       : AppColors.textPrimary,
                                   fontSize: 11,
+                                  fontWeight: FontWeight.bold,
                                 ),
                                 onSelected: (_) =>
                                     setState(() => _pickingDropoff = false),
@@ -236,7 +303,8 @@ class _EmergencyScreenState extends State<EmergencyScreen> {
                             Expanded(
                               child: ChoiceChip(
                                 label: const Center(
-                                    child: Text('تحديد الوجهة (Drop-off)')),
+                                  child: Text('تحديد الوجهة على الخريطة'),
+                                ),
                                 selected: _pickingDropoff,
                                 selectedColor: AppColors.orange,
                                 labelStyle: TextStyle(
@@ -244,6 +312,7 @@ class _EmergencyScreenState extends State<EmergencyScreen> {
                                       ? Colors.white
                                       : AppColors.textPrimary,
                                   fontSize: 11,
+                                  fontWeight: FontWeight.bold,
                                 ),
                                 onSelected: (_) =>
                                     setState(() => _pickingDropoff = true),
@@ -254,7 +323,7 @@ class _EmergencyScreenState extends State<EmergencyScreen> {
                       ),
 
                     SizedBox(
-                      height: 195,
+                      height: 205,
                       child: ClipRRect(
                         borderRadius: BorderRadius.circular(16),
                         child: Stack(
@@ -272,6 +341,19 @@ class _EmergencyScreenState extends State<EmergencyScreen> {
                                       'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
                                   userAgentPackageName: 'com.autoparts.app',
                                 ),
+                                if (isWinch)
+                                  PolylineLayer(
+                                    polylines: [
+                                      Polyline(
+                                        points: [
+                                          _pickupLatLng,
+                                          _dropoffLatLng
+                                        ],
+                                        color: AppColors.orange,
+                                        strokeWidth: 4,
+                                      ),
+                                    ],
+                                  ),
                                 MarkerLayer(
                                   markers: [
                                     Marker(
@@ -300,6 +382,7 @@ class _EmergencyScreenState extends State<EmergencyScreen> {
                               bottom: 10,
                               left: 10,
                               child: FloatingActionButton.small(
+                                heroTag: 'emg_gps_btn',
                                 backgroundColor: AppColors.navy,
                                 foregroundColor: Colors.white,
                                 onPressed: _detectMyLocation,
@@ -323,20 +406,29 @@ class _EmergencyScreenState extends State<EmergencyScreen> {
                     _infoRow('موقعك الحالي', _pickupAddress),
                     if (isWinch) ...[
                       const SizedBox(height: 8),
-                      _infoRow('الوجهة (Drop-off)', _dropoffAddress),
+                      _infoRow('الوجهة المطلوبة', _dropoffAddress),
+                      const SizedBox(height: 8),
+                      _infoRow(
+                        'المسافة التقديرية',
+                        '${_distanceKm.toStringAsFixed(1)} كم',
+                      ),
                     ],
-                    const SizedBox(height: 10),
+                    const SizedBox(height: 12),
                     TextField(
                       controller: _carCtrl,
+                      textInputAction: TextInputAction.done,
+                      onSubmitted: (_) => FocusScope.of(context).unfocus(),
                       decoration: InputDecoration(
-                        labelText: 'تفاصيل السيارة',
+                        labelText: 'نوع وموديل السيارة',
+                        hintText: 'مثال: تويوتا كامري 2022',
+                        prefixIcon: const Icon(Icons.directions_car_outlined),
                         filled: true,
                         fillColor: AppColors.surface,
                         border: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(14)),
                       ),
                     ),
-                    const SizedBox(height: 12),
+                    const SizedBox(height: 14),
                     const Text('ما المشكلة؟',
                         style: TextStyle(fontWeight: FontWeight.bold)),
                     const SizedBox(height: 8),
@@ -377,18 +469,62 @@ class _EmergencyScreenState extends State<EmergencyScreen> {
                         );
                       }).toList(),
                     ),
-                    const SizedBox(height: 12),
-                    _infoRow('الوصول المتوقع', '$eta دقيقة'),
-                    if (showPayments) ...[
-                      const SizedBox(height: 8),
-                      _infoRow('السعر التقديري',
-                          '${finalPrice.toStringAsFixed(2)} د.أ'),
-                    ],
+                    const SizedBox(height: 14),
+
+                    // بطاقة تفاصيل التسعيرة والوقت المتوقع
+                    Container(
+                      padding: const EdgeInsets.all(14),
+                      decoration: BoxDecoration(
+                        color: AppColors.surface,
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(color: AppColors.border),
+                      ),
+                      child: Column(
+                        children: [
+                          _infoRow('الوصول المتوقع', '$eta دقيقة'),
+                          if (isWinch || showPayments) ...[
+                            const Divider(height: 18),
+                            _infoRow(
+                              'رسوم الخدمة الأساسية ($_selectedProblem)',
+                              '${baseFee.toStringAsFixed(2)} د.أ',
+                            ),
+                            const SizedBox(height: 6),
+                            if (isWinch)
+                              _infoRow(
+                                _loadingRate
+                                    ? 'أجرة السحب (جاري تحميل التسعيرة...)'
+                                    : 'أجرة السحب (${_distanceKm.toStringAsFixed(1)} كم × ${_kmRate.toStringAsFixed(2)} د.أ)',
+                                '${winchDistanceCost.toStringAsFixed(2)} د.أ',
+                              )
+                            else
+                              _infoRow(
+                                'بدل حضور فني الطوارئ',
+                                '${winchDistanceCost.toStringAsFixed(2)} د.أ',
+                              ),
+                            if (isPro) ...[
+                              const SizedBox(height: 6),
+                              _infoRow(
+                                'خصم عضوية برو (15%)',
+                                '-${proDiscount.toStringAsFixed(2)} د.أ',
+                                valueColor: AppColors.success,
+                              ),
+                            ],
+                            const Divider(height: 18),
+                            _infoRow(
+                              'الإجمالي التقديري',
+                              '${finalPrice.toStringAsFixed(2)} د.أ',
+                              bold: true,
+                              valueColor: AppColors.navy,
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
                   ],
                 ),
               ),
               Padding(
-                padding: const EdgeInsets.fromLTRB(16, 8, 16, 26),
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 20),
                 child: BounceTap(
                   onTap:
                       _submitting ? () {} : () => _submitOrder(finalPrice, eta),
@@ -401,10 +537,17 @@ class _EmergencyScreenState extends State<EmergencyScreen> {
                       borderRadius: BorderRadius.circular(14),
                     ),
                     child: _submitting
-                        ? const CircularProgressIndicator(color: Colors.white)
-                        : const Text(
-                            'تأكيد الطلب',
-                            style: TextStyle(
+                        ? const SizedBox(
+                            width: 22,
+                            height: 22,
+                            child: CircularProgressIndicator(
+                                color: Colors.white, strokeWidth: 2.4),
+                          )
+                        : Text(
+                            isWinch
+                                ? 'تأكيد طلب الونش (${finalPrice.toStringAsFixed(2)} د.أ)'
+                                : 'تأكيد طلب الطوارئ',
+                            style: const TextStyle(
                               color: Colors.white,
                               fontSize: 16,
                               fontWeight: FontWeight.bold,
@@ -444,16 +587,31 @@ class _EmergencyScreenState extends State<EmergencyScreen> {
     );
   }
 
-  Widget _infoRow(String label, String value) {
+  Widget _infoRow(
+    String label,
+    String value, {
+    bool bold = false,
+    Color? valueColor,
+  }) {
     return Row(
       children: [
-        Text(label, style: const TextStyle(fontWeight: FontWeight.w600)),
-        const SizedBox(width: 8),
         Expanded(
           child: Text(
-            value,
-            textAlign: TextAlign.end,
-            style: const TextStyle(color: AppColors.textSecondary),
+            label,
+            style: TextStyle(
+              fontWeight: bold ? FontWeight.bold : FontWeight.w600,
+              fontSize: bold ? 14 : 13,
+            ),
+          ),
+        ),
+        const SizedBox(width: 8),
+        Text(
+          value,
+          textAlign: TextAlign.end,
+          style: TextStyle(
+            color: valueColor ?? AppColors.textSecondary,
+            fontWeight: bold ? FontWeight.w800 : FontWeight.w600,
+            fontSize: bold ? 15 : 13,
           ),
         ),
       ],

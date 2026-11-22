@@ -19,7 +19,7 @@ class _AddProductScreenState extends State<AddProductScreen> {
   final _titleCtrl = TextEditingController();
   final _descCtrl = TextEditingController();
   final _priceCtrl = TextEditingController();
-  final _qtyCtrl = TextEditingController(text: '1');
+  final _discountCtrl = TextEditingController(text: '0');
   final _chassisCtrl = TextEditingController();
 
   String _mainCat = CarPartsCatalogAZ.mainCategories.first;
@@ -37,16 +37,18 @@ class _AddProductScreenState extends State<AddProductScreen> {
     _titleCtrl.dispose();
     _descCtrl.dispose();
     _priceCtrl.dispose();
-    _qtyCtrl.dispose();
+    _discountCtrl.dispose();
     _chassisCtrl.dispose();
     super.dispose();
   }
 
   Future<void> _pickImages() async {
-    final picked = await _picker.pickMultiImage(imageQuality: 75);
-    if (picked.isEmpty) {
-      return;
-    }
+    final picked = await _picker.pickMultiImage(
+      maxWidth: 1280,
+      maxHeight: 1280,
+      imageQuality: 72,
+    );
+    if (picked.isEmpty) return;
     for (final file in picked.take(4)) {
       final bytes = await file.readAsBytes();
       if (mounted) {
@@ -56,6 +58,7 @@ class _AddProductScreenState extends State<AddProductScreen> {
   }
 
   Future<void> _publish() async {
+    FocusScope.of(context).unfocus();
     if (_images.isEmpty || _titleCtrl.text.trim().isEmpty || _priceCtrl.text.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('يرجى رفع صورة القطعة وإدخال عنوان المنشور والسعر')),
@@ -120,8 +123,12 @@ class _AddProductScreenState extends State<AddProductScreen> {
 
       final cleanBrand = _selectedBrand.split(' ').first;
       final fullCarName = '$cleanBrand $_selectedModel';
-      final parsedQty = int.tryParse(_qtyCtrl.text.trim()) ?? 1;
-      final safeQty = parsedQty < 1 ? 1 : parsedQty;
+
+      final basePrice = double.tryParse(_priceCtrl.text.trim()) ?? 0.0;
+      final discPct = (int.tryParse(_discountCtrl.text.trim()) ?? 0).clamp(0, 90);
+      final finalPrice = discPct > 0
+          ? double.parse((basePrice * (1 - discPct / 100)).toStringAsFixed(2))
+          : basePrice;
 
       await _db.from('products').insert({
         'user_id': uid,
@@ -134,8 +141,9 @@ class _AddProductScreenState extends State<AddProductScreen> {
         'car_name': fullCarName,
         'car_model': _selectedYear,
         'chassis_number': _chassisCtrl.text.trim().isEmpty ? null : _chassisCtrl.text.trim(),
-        'price': double.tryParse(_priceCtrl.text.trim()) ?? 0.0,
-        'quantity': safeQty,
+        'price': finalPrice,
+        'original_price': discPct > 0 ? basePrice : null,
+        'discount_percent': discPct,
         'images': imageUrls,
       });
 
@@ -149,7 +157,7 @@ class _AddProductScreenState extends State<AddProductScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('تم نشر القطعة بنجاح!'),
+            content: Text('تم نشر القطعة بنجاح! ✓'),
             backgroundColor: AppColors.success,
           ),
         );
@@ -162,9 +170,7 @@ class _AddProductScreenState extends State<AddProductScreen> {
         );
       }
     } finally {
-      if (mounted) {
-        setState(() => _publishing = false);
-      }
+      if (mounted) setState(() => _publishing = false);
     }
   }
 
@@ -175,6 +181,7 @@ class _AddProductScreenState extends State<AddProductScreen> {
     return Scaffold(
       appBar: AppBar(title: const Text('إضافة منشور قطعة غيار')),
       body: ListView(
+        keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
         padding: const EdgeInsets.all(16),
         children: [
           GestureDetector(
@@ -190,8 +197,7 @@ class _AddProductScreenState extends State<AddProductScreen> {
                   ? const Column(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        Icon(Icons.add_photo_alternate_outlined,
-                            size: 36, color: AppColors.orange),
+                        Icon(Icons.add_photo_alternate_outlined, size: 36, color: AppColors.orange),
                         SizedBox(height: 6),
                         Text('اضغط لرفع صورة القطعة (إلزامي)'),
                       ],
@@ -240,10 +246,7 @@ class _AddProductScreenState extends State<AddProductScreen> {
               border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
             ),
             items: CarPartsCatalogAZ.mainCategories
-                .map((c) => DropdownMenuItem(
-                      value: c,
-                      child: Text(c, overflow: TextOverflow.ellipsis),
-                    ))
+                .map((c) => DropdownMenuItem(value: c, child: Text(c, overflow: TextOverflow.ellipsis)))
                 .toList(),
             onChanged: (val) {
               if (val != null) {
@@ -271,9 +274,7 @@ class _AddProductScreenState extends State<AddProductScreen> {
                   .map((sub) => DropdownMenuItem(value: sub, child: Text(sub)))
                   .toList(),
               onChanged: (val) {
-                if (val != null) {
-                  setState(() => _subPart = val);
-                }
+                if (val != null) setState(() => _subPart = val);
               },
             ),
           ),
@@ -320,9 +321,7 @@ class _AddProductScreenState extends State<AddProductScreen> {
                         .map((m) => DropdownMenuItem(value: m, child: Text(m)))
                         .toList(),
                     onChanged: (val) {
-                      if (val != null) {
-                        setState(() => _selectedModel = val);
-                      }
+                      if (val != null) setState(() => _selectedModel = val);
                     },
                   ),
                 ),
@@ -343,31 +342,38 @@ class _AddProductScreenState extends State<AddProductScreen> {
                       .map((y) => DropdownMenuItem(value: y, child: Text(y)))
                       .toList(),
                   onChanged: (val) {
-                    if (val != null) {
-                      setState(() => _selectedYear = val);
-                    }
+                    if (val != null) setState(() => _selectedYear = val);
                   },
                 ),
               ),
             ],
           ),
           const SizedBox(height: 12),
-          _field(_titleCtrl, 'عنوان المنشور'),
+          _field(_titleCtrl, 'عنوان المنشور', action: TextInputAction.next),
           Row(
             children: [
               Expanded(
-                flex: 3,
-                child: _field(_priceCtrl, 'السعر (د.أ)', type: TextInputType.number),
+                flex: 2,
+                child: _field(
+                  _priceCtrl,
+                  'السعر (د.أ)',
+                  type: const TextInputType.numberWithOptions(decimal: true),
+                  action: TextInputAction.next,
+                ),
               ),
               const SizedBox(width: 10),
               Expanded(
-                flex: 2,
-                child: _field(_qtyCtrl, 'الكمية المتوفرة', type: TextInputType.number),
+                child: _field(
+                  _discountCtrl,
+                  'خصم % (اختياري)',
+                  type: TextInputType.number,
+                  action: TextInputAction.next,
+                ),
               ),
             ],
           ),
-          _field(_chassisCtrl, 'رقم الشاصي (VIN / Chassis Number)'),
-          _field(_descCtrl, 'وصف وتفاصيل القطعة', maxLines: 3),
+          _field(_chassisCtrl, 'رقم الشاصي (VIN / Chassis Number)', action: TextInputAction.next),
+          _field(_descCtrl, 'وصف وتفاصيل القطعة', maxLines: 3, action: TextInputAction.done),
           const SizedBox(height: 16),
           ElevatedButton(
             style: ElevatedButton.styleFrom(
@@ -393,14 +399,20 @@ class _AddProductScreenState extends State<AddProductScreen> {
     );
   }
 
-  Widget _field(TextEditingController ctrl, String label,
-      {TextInputType? type, int maxLines = 1}) {
+  Widget _field(
+    TextEditingController ctrl,
+    String label, {
+    TextInputType? type,
+    int maxLines = 1,
+    TextInputAction action = TextInputAction.next,
+  }) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: TextField(
         controller: ctrl,
         keyboardType: type,
         maxLines: maxLines,
+        textInputAction: action,
         decoration: InputDecoration(
           labelText: label,
           filled: true,

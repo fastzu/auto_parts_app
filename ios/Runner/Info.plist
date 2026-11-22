@@ -29,6 +29,8 @@
 		<key>UIMainStoryboardFile</key>
 		<string>Main</string>
 		<key>UISupportedInterfaceOrientations</key>
+		<key>GADApplicationIdentifier</key>
+        <string>ca-app-pub-9603448958879862~5759723902</string>
 		<array>
 			<string>UIInterfaceOrientationPortrait</string>
 			<string>UIInterfaceOrientationLandscapeLeft</string>

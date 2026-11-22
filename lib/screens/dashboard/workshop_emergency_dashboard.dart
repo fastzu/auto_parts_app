@@ -10,6 +10,7 @@ import '../../services/live_progress_tracker.dart';
 import '../../services/location_service.dart';
 import '../../services/notifications_service.dart';
 import '../../theme/app_theme.dart';
+import '../../utils/status_labels.dart';
 import '../../widgets/animations.dart';
 import '../mobile/add_product_screen.dart';
 import '../mobile/mobile_shell.dart';
@@ -36,19 +37,17 @@ class WorkshopEmergencyDashboard extends StatefulWidget {
 
 class _WorkshopEmergencyDashboardState extends State<WorkshopEmergencyDashboard> {
   final _db = Supabase.instance.client;
-  final _notifs = NotificationsService();
+  final _notifs = NotificationsService.instance;
   final _tracker = LiveProgressTracker.instance;
   final _locationService = LocationService();
 
   late int _tab = widget.initialTab;
   late bool _isAvailable = widget.profile.isAvailable;
-  late int _maxCarCapacity = widget.profile.maxCarCapacity;
   late double? _myLat = widget.profile.latitude ?? widget.profile.workshopLatitude;
   late double? _myLng = widget.profile.longitude ?? widget.profile.workshopLongitude;
   final double _maxRadiusKm = 15.0;
   DashboardPeriod _period = DashboardPeriod.month1;
   DateTimeRange? _customRange;
-  bool _showApptHistory = false;
 
   List<({int id, String label})> get _menuItems {
     final list = <({int id, String label})>[
@@ -70,58 +69,9 @@ class _WorkshopEmergencyDashboardState extends State<WorkshopEmergencyDashboard>
     _syncProviderGps();
   }
 
-  Future<void> _callPhone(String? rawPhone) async {
-    final cleaned = (rawPhone ?? '').replaceAll(RegExp(r'[^0-9+]'), '');
-    if (cleaned.isEmpty) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('رقم هاتف العميل غير متوفر')),
-        );
-      }
-      return;
-    }
-    await launchUrl(Uri(scheme: 'tel', path: cleaned), mode: LaunchMode.externalApplication);
-  }
-
-  Future<void> _editCapacityDialog() async {
-    final ctrl = TextEditingController(text: '$_maxCarCapacity');
-    await showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('تعديل سعة الورشة القصوى'),
-        content: TextField(
-          controller: ctrl,
-          keyboardType: TextInputType.number,
-          decoration: const InputDecoration(
-            labelText: 'الحد الأقصى للسيارات في اليوم',
-            border: OutlineInputBorder(),
-          ),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('إلغاء')),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: AppColors.orange, foregroundColor: Colors.white),
-            onPressed: () async {
-              final val = (int.tryParse(ctrl.text.trim()) ?? _maxCarCapacity).clamp(1, 100);
-              await _db.from('customers').update({'max_car_capacity': val}).eq('id', widget.profile.id);
-              if (mounted) {
-                setState(() => _maxCarCapacity = val);
-              }
-              widget.onRefreshProfile();
-              if (ctx.mounted) Navigator.pop(ctx);
-            },
-            child: const Text('حفظ السعة'),
-          ),
-        ],
-      ),
-    );
-  }
-
   bool _inPeriod(String? createdAt) {
     final dt = DateTime.tryParse(createdAt ?? '');
-    if (dt == null) {
-      return true;
-    }
+    if (dt == null) return true;
     final range = DateRangeFilterBar.resolveRange(_period, _customRange);
     return !dt.isBefore(range.start) && !dt.isAfter(range.end.add(const Duration(days: 1)));
   }
@@ -129,14 +79,15 @@ class _WorkshopEmergencyDashboardState extends State<WorkshopEmergencyDashboard>
   Future<void> _syncProviderGps() async {
     try {
       final res = await _locationService.getCurrentLocation();
-      if (!mounted) {
-        return;
-      }
+      if (!mounted) return;
       setState(() {
         _myLat = res.coordinates.latitude;
         _myLng = res.coordinates.longitude;
       });
-      await _db.from('customers').update({'latitude': _myLat, 'longitude': _myLng}).eq('id', widget.profile.id);
+      await _db
+          .from('customers')
+          .update({'latitude': _myLat, 'longitude': _myLng})
+          .eq('id', widget.profile.id);
     } catch (_) {}
   }
 
@@ -154,15 +105,9 @@ class _WorkshopEmergencyDashboardState extends State<WorkshopEmergencyDashboard>
   }
 
   bool _isVisibleToMe(DbMechanicRequest r) {
-    if (r.mechanicId == widget.profile.id) {
-      return true;
-    }
-    if (!_isAvailable || r.status != 'pending') {
-      return false;
-    }
-    if (r.broadcastAll) {
-      return true;
-    }
+    if (r.mechanicId == widget.profile.id) return true;
+    if (!_isAvailable || r.status != 'pending') return false;
+    if (r.broadcastAll) return true;
     final dist = _distanceToRequest(r);
     return dist == null || dist <= _maxRadiusKm;
   }
@@ -227,7 +172,7 @@ class _WorkshopEmergencyDashboardState extends State<WorkshopEmergencyDashboard>
               actions: [
                 IconButton(
                   tooltip: 'العودة للرئيسية',
-                  icon: const Icon(Icons.storefront, color: Colors.white),
+                  icon: const Icon(Icons.grid_view_rounded, color: Colors.white),
                   onPressed: _goHome,
                 ),
                 const NotificationBellButton(iconColor: Colors.white),
@@ -236,9 +181,7 @@ class _WorkshopEmergencyDashboardState extends State<WorkshopEmergencyDashboard>
                   icon: const Icon(Icons.logout, color: Colors.white),
                   onPressed: () async {
                     await _db.auth.signOut();
-                    if (context.mounted) {
-                      Navigator.popUntil(context, (r) => r.isFirst);
-                    }
+                    if (context.mounted) Navigator.popUntil(context, (r) => r.isFirst);
                     widget.onSignedOut();
                   },
                 ),
@@ -251,35 +194,33 @@ class _WorkshopEmergencyDashboardState extends State<WorkshopEmergencyDashboard>
           Expanded(
             child: Column(
               children: [
-                Material(
+                Container(
                   color: _isAvailable
                       ? AppColors.success.withValues(alpha: 0.10)
                       : Colors.red.withValues(alpha: 0.10),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 12),
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: SwitchListTile(
-                            contentPadding: EdgeInsets.zero,
-                            title: Text(
-                              _isAvailable
-                                  ? 'حالة الورشة: متاح لاستقبال الطلبات والمواعيد'
-                                  : 'حالة الورشة: غير متاح حالياً',
-                              style: TextStyle(
-                                fontWeight: FontWeight.bold,
-                                fontSize: 13,
-                                color: _isAvailable ? AppColors.success : Colors.red,
-                              ),
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: SwitchListTile(
+                          contentPadding: EdgeInsets.zero,
+                          title: Text(
+                            _isAvailable
+                                ? 'متاح لاستقبال الطلبات والمواعيد'
+                                : 'غير متاح حالياً',
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 13,
+                              color: _isAvailable ? AppColors.success : Colors.red,
                             ),
-                            value: _isAvailable,
-                            activeTrackColor: AppColors.success,
-                            onChanged: _toggleAvailability,
                           ),
+                          value: _isAvailable,
+                          activeTrackColor: AppColors.success,
+                          onChanged: _toggleAvailability,
                         ),
-                        if (isWide) const NotificationBellButton(iconColor: AppColors.navy),
-                      ],
-                    ),
+                      ),
+                      if (isWide) const NotificationBellButton(iconColor: AppColors.navy),
+                    ],
                   ),
                 ),
                 Expanded(
@@ -290,7 +231,7 @@ class _WorkshopEmergencyDashboardState extends State<WorkshopEmergencyDashboard>
                       child: switch (_tab) {
                         1 => _buildEmergencyTab(),
                         2 => _buildAppointmentsTab(),
-                        3 => const MerchantProductsDashboard(),
+                        3 => const MerchantProductsDashboard(embedded: true),
                         4 => _buildWalletTab(),
                         5 => ProviderSubscriptionsScreen(
                             currentPlanCode: widget.profile.subscriptionPlan,
@@ -311,83 +252,71 @@ class _WorkshopEmergencyDashboardState extends State<WorkshopEmergencyDashboard>
 
   Widget _buildSidebar({required bool isDrawer}) {
     final items = _menuItems;
-    return Material(
+    return Container(
       color: AppColors.navy,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 28),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Expanded(
-                  child: Text(
-                    widget.profile.fullName ?? 'اسم النشاط',
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 28),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Expanded(
+                child: Text(
+                  widget.profile.fullName ?? 'اسم النشاط',
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
                 ),
-                IconButton(
-                  icon: const Icon(Icons.logout, color: Colors.white, size: 20),
-                  onPressed: () async {
-                    await _db.auth.signOut();
-                    if (mounted) {
-                      Navigator.popUntil(context, (r) => r.isFirst);
-                    }
-                    widget.onSignedOut();
-                  },
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            ListTile(
-              contentPadding: EdgeInsets.zero,
-              leading: const Icon(Icons.storefront, color: Colors.white),
-              title: const Text(
-                'العودة للرئيسية (المتجر)',
-                style: TextStyle(color: Colors.white, fontSize: 13),
               ),
-              onTap: () => _goHome(closeDrawerFirst: isDrawer),
-            ),
-            const Divider(color: Colors.white24),
-            const SizedBox(height: 12),
-            ...items.map((item) {
-              final active = _tab == item.id;
-              return Padding(
-                padding: const EdgeInsets.only(bottom: 8),
-                child: GestureDetector(
-                  onTap: () {
-                    setState(() => _tab = item.id);
-                    if (isDrawer) {
-                      Navigator.pop(context);
-                    }
-                  },
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 200),
-                    width: double.infinity,
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                    decoration: BoxDecoration(
-                      color: active ? AppColors.orange : Colors.transparent,
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Text(
-                      item.label,
-                      style: TextStyle(
-                        color: active ? Colors.white : Colors.white70,
-                        fontWeight: active ? FontWeight.bold : FontWeight.normal,
-                      ),
+              IconButton(
+                icon: const Icon(Icons.logout, color: Colors.white, size: 20),
+                onPressed: () async {
+                  await _db.auth.signOut();
+                  if (mounted) Navigator.popUntil(context, (r) => r.isFirst);
+                  widget.onSignedOut();
+                },
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: const Icon(Icons.grid_view_rounded, color: Colors.white),
+            title: const Text('العودة للرئيسية (الاختصارات)',
+                style: TextStyle(color: Colors.white, fontSize: 13)),
+            onTap: () => _goHome(closeDrawerFirst: isDrawer),
+          ),
+          const Divider(color: Colors.white24),
+          const SizedBox(height: 12),
+          ...items.map((item) {
+            final active = _tab == item.id;
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: GestureDetector(
+                onTap: () {
+                  setState(() => _tab = item.id);
+                  if (isDrawer) Navigator.pop(context);
+                },
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 200),
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  decoration: BoxDecoration(
+                    color: active ? AppColors.orange : Colors.transparent,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Text(
+                    item.label,
+                    style: TextStyle(
+                      color: active ? Colors.white : Colors.white70,
+                      fontWeight: active ? FontWeight.bold : FontWeight.normal,
                     ),
                   ),
                 ),
-              );
-            }),
-          ],
-        ),
+              ),
+            );
+          }),
+        ],
       ),
     );
   }
@@ -397,25 +326,30 @@ class _WorkshopEmergencyDashboardState extends State<WorkshopEmergencyDashboard>
     final showWinch = EnvConfig.winchEnabled.value;
 
     return StreamBuilder<List<Map<String, dynamic>>>(
-      stream: _db.from('mechanic_requests').stream(primaryKey: ['id']).order('created_at', ascending: false),
+      stream: _db
+          .from('mechanic_requests')
+          .stream(primaryKey: ['id'])
+          .order('created_at', ascending: false)
+          .limit(100),
       builder: (context, reqSnap) {
-        final rawReqs = (reqSnap.data ?? []).where((r) => _inPeriod(r['created_at'] as String?)).toList();
+        final rawReqs =
+            (reqSnap.data ?? []).where((r) => _inPeriod(r['created_at'] as String?)).toList();
         final reqs = rawReqs
             .map(DbMechanicRequest.fromMap)
             .where((r) => (showWinch || r.serviceType != 'winch') && _isVisibleToMe(r))
             .toList();
-        final activeEmergencies = reqs.where((r) => r.status != 'completed' && r.status != 'cancelled').length;
+        final activeEmergencies = reqs.where((r) => r.status != 'completed').length;
 
         return StreamBuilder<List<Map<String, dynamic>>>(
           stream: _db
               .from('workshop_appointments')
               .stream(primaryKey: ['id'])
               .eq('workshop_id', widget.profile.id)
-              .order('created_at', ascending: false),
+              .order('created_at', ascending: false)
+              .limit(100),
           builder: (context, apptSnap) {
-            final appts = (apptSnap.data ?? [])
-                .where((a) => _inPeriod(a['created_at'] as String?))
-                .toList();
+            final appts =
+                (apptSnap.data ?? []).where((a) => _inPeriod(a['created_at'] as String?)).toList();
             final completedAppts = appts.where((a) => a['status'] == 'completed').length;
             final pendingAppts = appts.where((a) => a['status'] == 'pending').length;
 
@@ -463,33 +397,14 @@ class _WorkshopEmergencyDashboardState extends State<WorkshopEmergencyDashboard>
                     physics: const NeverScrollableScrollPhysics(),
                     crossAxisSpacing: 12,
                     mainAxisSpacing: 12,
-                    childAspectRatio: isWide ? 1.55 : 1.15,
+                    childAspectRatio: isWide ? 1.75 : 1.3,
                     children: [
-                      _kpiCard(
-                        'طلبات طوارئ نشطة',
-                        activeEmergencies,
-                        Icons.car_crash,
-                        onTap: () => setState(() => _tab = 1),
-                      ),
-                      _kpiCard(
-                        'حجوزات الورشة',
-                        appts.length,
-                        Icons.event_available,
-                        onTap: () => setState(() => _tab = 2),
-                      ),
-                      _kpiCard(
-                        'سعة الورشة القصوى',
-                        _maxCarCapacity,
-                        Icons.garage,
-                        onTap: _editCapacityDialog,
-                      ),
+                      _kpiCard('طلبات طوارئ نشطة', activeEmergencies, Icons.car_crash),
+                      _kpiCard('حجوزات الورشة', appts.length, Icons.event_available),
+                      _kpiCard('سعة الورشة القصوى', widget.profile.maxCarCapacity, Icons.garage),
                       if (showPayments)
-                        _kpiCard(
-                          'رصيد المحفظة (د.أ)',
-                          widget.profile.walletBalance.toInt(),
-                          Icons.account_balance_wallet,
-                          onTap: () => setState(() => _tab = 4),
-                        ),
+                        _kpiCard('رصيد المحفظة (د.أ)', widget.profile.walletBalance.toInt(),
+                            Icons.account_balance_wallet),
                     ],
                   ),
                   const SizedBox(height: 16),
@@ -500,36 +415,33 @@ class _WorkshopEmergencyDashboardState extends State<WorkshopEmergencyDashboard>
                   const SizedBox(height: 16),
                   _bottomCard(
                     'أحدث مواعيد الورشة',
-                    actionLabel: 'إدارة المواعيد',
-                    onAction: () => setState(() => _tab = 2),
-                    children: appts.isEmpty
+                    appts.isEmpty
                         ? [const Text('لا توجد مواعيد ضمن هذه الفترة')]
                         : appts
                             .take(4)
-                            .map((a) => InkWell(
-                                  borderRadius: BorderRadius.circular(10),
-                                  onTap: () => setState(() => _tab = 2),
-                                  child: Padding(
-                                    padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
-                                    child: Row(
-                                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                      children: [
-                                        Text(
-                                          '${a['appointment_time']} · ${a['appointment_date']}',
-                                          style: const TextStyle(fontWeight: FontWeight.w600),
-                                        ),
-                                        const SizedBox(width: 8),
-                                        Expanded(
-                                          child: Text(
-                                            a['service_description'] ?? '',
-                                            textAlign: TextAlign.end,
-                                            maxLines: 1,
-                                            overflow: TextOverflow.ellipsis,
-                                            style: const TextStyle(color: AppColors.textSecondary),
+                            .map((a) => Padding(
+                                  padding: const EdgeInsets.symmetric(vertical: 6),
+                                  child: Row(
+                                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                    children: [
+                                      Text(
+                                        '${a['appointment_time']} · ${a['appointment_date']}',
+                                        style: const TextStyle(fontWeight: FontWeight.w600),
+                                      ),
+                                      Flexible(
+                                        child: Text(
+                                          StatusLabels.appointment(
+                                            a['status'] as String?,
+                                            progressStep: a['progress_step'] as String?,
+                                          ),
+                                          style: const TextStyle(
+                                            color: AppColors.orange,
+                                            fontWeight: FontWeight.bold,
+                                            fontSize: 12,
                                           ),
                                         ),
-                                      ],
-                                    ),
+                                      ),
+                                    ],
                                   ),
                                 ))
                             .toList(),
@@ -543,64 +455,40 @@ class _WorkshopEmergencyDashboardState extends State<WorkshopEmergencyDashboard>
     );
   }
 
-  Widget _kpiCard(String title, int val, IconData icon, {VoidCallback? onTap}) {
-    return Material(
-      color: AppColors.surface,
-      borderRadius: BorderRadius.circular(16),
-      child: InkWell(
+  Widget _kpiCard(String title, int val, IconData icon) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
         borderRadius: BorderRadius.circular(16),
-        onTap: onTap,
-        child: Container(
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: AppColors.border),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          PulseBlink(child: Icon(icon, color: AppColors.orange, size: 22)),
+          const Spacer(),
+          Text(
+            title,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(color: AppColors.textSecondary, fontSize: 12),
           ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  PulseBlink(child: Icon(icon, color: AppColors.orange, size: 22)),
-                  if (onTap != null)
-                    const Icon(Icons.arrow_forward_ios, size: 12, color: AppColors.textSecondary),
-                ],
-              ),
-              const SizedBox(height: 8),
-              Text(
-                title,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(color: AppColors.textSecondary, fontSize: 12),
-              ),
-              const SizedBox(height: 2),
-              FittedBox(
-                fit: BoxFit.scaleDown,
-                alignment: Alignment.centerRight,
-                child: AnimatedCounter(
-                  value: val,
-                  style: const TextStyle(fontSize: 21, fontWeight: FontWeight.w800, height: 1.15),
-                ),
-              ),
-            ],
+          const SizedBox(height: 4),
+          AnimatedCounter(
+            value: val,
+            style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800),
           ),
-        ),
+        ],
       ),
     );
   }
 
-  Widget _bottomCard(
-    String title, {
-    required List<Widget> children,
-    String? actionLabel,
-    VoidCallback? onAction,
-  }) {
+  Widget _bottomCard(String title, List<Widget> children) {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(18),
+      padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
         color: AppColors.surface,
         borderRadius: BorderRadius.circular(16),
@@ -609,18 +497,8 @@ class _WorkshopEmergencyDashboardState extends State<WorkshopEmergencyDashboard>
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(title, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-              if (actionLabel != null && onAction != null)
-                TextButton(
-                  onPressed: onAction,
-                  child: Text(actionLabel, style: const TextStyle(color: AppColors.orange, fontWeight: FontWeight.bold)),
-                ),
-            ],
-          ),
-          const SizedBox(height: 8),
+          Text(title, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 12),
           ...children,
         ],
       ),
@@ -631,11 +509,13 @@ class _WorkshopEmergencyDashboardState extends State<WorkshopEmergencyDashboard>
     final showPayments = EnvConfig.paymentsEnabled.value;
     final showWinch = EnvConfig.winchEnabled.value;
     return StreamBuilder<List<Map<String, dynamic>>>(
-      stream: _db.from('mechanic_requests').stream(primaryKey: ['id']).order('created_at', ascending: false),
+      stream: _db
+          .from('mechanic_requests')
+          .stream(primaryKey: ['id'])
+          .order('created_at', ascending: false)
+          .limit(100),
       builder: (context, snap) {
-        if (!snap.hasData) {
-          return const Center(child: CircularProgressIndicator());
-        }
+        if (!snap.hasData) return const Center(child: CircularProgressIndicator());
         final reqs = snap.data!
             .where((r) => _inPeriod(r['created_at'] as String?))
             .map(DbMechanicRequest.fromMap)
@@ -657,8 +537,7 @@ class _WorkshopEmergencyDashboardState extends State<WorkshopEmergencyDashboard>
             final r = reqs[i];
             final distKm = _distanceToRequest(r);
             final hasCoords = r.pickupLatitude != null && r.pickupLongitude != null;
-            final isWinch = r.serviceType == 'winch';
-            final hasPhone = (r.phone ?? '').trim().isNotEmpty;
+            final statusText = StatusLabels.emergency(r.status, progressStep: r.progressStep);
 
             return Card(
               margin: const EdgeInsets.only(bottom: 14),
@@ -672,7 +551,7 @@ class _WorkshopEmergencyDashboardState extends State<WorkshopEmergencyDashboard>
                       children: [
                         Expanded(
                           child: Text(
-                            '${isWinch ? 'طلب ونش' : 'ميكانيكي طوارئ'} · ${r.carDetails}',
+                            '${r.serviceType == 'winch' ? 'طلب ونش' : 'ميكانيكي طوارئ'} · ${r.carDetails}',
                             style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
                           ),
                         ),
@@ -690,60 +569,30 @@ class _WorkshopEmergencyDashboardState extends State<WorkshopEmergencyDashboard>
                           ),
                       ],
                     ),
-                    Text('المشكلة: ${r.description ?? "-"}'),
-                    if (hasPhone)
-                      InkWell(
-                        onTap: () => _callPhone(r.phone),
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 3),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              const Icon(Icons.call, size: 15, color: AppColors.success),
-                              const SizedBox(width: 4),
-                              Text(
-                                'هاتف العميل: ${r.phone} (اضغط للاتصال)',
-                                style: const TextStyle(
-                                  color: AppColors.success,
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 13,
-                                  decoration: TextDecoration.underline,
-                                ),
-                              ),
-                            ],
-                          ),
+                    const SizedBox(height: 4),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: AppColors.navy.withValues(alpha: 0.08),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Text(
+                        statusText,
+                        style: const TextStyle(
+                          color: AppColors.navy,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 12,
                         ),
                       ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text('المشكلة: ${r.description ?? "-"} · الهاتف: ${r.phone ?? "-"}'),
                     Text('العنوان: ${r.dropoffAddress ?? "موقع العميل"}'),
-                    if (showPayments) Text('المبلغ: ${r.totalAmount} د.أ'),
-                    if (r.status == 'accepted' &&
-                        r.mechanicId == widget.profile.id &&
-                        (r.progressStep == 'on_the_way' || r.progressStep == 'arrived_at_pickup')) ...[
-                      const SizedBox(height: 10),
-                      ValueListenableBuilder<double?>(
-                        valueListenable: _tracker.emergencyDistanceKm,
-                        builder: (_, liveKm, __) {
-                          final km = liveKm ?? distKm;
-                          final arrived = r.progressStep == 'arrived_at_pickup';
-                          final p = arrived
-                              ? 1.0
-                              : (km != null ? _tracker.computeGpsProgress('emg_${r.id}', km) : 0.35);
-                          return GpsCarProgressTrack(
-                            progress: p,
-                            isWinch: isWinch,
-                            isArrived: arrived,
-                            trackColor: AppColors.placeholder,
-                            activeColor: AppColors.orange,
-                            labelColor: AppColors.textSecondary,
-                            startLabel: 'موقعك',
-                            endLabel: 'موقع العميل',
-                            distanceLabel: arrived
-                                ? 'وصلت إلى موقع العميل ✓'
-                                : (km != null ? 'متبقي ${km.toStringAsFixed(1)} كم' : 'جاري التتبع بالـ GPS...'),
-                          );
-                        },
+                    if (showPayments && r.totalAmount > 0)
+                      Text(
+                        'الأجرة: ${r.totalAmount.toStringAsFixed(2)} د.أ',
+                        style: const TextStyle(fontWeight: FontWeight.bold, color: AppColors.orange),
                       ),
-                    ],
                     const SizedBox(height: 10),
                     if (hasCoords) ...[
                       SizedBox(
@@ -765,11 +614,7 @@ class _WorkshopEmergencyDashboardState extends State<WorkshopEmergencyDashboard>
                                   point: LatLng(r.pickupLatitude!, r.pickupLongitude!),
                                   width: 44,
                                   height: 44,
-                                  child: const Icon(
-                                    Icons.location_on,
-                                    color: AppColors.orange,
-                                    size: 38,
-                                  ),
+                                  child: const Icon(Icons.location_on, color: AppColors.orange, size: 38),
                                 ),
                               ]),
                             ],
@@ -777,35 +622,17 @@ class _WorkshopEmergencyDashboardState extends State<WorkshopEmergencyDashboard>
                         ),
                       ),
                       const SizedBox(height: 10),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: OutlinedButton.icon(
-                              style: OutlinedButton.styleFrom(side: const BorderSide(color: AppColors.navy)),
-                              onPressed: () =>
-                                  _openGpsNavigation(r.pickupLatitude!, r.pickupLongitude!),
-                              icon: const Icon(Icons.navigation, color: AppColors.navy, size: 17),
-                              label: const Text(
-                                'توجيه GPS',
-                                style: TextStyle(color: AppColors.navy, fontWeight: FontWeight.bold, fontSize: 12),
-                              ),
-                            ),
+                      SizedBox(
+                        width: double.infinity,
+                        child: OutlinedButton.icon(
+                          style: OutlinedButton.styleFrom(side: const BorderSide(color: AppColors.navy)),
+                          onPressed: () => _openGpsNavigation(r.pickupLatitude!, r.pickupLongitude!),
+                          icon: const Icon(Icons.navigation, color: AppColors.navy),
+                          label: const Text(
+                            'توجيه GPS لموقع العميل',
+                            style: TextStyle(color: AppColors.navy, fontWeight: FontWeight.bold),
                           ),
-                          if (hasPhone) ...[
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: ElevatedButton.icon(
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: AppColors.success,
-                                  foregroundColor: Colors.white,
-                                ),
-                                onPressed: () => _callPhone(r.phone),
-                                icon: const Icon(Icons.phone, size: 17),
-                                label: const Text('اتصال بالعميل', style: TextStyle(fontSize: 12)),
-                              ),
-                            ),
-                          ],
-                        ],
+                        ),
                       ),
                       const SizedBox(height: 8),
                     ],
@@ -848,10 +675,13 @@ class _WorkshopEmergencyDashboardState extends State<WorkshopEmergencyDashboard>
                               backgroundColor: AppColors.success,
                               foregroundColor: Colors.white,
                             ),
-                            onPressed: () async => await _db
-                                .from('mechanic_requests')
-                                .update({'status': 'completed', 'progress_step': 'completed'})
-                                .eq('id', r.id),
+                            onPressed: () async {
+                              await _db
+                                  .from('mechanic_requests')
+                                  .update({'status': 'completed', 'progress_step': 'completed'})
+                                  .eq('id', r.id);
+                              _tracker.stop();
+                            },
                             child: const Text('إنهاء الطلب'),
                           ),
                         ],
@@ -867,38 +697,38 @@ class _WorkshopEmergencyDashboardState extends State<WorkshopEmergencyDashboard>
   }
 
   Future<void> _acceptEmergency(DbMechanicRequest r) async {
-    await _db.from('mechanic_requests').update({
-      'status': 'accepted',
-      'progress_step': 'on_the_way',
-      'mechanic_id': widget.profile.id,
-      if (_myLat != null) 'latitude': _myLat,
-      if (_myLng != null) 'longitude': _myLng,
-    }).eq('id', r.id);
+    try {
+      await _db.from('mechanic_requests').update({
+        'status': 'accepted',
+        'progress_step': 'on_the_way',
+        'mechanic_id': widget.profile.id,
+      }).eq('id', r.id).select('id');
 
-    if (r.userId != null) {
-      await _notifs.sendNotification(
-        targetUserId: r.userId!,
-        title: 'تم قبول طلب الطوارئ',
-        body: 'المزود في طريقه إليك الآن ويمكنك متابعته عبر الـ GPS.',
-        type: 'order_accepted',
-        referenceId: r.id,
-      );
-      if (r.pickupLatitude != null && r.pickupLongitude != null) {
-        await _tracker.startTrackingEmergencyArrival(
-          requestId: r.id,
-          customerUserId: r.userId!,
-          serviceType: r.serviceType,
-          pickupLat: r.pickupLatitude!,
-          pickupLng: r.pickupLongitude!,
+      if (r.userId != null) {
+        await _notifs.sendNotification(
+          targetUserId: r.userId!,
+          title: 'تم قبول طلب الطوارئ',
+          body: 'المزود في طريقه إليك الآن.',
+          type: 'order_accepted',
+          referenceId: r.id,
+        );
+        if (r.pickupLatitude != null && r.pickupLongitude != null) {
+          await _tracker.startTrackingEmergencyArrival(
+            requestId: r.id,
+            customerUserId: r.userId!,
+            serviceType: r.serviceType,
+            pickupLat: r.pickupLatitude!,
+            pickupLng: r.pickupLongitude!,
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('تعذر قبول الطلب: $e'), backgroundColor: Colors.red),
         );
       }
     }
-  }
-
-  bool _isHistoryAppt(Map<String, dynamic> a) {
-    final s = (a['status'] as String?) ?? '';
-    final step = (a['progress_step'] as String?) ?? '';
-    return s == 'completed' || s == 'cancelled' || step == 'completed';
   }
 
   Widget _buildAppointmentsTab() {
@@ -908,192 +738,112 @@ class _WorkshopEmergencyDashboardState extends State<WorkshopEmergencyDashboard>
           .from('workshop_appointments')
           .stream(primaryKey: ['id'])
           .eq('workshop_id', widget.profile.id)
-          .order('created_at', ascending: false),
+          .order('created_at', ascending: false)
+          .limit(100),
       builder: (context, snap) {
-        if (!snap.hasData) {
-          return const Center(child: CircularProgressIndicator());
-        }
-        final allList = snap.data!;
-        final activeList = allList.where((a) => !_isHistoryAppt(a)).toList();
-        final historyList = allList.where(_isHistoryAppt).toList();
-        final list = _showApptHistory ? historyList : activeList;
+        if (!snap.hasData) return const Center(child: CircularProgressIndicator());
+        final list = snap.data!;
+        if (list.isEmpty) return const Center(child: Text('لا توجد مواعيد محجوزة حالياً'));
+        return ListView.builder(
+          padding: const EdgeInsets.all(16),
+          itemCount: list.length,
+          itemBuilder: (_, i) {
+            final a = list[i];
+            final date = a['appointment_date'] as String;
+            final acceptedOnDate =
+                list.where((x) => x['appointment_date'] == date && x['status'] == 'accepted').length;
+            final isFull = acceptedOnDate >= widget.profile.maxCarCapacity;
+            final statusText = StatusLabels.appointment(
+              a['status'] as String?,
+              progressStep: a['progress_step'] as String?,
+            );
 
-        return Column(
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-              child: Container(
-                padding: const EdgeInsets.all(4),
-                decoration: BoxDecoration(
-                  color: AppColors.surface,
-                  borderRadius: BorderRadius.circular(14),
-                  border: Border.all(color: AppColors.border),
-                ),
-                child: Row(
+            return Card(
+              margin: const EdgeInsets.only(bottom: 12),
+              child: Padding(
+                padding: const EdgeInsets.all(14),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    _segTab(
-                      'المواعيد النشطة (${activeList.length})',
-                      !_showApptHistory,
-                      () => setState(() => _showApptHistory = false),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(
+                          '${a['appointment_date']} · ${a['appointment_time']}',
+                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                        ),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: AppColors.orangeLight,
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: Text(
+                            statusText,
+                            style: const TextStyle(
+                              color: AppColors.navy,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 11.5,
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
-                    _segTab(
-                      'السجل / الهيستوري (${historyList.length})',
-                      _showApptHistory,
-                      () => setState(() => _showApptHistory = true),
-                    ),
+                    const SizedBox(height: 6),
+                    Text((a['service_description'] as String?) ?? ''),
+                    const SizedBox(height: 10),
+                    if (a['status'] == 'pending')
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          if (!isFull)
+                            ElevatedButton(
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: AppColors.success,
+                                foregroundColor: Colors.white,
+                              ),
+                              onPressed: () => _acceptAppointment(a),
+                              child: const Text('قبول الموعد'),
+                            )
+                          else
+                            const Text(
+                              'الورشة ممتلئة لهذا اليوم!',
+                              style: TextStyle(color: AppColors.orange, fontWeight: FontWeight.bold),
+                            ),
+                          OutlinedButton(
+                            onPressed: () => _proposeReschedule(a),
+                            child: const Text('اقتراح موعد آخر'),
+                          ),
+                        ],
+                      ),
+                    if (a['status'] == 'accepted') ...[
+                      const Divider(),
+                      Wrap(
+                        spacing: 6,
+                        runSpacing: 6,
+                        children: [
+                          _stepBtn(a, 'diagnosis', 'فحص السيارة'),
+                          _stepBtn(a, 'repairing', 'قيد الإصلاح'),
+                          _stepBtn(a, 'testing', 'فحص نهائي'),
+                          ActionChip(
+                            backgroundColor: AppColors.orange,
+                            label: Text(
+                              showPayments ? 'جاهزة للتسليم + فاتورة' : 'جاهزة للتسليم',
+                              style: const TextStyle(color: Colors.white),
+                            ),
+                            onPressed: () => _finishAndBill(a),
+                          ),
+                        ],
+                      ),
+                    ],
                   ],
                 ),
               ),
-            ),
-            Expanded(
-              child: list.isEmpty
-                  ? Center(
-                      child: Text(
-                        _showApptHistory
-                            ? 'لا توجد مواعيد منتهية في السجل بعد'
-                            : 'لا توجد مواعيد نشطة حالياً',
-                        style: const TextStyle(color: AppColors.textSecondary),
-                      ),
-                    )
-                  : ListView.builder(
-                      padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
-                      itemCount: list.length,
-                      itemBuilder: (_, i) {
-                        final a = list[i];
-                        final date = a['appointment_date'] as String;
-                        final acceptedOnDate = allList
-                            .where((x) => x['appointment_date'] == date && x['status'] == 'accepted')
-                            .length;
-                        final isFull = acceptedOnDate >= _maxCarCapacity;
-                        final step = a['progress_step'] as String? ?? 'pending';
-
-                        return Card(
-                          margin: const EdgeInsets.only(bottom: 12),
-                          child: Padding(
-                            padding: const EdgeInsets.all(14),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Row(
-                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                  children: [
-                                    Text(
-                                      '${a['appointment_date']} · ${a['appointment_time']}',
-                                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
-                                    ),
-                                    Chip(
-                                      label: Text(
-                                        a['status'] == 'completed'
-                                            ? 'مكتمل ✓'
-                                            : (a['status'] == 'cancelled' ? 'ملغي' : '${a['status']}'),
-                                        style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                                Text(a['service_description'] ?? ''),
-                                Text(
-                                  'المرحلة: $step',
-                                  style: const TextStyle(color: AppColors.textSecondary, fontSize: 12),
-                                ),
-                                const SizedBox(height: 10),
-                                if (a['status'] == 'pending')
-                                  Wrap(
-                                    spacing: 8,
-                                    runSpacing: 8,
-                                    children: [
-                                      if (!isFull)
-                                        ElevatedButton(
-                                          style: ElevatedButton.styleFrom(
-                                            backgroundColor: AppColors.success,
-                                            foregroundColor: Colors.white,
-                                          ),
-                                          onPressed: () => _acceptAppointment(a),
-                                          child: const Text('قبول الموعد'),
-                                        )
-                                      else
-                                        const Text(
-                                          'الورشة ممتلئة لهذا اليوم!',
-                                          style: TextStyle(
-                                            color: AppColors.orange,
-                                            fontWeight: FontWeight.bold,
-                                          ),
-                                        ),
-                                      OutlinedButton(
-                                        onPressed: () => _proposeReschedule(a),
-                                        child: const Text('اقتراح موعد آخر (نفس اليوم أو يوم آخر)'),
-                                      ),
-                                    ],
-                                  ),
-                                if (a['status'] == 'accepted') ...[
-                                  const Divider(),
-                                  Wrap(
-                                    spacing: 6,
-                                    runSpacing: 6,
-                                    children: [
-                                      _stepBtn(a, 'diagnosis', 'فحص'),
-                                      _stepBtn(a, 'repairing', 'قيد الإصلاح'),
-                                      _stepBtn(a, 'testing', 'فحص نهائي'),
-                                      ActionChip(
-                                        backgroundColor: AppColors.orange,
-                                        label: Text(
-                                          showPayments ? 'جاهزة للتسليم + فاتورة' : 'إنهاء وتسليم (للسجل)',
-                                          style: const TextStyle(color: Colors.white),
-                                        ),
-                                        onPressed: () => _finishAndBill(a),
-                                      ),
-                                      if (showPayments && step == 'awaiting_payment')
-                                        ActionChip(
-                                          backgroundColor: AppColors.success,
-                                          label: const Text(
-                                            'تم التسليم (نقل للسجل)',
-                                            style: TextStyle(color: Colors.white),
-                                          ),
-                                          onPressed: () async {
-                                            await _db.from('workshop_appointments').update({
-                                              'status': 'completed',
-                                              'progress_step': 'completed',
-                                            }).eq('id', a['id']);
-                                          },
-                                        ),
-                                    ],
-                                  ),
-                                ],
-                              ],
-                            ),
-                          ),
-                        );
-                      },
-                    ),
-            ),
-          ],
+            );
+          },
         );
       },
-    );
-  }
-
-  Widget _segTab(String label, bool selected, VoidCallback onTap) {
-    return Expanded(
-      child: GestureDetector(
-        onTap: onTap,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 180),
-          padding: const EdgeInsets.symmetric(vertical: 10),
-          decoration: BoxDecoration(
-            color: selected ? AppColors.navy : Colors.transparent,
-            borderRadius: BorderRadius.circular(10),
-          ),
-          alignment: Alignment.center,
-          child: Text(
-            label,
-            style: TextStyle(
-              color: selected ? Colors.white : AppColors.textPrimary,
-              fontWeight: FontWeight.bold,
-              fontSize: 12,
-            ),
-          ),
-        ),
-      ),
     );
   }
 
@@ -1104,22 +854,45 @@ class _WorkshopEmergencyDashboardState extends State<WorkshopEmergencyDashboard>
       selected: active,
       selectedColor: AppColors.navy,
       labelStyle: TextStyle(color: active ? Colors.white : AppColors.textPrimary),
-      onSelected: (_) async => await _db
-          .from('workshop_appointments')
-          .update({'progress_step': stepKey}).eq('id', appt['id']),
+      onSelected: (_) async {
+        try {
+          await _db
+              .from('workshop_appointments')
+              .update({'progress_step': stepKey})
+              .eq('id', appt['id'])
+              .select('id');
+          if (appt['user_id'] != null) {
+            await _notifs.sendNotification(
+              targetUserId: appt['user_id'] as String,
+              title: 'تحديث حالة سيارتك في الورشة',
+              body: 'أصبحت سيارتك الآن في مرحلة: $label',
+              type: 'appointment_update',
+              referenceId: appt['id'] as String,
+            );
+          }
+        } catch (e) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('تعذر التحديث: $e'), backgroundColor: Colors.red),
+            );
+          }
+        }
+      },
     );
   }
 
   Future<void> _acceptAppointment(Map<String, dynamic> a) async {
     await _db
         .from('workshop_appointments')
-        .update({'status': 'accepted', 'progress_step': 'on_the_way'}).eq('id', a['id']);
+        .update({'status': 'accepted', 'progress_step': 'on_the_way'})
+        .eq('id', a['id'])
+        .select('id');
     await _notifs.sendNotification(
-      targetUserId: a['user_id'],
+      targetUserId: a['user_id'] as String,
       title: 'تم قبول موعد الورشة',
       body: 'موعدك مؤكد بتاريخ ${a['appointment_date']} الساعة ${a['appointment_time']}.',
       type: 'order_accepted',
-      referenceId: a['id'],
+      referenceId: a['id'] as String,
     );
   }
 
@@ -1148,9 +921,7 @@ class _WorkshopEmergencyDashboardState extends State<WorkshopEmergencyDashboard>
                     firstDate: DateTime.now(),
                     lastDate: DateTime.now().add(const Duration(days: 30)),
                   );
-                  if (d != null) {
-                    setS(() => chosenDate = d);
-                  }
+                  if (d != null) setS(() => chosenDate = d);
                 },
                 child: Text('التاريخ: ${chosenDate.toString().split(' ').first}'),
               ),
@@ -1171,15 +942,13 @@ class _WorkshopEmergencyDashboardState extends State<WorkshopEmergencyDashboard>
                   'proposed_time': chosenHour,
                 }).eq('id', a['id']);
                 await _notifs.sendNotification(
-                  targetUserId: a['user_id'],
+                  targetUserId: a['user_id'] as String,
                   title: 'تم اقتراح موعد بديل للورشة',
                   body: 'تقترح الورشة موعداً جديداً: $dateStr الساعة $chosenHour.',
                   type: 'reschedule_proposed',
-                  referenceId: a['id'],
+                  referenceId: a['id'] as String,
                 );
-                if (ctx.mounted) {
-                  Navigator.pop(ctx);
-                }
+                if (ctx.mounted) Navigator.pop(ctx);
               },
               child: const Text('إرسال الاقتراح'),
             ),
@@ -1193,13 +962,14 @@ class _WorkshopEmergencyDashboardState extends State<WorkshopEmergencyDashboard>
     if (!EnvConfig.paymentsEnabled.value) {
       await _db
           .from('workshop_appointments')
-          .update({'status': 'completed', 'progress_step': 'completed'}).eq('id', a['id']);
+          .update({'status': 'completed', 'progress_step': 'completed'})
+          .eq('id', a['id']);
       await _notifs.sendNotification(
-        targetUserId: a['user_id'],
+        targetUserId: a['user_id'] as String,
         title: 'سيارتك جاهزة للتسليم!',
-        body: 'انتهى تصليح السيارة في الورشة وتم نقل الموعد إلى السجل.',
+        body: 'انتهى تصليح السيارة في الورشة ويمكنك استلامها الآن.',
         type: 'car_ready',
-        referenceId: a['id'],
+        referenceId: a['id'] as String,
       );
       return;
     }
@@ -1211,40 +981,39 @@ class _WorkshopEmergencyDashboardState extends State<WorkshopEmergencyDashboard>
         title: const Text('إنهاء الصيانة وإصدار الفاتورة'),
         content: TextField(
           controller: amountCtrl,
-          keyboardType: TextInputType.number,
+          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          textInputAction: TextInputAction.done,
           decoration: const InputDecoration(labelText: 'أدخل المبلغ المطلوب (د.أ)'),
         ),
         actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('إلغاء')),
           ElevatedButton(
             style: ElevatedButton.styleFrom(
               backgroundColor: AppColors.orange,
               foregroundColor: Colors.white,
             ),
             onPressed: () async {
-              final amt = double.tryParse(amountCtrl.text) ?? 0.0;
-              if (amt <= 0) {
-                return;
-              }
+              final amt = double.tryParse(amountCtrl.text.trim()) ?? 0.0;
+              if (amt <= 0) return;
               await _db
                   .from('workshop_appointments')
                   .update({'total_amount': amt, 'progress_step': 'awaiting_payment'})
                   .eq('id', a['id']);
               await _notifs.sendNotification(
-                targetUserId: a['user_id'],
+                targetUserId: a['user_id'] as String,
                 title: 'سيارتك جاهزة للتسليم!',
                 body: 'انتهى تصليح السيارة، قيمة الفاتورة $amt د.أ.',
                 type: 'car_ready',
-                referenceId: a['id'],
+                referenceId: a['id'] as String,
               );
-              if (ctx.mounted) {
-                Navigator.pop(ctx);
-              }
+              if (ctx.mounted) Navigator.pop(ctx);
             },
             child: const Text('إرسال الفاتورة للزبون'),
           ),
         ],
       ),
     );
+    amountCtrl.dispose();
   }
 
   Widget _buildWalletTab() {
@@ -1253,7 +1022,8 @@ class _WorkshopEmergencyDashboardState extends State<WorkshopEmergencyDashboard>
           .from('wallet_transactions')
           .stream(primaryKey: ['id'])
           .eq('provider_id', widget.profile.id)
-          .order('created_at', ascending: false),
+          .order('created_at', ascending: false)
+          .limit(50),
       builder: (context, snap) {
         final txs = (snap.data ?? [])
             .where((t) => _inPeriod(t['created_at'] as String?))
@@ -1296,30 +1066,10 @@ class _WorkshopEmergencyDashboardState extends State<WorkshopEmergencyDashboard>
                 ),
               ),
             ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(child: _miniFinanceCard('قبل العمولة', gross, AppColors.navy)),
-                const SizedBox(width: 8),
-                Expanded(child: _miniFinanceCard('العمولة المقتطعة', comm, AppColors.orange)),
-                const SizedBox(width: 8),
-                Expanded(child: _miniFinanceCard('الصافي بالمحفظة', net, AppColors.success)),
-              ],
-            ),
-            const SizedBox(height: 14),
-            InteractiveAnimatedChart(
-              title: 'التحليل المالي لمحفظة الورشة',
-              unit: 'د.أ',
-              data: [
-                (label: 'قبل العمولة', value: gross),
-                (label: 'العمولة', value: comm),
-                (label: 'الصافي', value: net),
-              ],
-            ),
             const SizedBox(height: 16),
             ...txs.map((t) => Card(
                   child: ListTile(
-                    title: Text('${t.transactionType} · ${t.paymentMethod}'),
+                    title: Text('${_txArabicType(t.transactionType)} · ${t.paymentMethod}'),
                     subtitle: Text(
                       'قبل العمولة: ${t.grossAmount.toStringAsFixed(2)} | العمولة: -${t.commissionAmount.toStringAsFixed(2)}',
                     ),
@@ -1336,28 +1086,10 @@ class _WorkshopEmergencyDashboardState extends State<WorkshopEmergencyDashboard>
     );
   }
 
-  Widget _miniFinanceCard(String title, double val, Color color) {
-    return Container(
-      padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppColors.border),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 10, color: AppColors.textSecondary)),
-          const SizedBox(height: 4),
-          FittedBox(
-            fit: BoxFit.scaleDown,
-            child: Text(
-              '${val.toStringAsFixed(1)} د.أ',
-              style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: color),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
+  String _txArabicType(String raw) => switch (raw.toLowerCase()) {
+        'order' || 'part_order' => 'بيع قطعة غيار',
+        'workshop' || 'appointment' => 'خدمة ورشة',
+        'winch_towing' || 'winch' || 'emergency' => 'طلب طوارئ / ونش',
+        _ => raw,
+      };
 }
