@@ -5,9 +5,9 @@ import '../../models/subscription_plans.dart';
 import '../../services/paytabs_payment_service.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/animations.dart';
-import '../mobile/customer_subscriptions_screen.dart';
+import 'customer_subscriptions_screen.dart';
 
-/// شاشة دفع فاتورة الورشة (متوافقة 100% مع كل استدعاءات التطبيق)
+/// شاشة دفع فاتورة الورشة
 class WorkshopCheckoutScreen extends StatelessWidget {
   final DbWorkshopAppointment appointment;
   final CustomerProfile customerProfile;
@@ -29,18 +29,15 @@ class WorkshopCheckoutScreen extends StatelessWidget {
           'موعد بتاريخ ${appointment.appointmentDate} · ${appointment.appointmentTime}',
       initialBaseAmount: appointment.totalAmount,
       orderType: 'wrk',
-      transactionType: 'workshop_service',
-      tableName: 'workshop_appointments',
-      commissionColumnName: 'platform_commission',
+      serviceKind: 'workshop',
       referenceId: appointment.id,
-      providerId: appointment.workshopId,
       customerProfile: customerProfile,
       onPaymentCompleted: onPaymentCompleted,
     );
   }
 }
 
-/// شاشة دفع فاتورة الطوارئ والونش (جديدة ومربوطة بمحفظة الفني/الونش)
+/// شاشة دفع فاتورة الطوارئ والونش
 class EmergencyCheckoutScreen extends StatelessWidget {
   final DbMechanicRequest request;
   final CustomerProfile customerProfile;
@@ -57,7 +54,8 @@ class EmergencyCheckoutScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final isWinch = request.serviceType == 'winch';
     return _ServiceCheckoutScreen(
-      screenTitle: isWinch ? 'دفع فاتورة ونش الطوارئ' : 'دفع فاتورة طوارئ الميكانيكي',
+      screenTitle:
+          isWinch ? 'دفع فاتورة ونش الطوارئ' : 'دفع فاتورة طوارئ الميكانيكي',
       serviceTitle: (request.description ?? '').trim().isNotEmpty
           ? request.description!
           : (isWinch ? 'خدمة سحب ونش طوارئ' : 'خدمة ميكانيكي طوارئ ميداني'),
@@ -66,11 +64,8 @@ class EmergencyCheckoutScreen extends StatelessWidget {
           : 'طلب طوارئ مباشر #${request.id.substring(0, 6)}',
       initialBaseAmount: request.totalAmount,
       orderType: 'emg',
-      transactionType: isWinch ? 'emergency_winch' : 'emergency_mechanic',
-      tableName: 'mechanic_requests',
-      commissionColumnName: 'commission_amount',
+      serviceKind: 'emergency',
       referenceId: request.id,
-      providerId: request.mechanicId,
       customerProfile: customerProfile,
       onPaymentCompleted: onPaymentCompleted,
     );
@@ -83,11 +78,8 @@ class _ServiceCheckoutScreen extends StatefulWidget {
   final String serviceSubtitle;
   final double initialBaseAmount;
   final String orderType; // 'wrk' | 'emg'
-  final String transactionType;
-  final String tableName; // 'workshop_appointments' | 'mechanic_requests'
-  final String commissionColumnName; // 'platform_commission' | 'commission_amount'
+  final String serviceKind; // 'workshop' | 'emergency'
   final String referenceId;
-  final String? providerId;
   final CustomerProfile customerProfile;
   final VoidCallback onPaymentCompleted;
 
@@ -97,11 +89,8 @@ class _ServiceCheckoutScreen extends StatefulWidget {
     required this.serviceSubtitle,
     required this.initialBaseAmount,
     required this.orderType,
-    required this.transactionType,
-    required this.tableName,
-    required this.commissionColumnName,
+    required this.serviceKind,
     required this.referenceId,
-    required this.providerId,
     required this.customerProfile,
     required this.onPaymentCompleted,
   });
@@ -153,141 +142,6 @@ class _ServiceCheckoutScreenState extends State<_ServiceCheckoutScreen> {
     } catch (_) {}
   }
 
-  /// تسجيل العملية المالية وتحديث حالة الطلب ومحفظة مقدم الخدمة + إرسال إشعار
-  Future<void> _recordPaymentAndSyncProviderWallet({
-    required double grossAmount,
-    required String paymentMethod, // 'visa' | 'cliq' | 'cash'
-    String? cliqRef,
-  }) async {
-    final providerId = widget.providerId;
-    double commRate = 0.15;
-    double currentWallet = 0.0;
-    double currentDebt = 0.0;
-
-    if (providerId != null && providerId.isNotEmpty) {
-      try {
-        final providerRow = await _db
-            .from('customers')
-            .select(
-              'subscription_plan, commission_rate, wallet_balance, pending_commission_debt',
-            )
-            .eq('id', providerId)
-            .maybeSingle();
-
-        if (providerRow != null) {
-          final planCode =
-              (providerRow['subscription_plan'] as String?) ?? 'free';
-          final plan = AppSubscriptionCatalog.getProviderPlan(planCode);
-          commRate = (providerRow['commission_rate'] as num?)?.toDouble() ??
-              plan.commissionRate;
-          currentWallet =
-              (providerRow['wallet_balance'] as num?)?.toDouble() ?? 0.0;
-          currentDebt =
-              (providerRow['pending_commission_debt'] as num?)?.toDouble() ??
-                  0.0;
-        }
-      } catch (_) {}
-    }
-
-    final commissionAmount =
-        double.parse((grossAmount * commRate).toStringAsFixed(2));
-    final netAmount =
-        double.parse((grossAmount - commissionAmount).toStringAsFixed(2));
-
-    final isPendingVerification = paymentMethod == 'cliq';
-    final paymentStatus =
-        isPendingVerification ? 'pending_verification' : 'paid';
-    final txStatus = isPendingVerification ? 'pending' : 'completed';
-
-    // 1) تحديث الفاتورة في جدول الورشة أو الطوارئ
-    final updateData = <String, dynamic>{
-      'total_amount': grossAmount,
-      widget.commissionColumnName: commissionAmount,
-      'payment_status': paymentStatus,
-    };
-    try {
-      await _db.from(widget.tableName).update({
-        ...updateData,
-        'payment_method': paymentMethod,
-      }).eq('id', widget.referenceId);
-    } catch (_) {
-      // في حال لم يُضف عمود payment_method بعد
-      await _db
-          .from(widget.tableName)
-          .update(updateData)
-          .eq('id', widget.referenceId);
-    }
-
-    // 2) تجنب تكرار الحركة في wallet_transactions لنفس الطلب
-    final existingTx = await _db
-        .from('wallet_transactions')
-        .select('id')
-        .eq('reference_id', widget.referenceId)
-        .maybeSingle();
-
-    if (existingTx == null && providerId != null && providerId.isNotEmpty) {
-      await _db.from('wallet_transactions').insert({
-        'provider_id': providerId,
-        'customer_id': widget.customerProfile.id,
-        'reference_id': widget.referenceId,
-        'transaction_type': widget.transactionType,
-        'payment_method': paymentMethod,
-        'gross_amount': grossAmount,
-        'commission_rate': commRate,
-        'commission_amount': commissionAmount,
-        'net_amount': netAmount,
-        'status': txStatus,
-      });
-
-      // 3) تحديث محفظة مقدم الخدمة أو ذمة العمولة فوراً
-      if (paymentMethod == 'visa') {
-        await _db.from('customers').update({
-          'wallet_balance':
-              double.parse((currentWallet + netAmount).toStringAsFixed(2)),
-        }).eq('id', providerId);
-      } else if (paymentMethod == 'cash' && commissionAmount > 0) {
-        await _db.from('customers').update({
-          'pending_commission_debt':
-              double.parse((currentDebt + commissionAmount).toStringAsFixed(2)),
-        }).eq('id', providerId);
-      }
-
-      // 4) تسجيل طلب حوالة CliQ إن كانت وسيلة الدفع CliQ
-      if (paymentMethod == 'cliq' && (cliqRef ?? '').isNotEmpty) {
-        try {
-          await _db.from('cliq_requests').insert({
-            'user_id': widget.customerProfile.id,
-            'user_email': widget.customerProfile.email,
-            'transaction_ref': cliqRef,
-            'status': 'pending',
-          });
-        } catch (_) {}
-      }
-
-      // 5) إرسال إشعار فوري لمقدم الخدمة (ورشة / ونش / ميكانيكي)
-      final notifTitle = paymentMethod == 'visa'
-          ? 'تم دفع الفاتورة وإيداع الصافي بمحفظتك 💰'
-          : paymentMethod == 'cliq'
-              ? 'حوالة CliQ جديدة قيد المراجعة 🏦'
-              : 'تم تأكيد الدفع النقدي للفاتورة 💵';
-      final notifBody = paymentMethod == 'visa'
-          ? 'دفع العميل ${grossAmount.toStringAsFixed(2)} د.أ إلكترونياً. تم إضافة صافي ${netAmount.toStringAsFixed(2)} د.أ إلى محفظتك.'
-          : paymentMethod == 'cliq'
-              ? 'أرسل العميل حوالة CliQ بمبلغ ${grossAmount.toStringAsFixed(2)} د.أ (المرجع: $cliqRef). سيتم إيداعها بمحفظتك بعد الاعتماد.'
-              : 'أكد العميل دفع ${grossAmount.toStringAsFixed(2)} د.أ نقداً. عمولة المنصة المسجلة: ${commissionAmount.toStringAsFixed(2)} د.أ.';
-
-      try {
-        await _db.from('notifications').insert({
-          'user_id': providerId,
-          'title': notifTitle,
-          'body': notifBody,
-          'type': 'payment_received',
-          'reference_id': widget.referenceId,
-        });
-      } catch (_) {}
-    }
-  }
-
   Future<void> _submitPayment() async {
     final baseAmount = _baseAmount;
     if (baseAmount <= 0) {
@@ -333,24 +187,17 @@ class _ServiceCheckoutScreenState extends State<_ServiceCheckoutScreen> {
           name: widget.customerProfile.fullName,
         );
         if (!ok) return;
-
-        await _recordPaymentAndSyncProviderWallet(
-          grossAmount: baseAmount,
-          paymentMethod: 'visa',
-        );
-      } else if (_selectedMethod == 'cliq') {
-        await _recordPaymentAndSyncProviderWallet(
-          grossAmount: baseAmount,
-          paymentMethod: 'cliq',
-          cliqRef: _cliqRefCtrl.text.trim(),
-        );
-      } else {
-        // دفع نقدي (كاش)
-        await _recordPaymentAndSyncProviderWallet(
-          grossAmount: baseAmount,
-          paymentMethod: 'cash',
-        );
       }
+
+      // تنفيذ الدفع وتحديث الفاتورة ومحفظة مقدم الخدمة والذمم والإشعار بأمان عبر RPC
+      await _db.rpc('complete_service_invoice_payment', params: {
+        'p_service_kind': widget.serviceKind,
+        'p_reference_id': widget.referenceId,
+        'p_gross_amount': baseAmount,
+        'p_payment_method': _selectedMethod,
+        'p_cliq_ref':
+            _selectedMethod == 'cliq' ? _cliqRefCtrl.text.trim() : null,
+      });
 
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -528,7 +375,8 @@ class _ServiceCheckoutScreenState extends State<_ServiceCheckoutScreen> {
             code: 'visa',
             icon: Icons.credit_card,
             title: 'Visa / Mastercard (MEPS)',
-            subtitle: 'دفع إلكتروني فوري — يُضاف الصافي مباشرة لمحفظة مقدم الخدمة',
+            subtitle:
+                'دفع إلكتروني فوري — يُضاف الصافي مباشرة لمحفظة مقدم الخدمة',
           ),
           const SizedBox(height: 8),
           _methodTile(
@@ -577,7 +425,8 @@ class _ServiceCheckoutScreenState extends State<_ServiceCheckoutScreen> {
             code: 'cash',
             icon: Icons.payments_outlined,
             title: 'الدفع نقداً (كاش)',
-            subtitle: 'ادفع مباشرة لمقدم الخدمة وتُحتسب عمولة المنصة تلقائياً على محفظته',
+            subtitle:
+                'ادفع مباشرة لمقدم الخدمة وتُحتسب عمولة المنصة تلقائياً على محفظته',
           ),
           const SizedBox(height: 22),
           SizedBox(
@@ -670,9 +519,7 @@ class _ServiceCheckoutScreenState extends State<_ServiceCheckoutScreen> {
               ),
             ),
             Icon(
-              selected
-                  ? Icons.radio_button_checked
-                  : Icons.radio_button_off,
+              selected ? Icons.radio_button_checked : Icons.radio_button_off,
               color: selected ? AppColors.orange : AppColors.textSecondary,
             ),
           ],

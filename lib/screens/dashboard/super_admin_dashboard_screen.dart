@@ -34,7 +34,11 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
   DashboardPeriod _period = DashboardPeriod.month1;
   DateTimeRange? _customRange;
 
+  // تسعيرة الونش لحال والميكانيكي لحال
+  final _winchBaseFeeCtrl = TextEditingController(text: '10.0');
   final _kmPriceCtrl = TextEditingController(text: '1.5');
+  final _mechanicCalloutFeeCtrl = TextEditingController(text: '10.0');
+
   final _minWithdrawCtrl = TextEditingController(text: '20.0');
   final _cliqAliasCtrl = TextEditingController(text: 'AUTOPARTSJO');
   final _defaultCommCtrl = TextEditingController(text: '0.15');
@@ -72,7 +76,9 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
 
   @override
   void dispose() {
+    _winchBaseFeeCtrl.dispose();
     _kmPriceCtrl.dispose();
+    _mechanicCalloutFeeCtrl.dispose();
     _minWithdrawCtrl.dispose();
     _cliqAliasCtrl.dispose();
     _defaultCommCtrl.dispose();
@@ -135,7 +141,9 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
       };
       if (!mounted) return;
       setState(() {
+        _winchBaseFeeCtrl.text = map['winch_base_fee'] ?? '10.0';
         _kmPriceCtrl.text = map['winch_price_per_km'] ?? '1.5';
+        _mechanicCalloutFeeCtrl.text = map['mechanic_callout_fee'] ?? '10.0';
         _minWithdrawCtrl.text = map['min_withdrawal_amount'] ?? '20.0';
         _cliqAliasCtrl.text = map['cliq_alias'] ?? 'AUTOPARTSJO';
         _defaultCommCtrl.text = map['default_parts_commission'] ?? '0.15';
@@ -173,9 +181,15 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
     try {
       final newDefaultLimit =
           int.tryParse(_defaultMaxPostsCtrl.text.trim()) ?? 5;
+      final winchBaseFee =
+          double.tryParse(_winchBaseFeeCtrl.text.trim()) ?? 10.0;
       final kmRate = double.tryParse(_kmPriceCtrl.text.trim()) ?? 1.5;
+      final mechanicCalloutFee =
+          double.tryParse(_mechanicCalloutFeeCtrl.text.trim()) ?? 10.0;
       final updates = [
+        {'key': 'winch_base_fee', 'value': winchBaseFee.toString()},
         {'key': 'winch_price_per_km', 'value': kmRate.toString()},
+        {'key': 'mechanic_callout_fee', 'value': mechanicCalloutFee.toString()},
         {'key': 'min_withdrawal_amount', 'value': _minWithdrawCtrl.text.trim()},
         {'key': 'cliq_alias', 'value': _cliqAliasCtrl.text.trim()},
         {
@@ -650,7 +664,7 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
                       ),
                       const SizedBox(height: 4),
                       Text(
-                        'المنشورات المستخدمة: $postsUsed / الحد الأقصى: $postsLimit منشور · الباقة: ${m.subscriptionPlan}',
+                        'المنشورات المستخدمة: $postsUsed / الحد الأقصى: ${postsLimit < 0 ? "غير محدود" : "$postsLimit منشور"} · الباقة: ${m.subscriptionPlan}',
                         style: const TextStyle(
                             color: AppColors.orange,
                             fontWeight: FontWeight.bold,
@@ -770,6 +784,7 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
                 DropdownButtonFormField<String>(
                   initialValue: [
                     'free',
+                    'provider_1m',
                     'provider_3m',
                     'provider_6m',
                     'provider_12m',
@@ -781,29 +796,55 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
                       const InputDecoration(labelText: 'الباقة / الاشتراك'),
                   items: const [
                     DropdownMenuItem(
-                        value: 'free', child: Text('مجاني (free)')),
+                        value: 'free', child: Text('مجاني (5 منشورات)')),
+                    DropdownMenuItem(
+                        value: 'provider_1m',
+                        child: Text('مزود شهر (15 منشور)')),
                     DropdownMenuItem(
                         value: 'provider_3m',
-                        child: Text('مزود 3 شهور (SEO +1)')),
+                        child: Text('مزود 3 شهور (30 منشور · SEO +1)')),
                     DropdownMenuItem(
                         value: 'provider_6m',
-                        child: Text('مزود 6 شهور (SEO +2)')),
+                        child: Text('مزود 6 شهور (45 منشور · SEO +2)')),
                     DropdownMenuItem(
                         value: 'provider_12m',
-                        child: Text('مزود سنوي 0% عمولة (SEO +3)')),
+                        child: Text('مزود سنوي (لا نهائي · 0% عمولة)')),
                     DropdownMenuItem(
                         value: 'customer_pro', child: Text('مستخدم برو (Pro)')),
                   ],
                   onChanged: (v) {
-                    if (v != null) setD(() => plan = v);
+                    if (v != null) {
+                      setD(() {
+                        plan = v;
+                        switch (v) {
+                          case 'free':
+                            limitCtrl.text = '5';
+                            break;
+                          case 'provider_1m':
+                            limitCtrl.text = '15';
+                            break;
+                          case 'provider_3m':
+                            limitCtrl.text = '30';
+                            break;
+                          case 'provider_6m':
+                            limitCtrl.text = '45';
+                            break;
+                          case 'provider_12m':
+                            limitCtrl.text = '-1';
+                            break;
+                        }
+                      });
+                    }
                   },
                 ),
                 const SizedBox(height: 10),
                 TextField(
                   controller: limitCtrl,
-                  keyboardType: TextInputType.number,
+                  keyboardType:
+                      const TextInputType.numberWithOptions(signed: true),
                   decoration: const InputDecoration(
-                      labelText: 'عدد المنشورات المسموح لهذا الحساب'),
+                    labelText: 'عدد المنشورات المسموح (-1 = غير محدود)',
+                  ),
                 ),
                 if (showPayments) ...[
                   const SizedBox(height: 10),
@@ -836,7 +877,9 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
                               ? 365
                               : plan == 'provider_6m'
                                   ? 180
-                                  : 90,
+                                  : plan == 'provider_3m'
+                                      ? 90
+                                      : 30,
                         ))
                         .toUtc()
                         .toIso8601String();
@@ -919,19 +962,113 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
         ),
         if (showWinch) ...[
           const SizedBox(height: 10),
-          TextField(
-            controller: _kmPriceCtrl,
-            keyboardType: const TextInputType.numberWithOptions(decimal: true),
-            decoration: const InputDecoration(
-              labelText:
-                  'تسعيرة الونش لكل كيلومتر (د.أ) — مطبّقة 100% على الطلبات',
-              filled: true,
-              fillColor: AppColors.surface,
-              border: OutlineInputBorder(),
-              prefixIcon: Icon(Icons.local_shipping, color: AppColors.orange),
+          Card(
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(14),
+              side: BorderSide(color: AppColors.orange.withValues(alpha: 0.35)),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(14),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Row(
+                    children: [
+                      Icon(Icons.local_shipping_outlined,
+                          color: AppColors.orange),
+                      SizedBox(width: 8),
+                      Text(
+                        'تسعيرة الونش والسحب (مستقلة)',
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 15,
+                          color: AppColors.navy,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _winchBaseFeeCtrl,
+                    keyboardType:
+                        const TextInputType.numberWithOptions(decimal: true),
+                    decoration: const InputDecoration(
+                      labelText: 'رسوم فتحة الونش الأساسية (د.أ)',
+                      helperText:
+                          'المبلغ الثابت عند طلب الونش قبل احتساب المسافة',
+                      filled: true,
+                      fillColor: AppColors.surface,
+                      border: OutlineInputBorder(),
+                      prefixIcon:
+                          Icon(Icons.flag_outlined, color: AppColors.orange),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _kmPriceCtrl,
+                    keyboardType:
+                        const TextInputType.numberWithOptions(decimal: true),
+                    decoration: const InputDecoration(
+                      labelText:
+                          'تسعيرة الونش لكل كيلومتر (د.أ) — مطبّقة 100% على الطلبات',
+                      helperText: 'يُضرب في المسافة بين نقطة الالتقاط والوجهة',
+                      filled: true,
+                      fillColor: AppColors.surface,
+                      border: OutlineInputBorder(),
+                      prefixIcon:
+                          Icon(Icons.local_shipping, color: AppColors.orange),
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
         ],
+        const SizedBox(height: 12),
+        Card(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+            side: BorderSide(color: AppColors.navy.withValues(alpha: 0.25)),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(14),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Row(
+                  children: [
+                    Icon(Icons.build_circle_outlined, color: AppColors.navy),
+                    SizedBox(width: 8),
+                    Text(
+                      'تسعيرة ميكانيكي الطوارئ (مستقلة)',
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 15,
+                        color: AppColors.navy,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _mechanicCalloutFeeCtrl,
+                  keyboardType:
+                      const TextInputType.numberWithOptions(decimal: true),
+                  decoration: const InputDecoration(
+                    labelText: 'رسوم حضور وكشفية ميكانيكي الطوارئ (د.أ)',
+                    helperText:
+                        'أجرة وصول وكشفية الميكانيكي للموقع — منفصلة تماماً عن تسعيرة الونش',
+                    filled: true,
+                    fillColor: AppColors.surface,
+                    border: OutlineInputBorder(),
+                    prefixIcon:
+                        Icon(Icons.handyman_outlined, color: AppColors.navy),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
         const SizedBox(height: 12),
         Card(
           child: SwitchListTile(
@@ -2209,7 +2346,8 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
   String _txArabicType(String raw) => switch (raw.toLowerCase()) {
         'order' || 'part_order' => 'طلب قطعة غيار',
         'workshop' || 'appointment' => 'خدمة ورشة',
-        'winch_towing' || 'winch' || 'emergency' => 'طلب ونش / طوارئ',
+        'winch_towing' || 'winch' || 'emergency' || 'mechanic' =>
+          'طلب ونش / طوارئ',
         'sub' || 'subscription' => 'اشتراك باقة',
         'debt' => 'تسديد عمولات',
         _ => raw,
