@@ -4,10 +4,9 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../config/env_config.dart';
 import '../../models/db_models.dart';
+import '../../models/subscription_plans.dart';
 import '../../services/notifications_service.dart';
-import '../../services/paytabs_payment_service.dart';
 import '../../theme/app_theme.dart';
-import '../../utils/status_labels.dart';
 import '../../widgets/animations.dart';
 import '../auth/auth_screens.dart';
 import '../dashboard/merchant_products_dashboard.dart';
@@ -22,7 +21,6 @@ import 'customer_appointments_screen.dart';
 import 'customer_subscriptions_screen.dart';
 import 'emergency_screen.dart';
 import 'live_store_home_screen.dart';
-import 'role_shortcuts_home_screen.dart';
 
 class LiveMobileShell extends StatefulWidget {
   final CustomerProfile? profile;
@@ -42,17 +40,82 @@ class LiveMobileShell extends StatefulWidget {
 
 class _LiveMobileShellState extends State<LiveMobileShell> {
   final _scaffoldKey = GlobalKey<ScaffoldState>();
+  final _notifs = NotificationsService.instance;
   final _db = Supabase.instance.client;
   int _index = 0;
+  bool _checkingQuota = false;
 
-  @override
-  void didUpdateWidget(covariant LiveMobileShell oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    // عند تسجيل الدخول أو تسجيل الخروج نعيد المؤشر بأمان للبداية
-    final wasLoggedIn = oldWidget.profile != null;
-    final isLoggedIn = widget.profile != null;
-    if (wasLoggedIn != isLoggedIn) {
-      _index = 0;
+  /// التحقق من حد المنشورات عند الضغط على زر + (إن وصل للحد نعرض له اقتراح الاشتراك فوراً)
+  Future<void> _openAddProductWithQuotaCheck() async {
+    if (_checkingQuota) return;
+    final profile = widget.profile;
+    final uid = profile?.id ?? _db.auth.currentUser?.id;
+    if (uid == null) return;
+
+    setState(() => _checkingQuota = true);
+    try {
+      final settingsRows = await _db
+          .from('system_settings')
+          .select('key, value')
+          .inFilter('key', ['enable_post_limits', 'default_max_posts']);
+      final settingsMap = {
+        for (final r in settingsRows) r['key'] as String: r['value'] as String,
+      };
+      final limitsEnabled = settingsMap['enable_post_limits'] != 'false';
+      final globalDefaultLimit =
+          int.tryParse(settingsMap['default_max_posts'] ?? '5') ?? 5;
+
+      final customerRow = await _db
+          .from('customers')
+          .select('subscription_plan, max_posts_limit')
+          .eq('id', uid)
+          .maybeSingle();
+
+      final planCode =
+          (customerRow?['subscription_plan'] as String?) ?? 'free';
+      final plan = AppSubscriptionCatalog.getProviderPlan(planCode);
+      final isUnlimited =
+          plan.maxPostsLimit < 0 || plan.maxPostsLimit >= 9999;
+      final limit = planCode == 'free'
+          ? ((customerRow?['max_posts_limit'] as int?) ?? globalDefaultLimit)
+          : plan.maxPostsLimit;
+
+      final activePosts = await _db
+          .from('products')
+          .select('id')
+          .eq('user_id', uid)
+          .eq('is_hidden', false);
+      final count = (activePosts as List).length;
+
+      if (!mounted) return;
+      if (limitsEnabled && !isUnlimited && count >= limit) {
+        await showPostLimitUpgradeSheet(
+          context,
+          currentPlanCode: planCode,
+          currentCount: count,
+          maxLimit: limit,
+          onSubscribed: widget.onRefreshProfile,
+        );
+        return;
+      }
+
+      Navigator.push(
+        context,
+        animatedRoute(
+          AddProductScreen(onSubscribed: widget.onRefreshProfile),
+        ),
+      );
+    } catch (_) {
+      if (mounted) {
+        Navigator.push(
+          context,
+          animatedRoute(
+            AddProductScreen(onSubscribed: widget.onRefreshProfile),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _checkingQuota = false);
     }
   }
 
@@ -61,7 +124,9 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
     Widget target;
     if (isAdmin) {
       target = SuperAdminDashboardScreen(
-          profile: p, onSignedOut: widget.onSignedOut);
+        profile: p,
+        onSignedOut: widget.onSignedOut,
+      );
     } else if (p.role == 'mechanic') {
       target = WorkshopEmergencyDashboard(
         profile: p,
@@ -83,124 +148,6 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
   void _openSupportScreen() =>
       Navigator.push(context, animatedRoute(const SupportScreen()));
 
-  void _openWalletScreen() {
-    if (widget.profile == null) return;
-    Navigator.push(
-      context,
-      animatedRoute(
-        Scaffold(
-          appBar: AppBar(title: const Text('محفظة التاجر والعمولات')),
-          body: _merchantWalletTab(),
-        ),
-      ),
-    );
-  }
-
-  Future<void> _showDeleteAccountDialog() async {
-    final confirmCtrl = TextEditingController();
-    bool deleting = false;
-    String? errorMsg;
-
-    await showDialog(
-      context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setD) => AlertDialog(
-          title: const Row(
-            children: [
-              Icon(Icons.warning_amber_rounded, color: Colors.red),
-              SizedBox(width: 8),
-              Text('حذف الحساب نهائياً',
-                  style: TextStyle(
-                      color: Colors.red, fontWeight: FontWeight.bold)),
-            ],
-          ),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                'تحذير: حذف الحساب إجراء نهائي لا يمكن التراجع عنه، وسيتم إزالة ملفك الشخصي ومنشوراتك وبياناتك الشخصية من التطبيق.',
-                style: TextStyle(fontSize: 13, height: 1.45),
-              ),
-              const SizedBox(height: 12),
-              const Text(
-                'للتأكيد، اكتب كلمة (حذف) في الحقل أدناه:',
-                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
-              ),
-              const SizedBox(height: 8),
-              TextField(
-                controller: confirmCtrl,
-                textInputAction: TextInputAction.done,
-                decoration: InputDecoration(
-                  hintText: 'اكتب: حذف',
-                  filled: true,
-                  fillColor: AppColors.surface,
-                  border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12)),
-                ),
-              ),
-              if (errorMsg != null) ...[
-                const SizedBox(height: 8),
-                Text(errorMsg!,
-                    style: const TextStyle(color: Colors.red, fontSize: 12)),
-              ],
-            ],
-          ),
-          actions: [
-            TextButton(
-                onPressed: deleting ? null : () => Navigator.pop(ctx),
-                child: const Text('إلغاء')),
-            ElevatedButton(
-              style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.red, foregroundColor: Colors.white),
-              onPressed: deleting
-                  ? null
-                  : () async {
-                      if (confirmCtrl.text.trim() != 'حذف') {
-                        setD(() => errorMsg =
-                            'يرجى كتابة كلمة (حذف) بشكل صحيح للتأكيد.');
-                        return;
-                      }
-                      setD(() {
-                        deleting = true;
-                        errorMsg = null;
-                      });
-                      try {
-                        await _db.rpc('delete_my_account');
-                        await _db.auth.signOut();
-                        if (ctx.mounted) Navigator.pop(ctx);
-                        if (mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text('تم حذف حسابك بنجاح.'),
-                              backgroundColor: AppColors.navy,
-                            ),
-                          );
-                        }
-                        widget.onSignedOut();
-                      } catch (e) {
-                        setD(() {
-                          deleting = false;
-                          errorMsg = 'تعذر حذف الحساب حالياً: $e';
-                        });
-                      }
-                    },
-              child: deleting
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(
-                          color: Colors.white, strokeWidth: 2),
-                    )
-                  : const Text('تأكيد الحذف النهائي'),
-            ),
-          ],
-        ),
-      ),
-    );
-    confirmCtrl.dispose();
-  }
-
   Future<void> _showChangePasswordDialog() async {
     final currentPassCtrl = TextEditingController();
     final newPassCtrl = TextEditingController();
@@ -211,127 +158,126 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
     await showDialog(
       context: context,
       builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setD) {
-          Future<void> submit() async {
-            if (newPassCtrl.text.length < 6) {
-              setD(() => alertMsg =
-                  'كلمة المرور الجديدة يجب أن تكون 6 أحرف على الأقل.');
-              return;
-            }
-            if (newPassCtrl.text != confirmPassCtrl.text) {
-              setD(() =>
-                  alertMsg = 'كلمة المرور الجديدة وتأكيدها غير متطابقتين.');
-              return;
-            }
-            setD(() {
-              saving = true;
-              alertMsg = null;
-            });
-            try {
-              final email =
-                  widget.profile?.email ?? _db.auth.currentUser?.email;
-              if (email == null) {
-                throw Exception('البريد غير متوفر');
-              }
-              await _db.auth.signInWithPassword(
-                  email: email, password: currentPassCtrl.text);
-              await _db.auth
-                  .updateUser(UserAttributes(password: newPassCtrl.text));
-              if (ctx.mounted) {
-                Navigator.pop(ctx);
-              }
-              if (mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('تم تحديث كلمة المرور بنجاح!'),
-                    backgroundColor: AppColors.success,
+        builder: (ctx, setD) => AlertDialog(
+          title: const Text('تغيير كلمة المرور'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (alertMsg != null)
+                Container(
+                  margin: const EdgeInsets.only(bottom: 12),
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: Colors.red.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: Colors.red),
                   ),
-                );
-              }
-            } catch (_) {
-              setD(() {
-                saving = false;
-                alertMsg = 'تنبيه أمني: كلمة المرور الحالية غير صحيحة!';
-              });
-            }
-          }
-
-          return AlertDialog(
-            title: const Text('تغيير كلمة المرور'),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (alertMsg != null)
-                  Container(
-                    margin: const EdgeInsets.only(bottom: 12),
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      color: Colors.red.withValues(alpha: 0.1),
-                      borderRadius: BorderRadius.circular(10),
-                      border: Border.all(color: Colors.red),
-                    ),
-                    child: Text(
-                      alertMsg!,
-                      style: const TextStyle(
-                          color: Colors.red,
-                          fontSize: 12,
-                          fontWeight: FontWeight.bold),
+                  child: Text(
+                    alertMsg!,
+                    style: const TextStyle(
+                      color: Colors.red,
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
                     ),
                   ),
-                TextField(
-                  controller: currentPassCtrl,
-                  obscureText: true,
-                  textInputAction: TextInputAction.next,
-                  decoration:
-                      const InputDecoration(labelText: 'كلمة المرور الحالية'),
                 ),
-                const SizedBox(height: 10),
-                TextField(
-                  controller: newPassCtrl,
-                  obscureText: true,
-                  textInputAction: TextInputAction.next,
-                  decoration:
-                      const InputDecoration(labelText: 'كلمة المرور الجديدة'),
+              TextField(
+                controller: currentPassCtrl,
+                obscureText: true,
+                decoration:
+                    const InputDecoration(labelText: 'كلمة المرور الحالية'),
+              ),
+              const SizedBox(height: 10),
+              TextField(
+                controller: newPassCtrl,
+                obscureText: true,
+                decoration:
+                    const InputDecoration(labelText: 'كلمة المرور الجديدة'),
+              ),
+              const SizedBox(height: 10),
+              TextField(
+                controller: confirmPassCtrl,
+                obscureText: true,
+                decoration: const InputDecoration(
+                  labelText: 'تأكيد كلمة المرور الجديدة',
                 ),
-                const SizedBox(height: 10),
-                TextField(
-                  controller: confirmPassCtrl,
-                  obscureText: true,
-                  textInputAction: TextInputAction.done,
-                  onSubmitted: (_) {
-                    if (!saving) submit();
-                  },
-                  decoration: const InputDecoration(
-                      labelText: 'تأكيد كلمة المرور الجديدة'),
-                ),
-              ],
-            ),
-            actions: [
-              TextButton(
-                  onPressed: () => Navigator.pop(ctx),
-                  child: const Text('إلغاء')),
-              ElevatedButton(
-                style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.orange,
-                    foregroundColor: Colors.white),
-                onPressed: saving ? null : submit,
-                child: saving
-                    ? const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(
-                            color: Colors.white, strokeWidth: 2),
-                      )
-                    : const Text('حفظ كلمة المرور'),
               ),
             ],
-          );
-        },
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('إلغاء'),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.orange,
+                foregroundColor: Colors.white,
+              ),
+              onPressed: saving
+                  ? null
+                  : () async {
+                      if (newPassCtrl.text.length < 6) {
+                        setD(() => alertMsg =
+                            'كلمة المرور الجديدة يجب أن تكون 6 أحرف على الأقل.');
+                        return;
+                      }
+                      if (newPassCtrl.text != confirmPassCtrl.text) {
+                        setD(() => alertMsg =
+                            'كلمة المرور الجديدة وتأكيدها غير متطابقتين.');
+                        return;
+                      }
+                      setD(() {
+                        saving = true;
+                        alertMsg = null;
+                      });
+                      try {
+                        final email = widget.profile?.email ??
+                            _db.auth.currentUser?.email;
+                        if (email == null) {
+                          throw Exception('البريد غير متوفر');
+                        }
+                        await _db.auth.signInWithPassword(
+                          email: email,
+                          password: currentPassCtrl.text,
+                        );
+                        await _db.auth.updateUser(
+                          UserAttributes(password: newPassCtrl.text),
+                        );
+                        if (ctx.mounted) {
+                          Navigator.pop(ctx);
+                        }
+                        if (mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('تم تحديث كلمة المرور بنجاح!'),
+                              backgroundColor: AppColors.success,
+                            ),
+                          );
+                        }
+                      } catch (_) {
+                        setD(() {
+                          saving = false;
+                          alertMsg =
+                              'تنبيه أمني: كلمة المرور الحالية غير صحيحة!';
+                        });
+                      }
+                    },
+              child: saving
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                        color: Colors.white,
+                        strokeWidth: 2,
+                      ),
+                    )
+                  : const Text('حفظ كلمة المرور'),
+            ),
+          ],
+        ),
       ),
     );
-    currentPassCtrl.dispose();
-    newPassCtrl.dispose();
-    confirmPassCtrl.dispose();
   }
 
   @override
@@ -341,41 +287,22 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
     final isProvider = isMerchant || role == 'mechanic' || role == 'towing';
     final isLoggedIn = widget.profile != null;
 
-    // للمستخدم المسجل: الشاشة 0 هي صفحة الاختصارات حسب الرول، والشاشة 1 هي المتجر
-    // للزائر: يبدأ مباشرة بمتجر القطع (Apple Guideline 5.1.1v)
-    final pages = isLoggedIn
-        ? [
-            RoleShortcutsHomeScreen(
-              profile: widget.profile!,
-              onOpenDrawer: () => _scaffoldKey.currentState?.openDrawer(),
-              onSelectTab: (tabIdx) => setState(() => _index = tabIdx),
-              onOpenWallet: _openWalletScreen,
-              onOpenSupport: _openSupportScreen,
-              onRefreshProfile: widget.onRefreshProfile,
-              onSignedOut: widget.onSignedOut,
-            ),
-            LiveStoreHomeScreen(
-              profile: widget.profile,
-              onOpenDrawer: () => _scaffoldKey.currentState?.openDrawer(),
-            ),
-            EmergencyScreen(profile: widget.profile!),
-            CustomerAppointmentsScreen(
+    final pages = [
+      LiveStoreHomeScreen(
+        profile: widget.profile,
+        onOpenDrawer: () => _scaffoldKey.currentState?.openDrawer(),
+      ),
+      isLoggedIn
+          ? EmergencyScreen(profile: widget.profile!)
+          : _loginRequiredView('لطلب مساعدة طارئة يرجى تسجيل الدخول'),
+      isLoggedIn
+          ? CustomerAppointmentsScreen(
               customerProfile: widget.profile!,
               onRefreshProfile: widget.onRefreshProfile,
-            ),
-            _profileTab(isProvider),
-          ]
-        : [
-            LiveStoreHomeScreen(
-              profile: widget.profile,
-              onOpenDrawer: () => _scaffoldKey.currentState?.openDrawer(),
-            ),
-            _loginRequiredView('لطلب مساعدة طارئة يرجى تسجيل الدخول'),
-            _loginRequiredView('لعرض وحجز مواعيد الورشة يرجى تسجيل الدخول'),
-            _profileTab(false),
-          ];
-
-    final safeIndex = _index.clamp(0, pages.length - 1);
+            )
+          : _loginRequiredView('لعرض وحجز مواعيد الورشة يرجى تسجيل الدخول'),
+      _profileTab(isProvider),
+    ];
 
     return Scaffold(
       key: _scaffoldKey,
@@ -383,76 +310,31 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
       body: Stack(
         children: [
           AnimatedSwitcher(
-            duration: const Duration(milliseconds: 240),
+            duration: const Duration(milliseconds: 260),
             switchInCurve: Curves.easeOutCubic,
-            child: KeyedSubtree(
-                key: ValueKey('${isLoggedIn}_$safeIndex'),
-                child: pages[safeIndex]),
+            child: KeyedSubtree(key: ValueKey(_index), child: pages[_index]),
           ),
 
-          // زر العودة السريع للاختصارات عند التواجد في شاشة فرعية (مثل المتجر أو الطوارئ)
-          if (isLoggedIn && safeIndex != 0)
-            Positioned(
-              right: 14,
-              bottom: 16,
-              child: BounceTap(
-                onTap: () {
-                  HapticFeedback.lightImpact();
-                  setState(() => _index = 0);
-                },
-                child: Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(26),
-                    border: Border.all(
-                        color: AppColors.navy.withValues(alpha: 0.25)),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withValues(alpha: 0.14),
-                        blurRadius: 10,
-                        offset: const Offset(0, 4),
-                      ),
-                    ],
-                  ),
-                  child: const Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.grid_view_rounded,
-                          color: AppColors.navy, size: 18),
-                      SizedBox(width: 5),
-                      Text(
-                        'الاختصارات',
-                        style: TextStyle(
-                            color: AppColors.navy,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 12),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-
-          // زر الـ AI العائم في الزاوية السفلية
+          // زر الـ AI العائم في الزاوية السفلية اليسرى فوق الشريط
           Positioned(
-            left: 14,
-            bottom: 16,
+            left: 16,
+            bottom: 18,
             child: BounceTap(
-              onTap: () =>
-                  showAiDiagnosticSheet(context, viewerProfile: widget.profile),
+              onTap: () => showAiDiagnosticSheet(
+                context,
+                viewerProfile: widget.profile,
+              ),
               child: Container(
                 padding:
-                    const EdgeInsets.symmetric(horizontal: 13, vertical: 10),
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
                 decoration: BoxDecoration(
                   gradient: const LinearGradient(
                     colors: [AppColors.navy, Color(0xFF1F2D3D)],
                     begin: Alignment.topRight,
                     end: Alignment.bottomLeft,
                   ),
-                  borderRadius: BorderRadius.circular(26),
-                  border: Border.all(color: AppColors.orange, width: 1.4),
+                  borderRadius: BorderRadius.circular(28),
+                  border: Border.all(color: AppColors.orange, width: 1.5),
                   boxShadow: [
                     BoxShadow(
                       color: AppColors.navy.withValues(alpha: 0.35),
@@ -464,14 +346,15 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
                 child: const Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Icon(Icons.auto_awesome, color: AppColors.orange, size: 19),
+                    Icon(Icons.auto_awesome, color: AppColors.orange, size: 20),
                     SizedBox(width: 6),
                     Text(
                       'فحص AI',
                       style: TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.bold,
-                          fontSize: 12.5),
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 13,
+                      ),
                     ),
                   ],
                 ),
@@ -480,44 +363,49 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
           ),
         ],
       ),
-      floatingActionButton: isProvider && !isLoggedIn
-          ? null
-          : (isProvider
-              ? BounceTap(
-                  onTap: () => Navigator.push(
-                      context, animatedRoute(const AddProductScreen())),
-                  child: FloatingActionButton(
-                    backgroundColor: AppColors.orange,
-                    foregroundColor: Colors.white,
-                    shape: const CircleBorder(),
-                    onPressed: () => Navigator.push(
-                        context, animatedRoute(const AddProductScreen())),
-                    child: const Icon(Icons.add, size: 28),
-                  ),
-                )
-              : null),
+      // زر + دائري برتقالي في المنتصف بالضبط بدون أي تداخل مع أيقونة طوارئ أو المواعيد
+      floatingActionButton: isProvider
+          ? SizedBox(
+              width: 56,
+              height: 56,
+              child: FloatingActionButton(
+                elevation: 4,
+                backgroundColor: AppColors.orange,
+                foregroundColor: Colors.white,
+                shape: const CircleBorder(),
+                onPressed: _openAddProductWithQuotaCheck,
+                child: _checkingQuota
+                    ? const SizedBox(
+                        width: 22,
+                        height: 22,
+                        child: CircularProgressIndicator(
+                          color: Colors.white,
+                          strokeWidth: 2.5,
+                        ),
+                      )
+                    : const Icon(Icons.add, size: 30),
+              ),
+            )
+          : null,
       floatingActionButtonLocation: FloatingActionButtonLocation.centerDocked,
       bottomNavigationBar: BottomAppBar(
-        color: Colors.white,
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+        height: 68,
+        color: AppColors.surface,
+        surfaceTintColor: Colors.transparent,
         shape: isProvider ? const CircularNotchedRectangle() : null,
         notchMargin: 8,
         child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceAround,
-          children: isLoggedIn
-              ? [
-                  _navItem(0, Icons.grid_view_rounded, 'الرئيسية', safeIndex),
-                  _navItem(1, Icons.storefront_outlined, 'المتجر', safeIndex),
-                  if (isProvider) const SizedBox(width: 38),
-                  _navItem(2, Icons.car_crash_outlined, 'طوارئ', safeIndex),
-                  _navItem(3, Icons.event_note_outlined, 'المواعيد', safeIndex),
-                  _navItem(4, Icons.person_outline, 'حسابي', safeIndex),
-                ]
-              : [
-                  _navItem(0, Icons.storefront_outlined, 'المتجر', safeIndex),
-                  _navItem(1, Icons.car_crash_outlined, 'طوارئ', safeIndex),
-                  _navItem(2, Icons.event_note_outlined, 'المواعيد', safeIndex),
-                  _navItem(3, Icons.person_outline, 'حسابي', safeIndex),
-                ],
+          children: [
+            Expanded(child: _navItem(0, Icons.storefront_outlined, 'المتجر')),
+            Expanded(child: _navItem(1, Icons.car_crash_outlined, 'طوارئ')),
+            // مساحة محجوزة بدقة (74px) لزر الزائد البرتقالي بالمنتصف لمنع أي تداخل تماماً
+            if (isProvider) const SizedBox(width: 74),
+            Expanded(
+              child: _navItem(2, Icons.event_note_outlined, 'المواعيد'),
+            ),
+            Expanded(child: _navItem(3, Icons.person_outline, 'حسابي')),
+          ],
         ),
       ),
     );
@@ -528,6 +416,8 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
     final isLoggedIn = p != null;
     final role = p?.role ?? 'guest';
     final isAdmin = p != null && (p.isAdmin || role == 'admin');
+    final isProvider =
+        role == 'merchant' || role == 'mechanic' || role == 'towing';
     final showPayments = EnvConfig.paymentsEnabled.value;
     final showWinch = EnvConfig.winchEnabled.value;
     final hasDashboard = isLoggedIn &&
@@ -537,7 +427,6 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
             (role == 'towing' && showWinch));
 
     return Drawer(
-      backgroundColor: Colors.white,
       child: ListView(
         padding: EdgeInsets.zero,
         children: [
@@ -555,9 +444,10 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
                     Text(
                       'غيارك',
                       style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 22,
-                          fontWeight: FontWeight.w900),
+                        color: Colors.white,
+                        fontSize: 22,
+                        fontWeight: FontWeight.w900,
+                      ),
                     ),
                   ],
                 ),
@@ -578,45 +468,43 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
                       borderRadius: BorderRadius.circular(12),
                     ),
                     child: Text(
-                      StatusLabels.role(isAdmin ? 'admin' : role),
+                      _roleArabicName(isAdmin ? 'admin' : role),
                       style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 11,
-                          fontWeight: FontWeight.bold),
+                        color: Colors.white,
+                        fontSize: 11,
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
                   ),
                 ],
               ],
             ),
           ),
-          if (isLoggedIn)
-            ListTile(
-              leading:
-                  const Icon(Icons.grid_view_rounded, color: AppColors.navy),
-              title: const Text('الرئيسية (الاختصارات)',
-                  style: TextStyle(fontWeight: FontWeight.bold)),
-              onTap: () {
-                Navigator.pop(context);
-                setState(() => _index = 0);
-              },
-            ),
           if (hasDashboard) ...[
             Padding(
-              padding: const EdgeInsets.fromLTRB(12, 6, 12, 6),
+              padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
               child: ListTile(
                 shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(14)),
+                  borderRadius: BorderRadius.circular(14),
+                ),
                 tileColor: AppColors.orangeLight,
                 leading: const Icon(Icons.dashboard, color: AppColors.orange),
-                title: const Text('لوحة التحكم',
-                    style: TextStyle(
-                        fontWeight: FontWeight.bold, color: AppColors.orange)),
+                title: const Text(
+                  'لوحة التحكم',
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    color: AppColors.orange,
+                  ),
+                ),
                 subtitle: Text(
                   _roleDashboardSubtitle(isAdmin ? 'admin' : role),
                   style: const TextStyle(fontSize: 11, color: AppColors.navy),
                 ),
-                trailing: const Icon(Icons.arrow_forward_ios,
-                    size: 15, color: AppColors.orange),
+                trailing: const Icon(
+                  Icons.arrow_forward_ios,
+                  size: 15,
+                  color: AppColors.orange,
+                ),
                 onTap: () {
                   Navigator.pop(context);
                   _openDashboardForRole(p);
@@ -627,10 +515,10 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
           ],
           ListTile(
             leading: const Icon(Icons.storefront, color: AppColors.orange),
-            title: const Text('متجر قطع الغيار'),
+            title: const Text('الرئيسية (المتجر)'),
             onTap: () {
               Navigator.pop(context);
-              setState(() => _index = isLoggedIn ? 1 : 0);
+              setState(() => _index = 0);
             },
           ),
           ListTile(
@@ -638,7 +526,7 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
             title: const Text('طلب مساعدة طارئة'),
             onTap: () {
               Navigator.pop(context);
-              setState(() => _index = isLoggedIn ? 2 : 1);
+              setState(() => _index = 1);
             },
           ),
           ListTile(
@@ -646,19 +534,29 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
             title: const Text('مواعيد الورشة'),
             onTap: () {
               Navigator.pop(context);
-              setState(() => _index = isLoggedIn ? 3 : 2);
+              setState(() => _index = 2);
             },
           ),
-          if (role == 'merchant' || role == 'mechanic') ...[
+          if (isProvider) ...[
             const Divider(),
-            if (showPayments && role == 'merchant')
+            if (showPayments)
               ListTile(
-                leading: const Icon(Icons.account_balance_wallet_outlined,
-                    color: AppColors.navy),
-                title: const Text('محفظة التاجر والأرباح'),
+                leading: const Icon(
+                  Icons.account_balance_wallet_outlined,
+                  color: AppColors.navy,
+                ),
+                title: const Text('محفظتي والأرباح'),
                 onTap: () {
                   Navigator.pop(context);
-                  _openWalletScreen();
+                  Navigator.push(
+                    context,
+                    animatedRoute(
+                      Scaffold(
+                        appBar: AppBar(title: const Text('محفظتي والأرباح')),
+                        body: _merchantWalletTab(),
+                      ),
+                    ),
+                  );
                 },
               ),
             ListTile(
@@ -667,8 +565,7 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
               title: const Text('إضافة منشور قطعة غيار'),
               onTap: () {
                 Navigator.pop(context);
-                Navigator.push(
-                    context, animatedRoute(const AddProductScreen()));
+                _openAddProductWithQuotaCheck();
               },
             ),
           ],
@@ -680,7 +577,10 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
               title: const Text('الدردشات'),
               onTap: () {
                 Navigator.pop(context);
-                Navigator.push(context, animatedRoute(const ChatsListScreen()));
+                Navigator.push(
+                  context,
+                  animatedRoute(const ChatsListScreen()),
+                );
               },
             ),
             ListTile(
@@ -688,20 +588,11 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
               title: const Text('الإشعارات'),
               onTap: () {
                 Navigator.pop(context);
-                NotificationsService.instance.openNotificationsSheet(context);
+                _notifs.openNotificationsSheet(context);
               },
             ),
           ],
           const Divider(),
-          ListTile(
-            leading:
-                const Icon(Icons.privacy_tip_outlined, color: AppColors.navy),
-            title: const Text('الشروط وسياسة الخصوصية'),
-            onTap: () {
-              Navigator.pop(context);
-              showTermsAndPrivacySheet(context);
-            },
-          ),
           ListTile(
             leading: const Icon(Icons.support_agent, color: AppColors.orange),
             title: const Text('الدعم الفني والمساعدة'),
@@ -714,14 +605,18 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
           if (!isLoggedIn) ...[
             ListTile(
               leading: const Icon(Icons.login, color: AppColors.orange),
-              title: const Text('تسجيل الدخول',
-                  style: TextStyle(fontWeight: FontWeight.bold)),
+              title: const Text(
+                'تسجيل الدخول',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
               onTap: () {
                 Navigator.pop(context);
                 Navigator.push(
-                    context,
-                    animatedRoute(
-                        LoginScreen(onAuthenticated: widget.onRefreshProfile)));
+                  context,
+                  animatedRoute(
+                    LoginScreen(onAuthenticated: widget.onRefreshProfile),
+                  ),
+                );
               },
             ),
             ListTile(
@@ -731,9 +626,11 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
               onTap: () {
                 Navigator.pop(context);
                 Navigator.push(
-                    context,
-                    animatedRoute(SignUpScreen(
-                        onAuthenticated: widget.onRefreshProfile)));
+                  context,
+                  animatedRoute(
+                    SignUpScreen(onAuthenticated: widget.onRefreshProfile),
+                  ),
+                );
               },
             ),
           ] else
@@ -751,11 +648,19 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
     );
   }
 
+  String _roleArabicName(String role) => switch (role) {
+        'admin' => 'مدير النظام (Admin)',
+        'mechanic' => 'ميكانيكي / ورشة',
+        'towing' => 'صاحب ونش طوارئ',
+        'merchant' => 'تاجر قطع غيار',
+        _ => 'مستخدم عادي',
+      };
+
   String _roleDashboardSubtitle(String role) => switch (role) {
-        'admin' => 'إدارة النظام والإعلانات والتجار والمالية',
-        'mechanic' => 'الورشة وطلبات الطوارئ وقطع الغيار',
+        'admin' => 'إدارة النظام والإعلانات والتجار',
+        'mechanic' => 'الورشة وطلبات الطوارئ',
         'towing' => 'طلبات الونش المباشرة',
-        'merchant' => 'إدارة المنتجات والخصومات والإخفاء',
+        'merchant' => 'إدارة المنتجات والمشاهدات والنقرات',
         _ => '',
       };
 
@@ -768,9 +673,11 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
           children: [
             const Icon(Icons.lock_outline, size: 52, color: AppColors.navy),
             const SizedBox(height: 12),
-            Text(msg,
-                textAlign: TextAlign.center,
-                style: const TextStyle(fontSize: 15)),
+            Text(
+              msg,
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 15),
+            ),
             const SizedBox(height: 16),
             ElevatedButton(
               style: ElevatedButton.styleFrom(
@@ -782,7 +689,8 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
               onPressed: () => Navigator.push(
                 context,
                 animatedRoute(
-                    LoginScreen(onAuthenticated: widget.onRefreshProfile)),
+                  LoginScreen(onAuthenticated: widget.onRefreshProfile),
+                ),
               ),
               child: const Text('تسجيل الدخول / إنشاء حساب'),
             ),
@@ -792,201 +700,113 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
     );
   }
 
-  Widget _navItem(int idx, IconData icon, String label, int currentIndex) {
-    final active = currentIndex == idx;
+  Widget _navItem(int idx, IconData icon, String label) {
+    final active = _index == idx;
     return InkWell(
       borderRadius: BorderRadius.circular(14),
       onTap: () {
         HapticFeedback.lightImpact();
         setState(() => _index = idx);
       },
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            AnimatedContainer(
-              duration: const Duration(milliseconds: 220),
-              curve: Curves.easeOutCubic,
-              height: 3,
-              width: active ? 20 : 0,
-              margin: const EdgeInsets.only(bottom: 3),
-              decoration: BoxDecoration(
-                  color: AppColors.orange,
-                  borderRadius: BorderRadius.circular(4)),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          AnimatedContainer(
+            duration: const Duration(milliseconds: 220),
+            curve: Curves.easeOutCubic,
+            height: 3,
+            width: active ? 22 : 0,
+            margin: const EdgeInsets.only(bottom: 3),
+            decoration: BoxDecoration(
+              color: AppColors.orange,
+              borderRadius: BorderRadius.circular(4),
             ),
-            AnimatedScale(
-              scale: active ? 1.15 : 1.0,
-              duration: const Duration(milliseconds: 220),
-              curve: Curves.easeOutBack,
-              child: Icon(icon,
-                  color: active ? AppColors.orange : AppColors.textSecondary,
-                  size: 21),
+          ),
+          AnimatedScale(
+            scale: active ? 1.15 : 1.0,
+            duration: const Duration(milliseconds: 220),
+            curve: Curves.easeOutBack,
+            child: Icon(
+              icon,
+              color: active ? AppColors.orange : AppColors.textSecondary,
+              size: 22,
             ),
-            Text(
-              label,
-              style: TextStyle(
-                fontSize: 10.5,
-                fontWeight: active ? FontWeight.bold : FontWeight.normal,
-                color: active ? AppColors.orange : AppColors.textSecondary,
-              ),
+          ),
+          const SizedBox(height: 1),
+          Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: active ? FontWeight.bold : FontWeight.normal,
+              color: active ? AppColors.orange : AppColors.textSecondary,
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
 
   Widget _merchantWalletTab() {
-    final p = widget.profile!;
     return StreamBuilder<List<Map<String, dynamic>>>(
       stream: _db
           .from('wallet_transactions')
           .stream(primaryKey: ['id'])
-          .eq('provider_id', p.id)
-          .order('created_at', ascending: false)
-          .limit(50),
+          .eq('provider_id', widget.profile!.id)
+          .order('created_at', ascending: false),
       builder: (_, snap) {
         final txs = (snap.data ?? []).map(DbWalletTransaction.fromMap).toList();
         final gross = txs.fold(0.0, (s, t) => s + t.grossAmount);
         final comm = txs.fold(0.0, (s, t) => s + t.commissionAmount);
         final net = txs.fold(0.0, (s, t) => s + t.netAmount);
-        final pendingDebt = p.pendingCommissionDebt;
-
         return ListView(
           padding: const EdgeInsets.all(16),
           children: [
             Container(
               padding: const EdgeInsets.all(18),
               decoration: BoxDecoration(
-                  color: AppColors.navy,
-                  borderRadius: BorderRadius.circular(18)),
+                color: AppColors.navy,
+                borderRadius: BorderRadius.circular(16),
+              ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text('صافي محفظة التاجر (بعد العمولة)',
-                      style: TextStyle(color: Colors.white70)),
+                  const Text(
+                    'صافي المحفظة (بعد العمولة)',
+                    style: TextStyle(color: Colors.white70),
+                  ),
                   Text(
                     '${net.toStringAsFixed(2)} د.أ',
                     style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 28,
-                        fontWeight: FontWeight.w900),
+                      color: Colors.white,
+                      fontSize: 26,
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
-                  const SizedBox(height: 8),
+                  const SizedBox(height: 6),
                   Text(
-                    'إجمالي المبيعات: ${gross.toStringAsFixed(2)} د.أ  |  عمولة المنصة: ${comm.toStringAsFixed(2)} د.أ',
+                    'قبل العمولة: ${gross.toStringAsFixed(2)} | العمولة: ${comm.toStringAsFixed(2)} د.أ',
                     style: const TextStyle(color: Colors.white70, fontSize: 12),
                   ),
                 ],
               ),
             ),
-            if (pendingDebt > 0) ...[
-              const SizedBox(height: 12),
-              Container(
-                padding: const EdgeInsets.all(14),
-                decoration: BoxDecoration(
-                  color: Colors.red.withValues(alpha: 0.08),
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: Colors.red.withValues(alpha: 0.35)),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        const Icon(Icons.account_balance_wallet,
-                            color: Colors.red),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            'عمولات مستحقة للدفع: ${pendingDebt.toStringAsFixed(2)} د.أ',
-                            style: const TextStyle(
-                                fontWeight: FontWeight.bold, color: Colors.red),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 6),
-                    const Text(
-                      'يمكنك تسديد العمولات المستحقة إلكترونياً مباشرة من داخل التطبيق لتفادي تقييد الحساب.',
-                      style: TextStyle(
-                          fontSize: 12, color: AppColors.textSecondary),
-                    ),
-                    const SizedBox(height: 10),
-                    SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton.icon(
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: AppColors.orange,
-                          foregroundColor: Colors.white,
-                          shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12)),
-                        ),
-                        icon: const Icon(Icons.payment),
-                        label: const Text('تسديد العمولة الآن عبر التطبيق'),
-                        onPressed: () async {
-                          final ok =
-                              await PayTabsPaymentService().startPaymentFlow(
-                            context: context,
-                            baseAmount: pendingDebt,
-                            title: 'تسديد عمولات مستحقة — غيارك',
-                            orderType: 'debt',
-                            referenceId: p.id,
-                            email: p.email,
-                            phone: p.phone,
-                            name: p.fullName,
-                          );
-                          if (ok && mounted) {
-                            widget.onRefreshProfile();
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                content:
-                                    Text('تم استلام طلب تسديد العمولة بنجاح'),
-                                backgroundColor: AppColors.success,
-                              ),
-                            );
-                          }
-                        },
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-            const SizedBox(height: 16),
-            const Text('آخر الحركات المالية',
-                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
-            const SizedBox(height: 8),
-            if (txs.isEmpty)
-              const Padding(
-                padding: EdgeInsets.all(24),
-                child: Center(
-                  child: Text('لا توجد حركات مالية مسجلة حتى الآن',
-                      style: TextStyle(color: AppColors.textSecondary)),
-                ),
-              ),
+            const SizedBox(height: 14),
             ...txs.map(
               (t) => Card(
                 child: ListTile(
-                  leading: const CircleAvatar(
-                    backgroundColor: AppColors.orangeLight,
-                    child: Icon(Icons.receipt_long,
-                        color: AppColors.orange, size: 20),
-                  ),
-                  title: Text(
-                    _txTypeArabic(t.transactionType),
-                    style: const TextStyle(
-                        fontWeight: FontWeight.bold, fontSize: 14),
-                  ),
+                  title: Text(t.transactionType),
                   subtitle: Text(
-                    'قبل العمولة: ${t.grossAmount.toStringAsFixed(2)} · عمولة: -${t.commissionAmount.toStringAsFixed(2)} د.أ',
-                    style: const TextStyle(fontSize: 12),
+                    'قبل العمولة: ${t.grossAmount} · عمولة: -${t.commissionAmount} · (${t.paymentMethod})',
                   ),
                   trailing: Text(
                     '+${t.netAmount.toStringAsFixed(2)} د.أ',
                     style: const TextStyle(
-                        color: AppColors.success, fontWeight: FontWeight.bold),
+                      color: AppColors.success,
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
                 ),
               ),
@@ -997,14 +817,6 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
     );
   }
 
-  String _txTypeArabic(String raw) => switch (raw.toLowerCase()) {
-        'order' || 'part_order' => 'بيع قطعة غيار',
-        'workshop' || 'appointment' => 'خدمة ورشة',
-        'emergency' || 'winch' => 'طلب طوارئ / ونش',
-        'subscription' || 'sub' => 'اشتراك باقة',
-        _ => raw,
-      };
-
   Widget _profileTab(bool isProvider) {
     if (widget.profile == null) {
       return SafeArea(
@@ -1013,16 +825,6 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
           children: [
             _loginRequiredView('سجل دخولك لإدارة حسابك'),
             const SizedBox(height: 16),
-            Card(
-              child: ListTile(
-                leading: const Icon(Icons.privacy_tip_outlined,
-                    color: AppColors.navy),
-                title: const Text('الشروط والأحكام وسياسة الخصوصية'),
-                trailing: const Icon(Icons.arrow_forward_ios, size: 16),
-                onTap: () => showTermsAndPrivacySheet(context),
-              ),
-            ),
-            const SizedBox(height: 10),
             Card(
               child: ListTile(
                 leading:
@@ -1040,7 +842,7 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
 
     return SafeArea(
       child: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 16, 16, 92),
+        padding: const EdgeInsets.all(16),
         children: [
           Card(
             child: ListTile(
@@ -1048,13 +850,16 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
                 backgroundColor: AppColors.navy,
                 child: Icon(Icons.person, color: Colors.white),
               ),
-              title: Text(widget.profile!.fullName ?? 'المستخدم',
-                  style: const TextStyle(fontWeight: FontWeight.bold)),
+              title: Text(
+                widget.profile!.fullName ?? 'المستخدم',
+                style: const TextStyle(fontWeight: FontWeight.bold),
+              ),
               subtitle: Text(
-                  '@${widget.profile!.username ?? ""} · ${widget.profile!.phone ?? ""}'),
+                '@${widget.profile!.username ?? ""} · ${widget.profile!.phone ?? ""}',
+              ),
             ),
           ),
-          const SizedBox(height: 10),
+          const SizedBox(height: 12),
           Card(
             child: ListTile(
               leading:
@@ -1064,21 +869,28 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
               trailing: const Icon(Icons.arrow_forward_ios, size: 16),
               onTap: () => Navigator.push(
                 context,
-                animatedRoute(UserProfileScreen(
+                animatedRoute(
+                  UserProfileScreen(
                     profile: widget.profile!,
-                    onSaved: widget.onRefreshProfile)),
+                    onSaved: widget.onRefreshProfile,
+                  ),
+                ),
               ),
             ),
           ),
           if (showPayments) ...[
-            const SizedBox(height: 10),
+            const SizedBox(height: 12),
             Card(
               child: ListTile(
-                leading: const Icon(Icons.workspace_premium,
-                    color: AppColors.orange),
-                title: Text(isProvider
-                    ? 'باقات واشتراكات المزودين'
-                    : 'اشتراك المستخدم العادي (البرو)'),
+                leading: const Icon(
+                  Icons.workspace_premium,
+                  color: AppColors.orange,
+                ),
+                title: Text(
+                  isProvider
+                      ? 'باقات واشتراكات المزودين'
+                      : 'اشتراك المستخدم العادي (البرو)',
+                ),
                 trailing: const Icon(Icons.arrow_forward_ios, size: 16),
                 onTap: () => Navigator.push(
                   context,
@@ -1097,7 +909,7 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
               ),
             ),
           ],
-          const SizedBox(height: 10),
+          const SizedBox(height: 12),
           Card(
             child: ListTile(
               leading: const Icon(Icons.lock_reset, color: AppColors.navy),
@@ -1106,17 +918,7 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
               onTap: _showChangePasswordDialog,
             ),
           ),
-          const SizedBox(height: 10),
-          Card(
-            child: ListTile(
-              leading:
-                  const Icon(Icons.privacy_tip_outlined, color: AppColors.navy),
-              title: const Text('الشروط والأحكام وسياسة الخصوصية'),
-              trailing: const Icon(Icons.arrow_forward_ios, size: 16),
-              onTap: () => showTermsAndPrivacySheet(context),
-            ),
-          ),
-          const SizedBox(height: 10),
+          const SizedBox(height: 12),
           Card(
             child: ListTile(
               leading: const Icon(Icons.support_agent, color: AppColors.orange),
@@ -1125,7 +927,7 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
               onTap: _openSupportScreen,
             ),
           ),
-          const SizedBox(height: 10),
+          const SizedBox(height: 12),
           Card(
             child: ListTile(
               leading: const Icon(Icons.logout, color: Colors.red),
@@ -1134,23 +936,6 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
                 await _db.auth.signOut();
                 widget.onSignedOut();
               },
-            ),
-          ),
-          const SizedBox(height: 10),
-          Card(
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(14),
-              side: BorderSide(color: Colors.red.withValues(alpha: 0.35)),
-            ),
-            child: ListTile(
-              leading:
-                  const Icon(Icons.delete_forever_outlined, color: Colors.red),
-              title: const Text('حذف الحساب نهائياً',
-                  style: TextStyle(
-                      color: Colors.red, fontWeight: FontWeight.bold)),
-              subtitle: const Text('إزالة الحساب والبيانات الشخصية بالكامل',
-                  style: TextStyle(fontSize: 12)),
-              onTap: _showDeleteAccountDialog,
             ),
           ),
         ],
@@ -1172,16 +957,21 @@ class SupportScreen extends StatelessWidget {
           Container(
             padding: const EdgeInsets.all(20),
             decoration: BoxDecoration(
-                color: AppColors.navy, borderRadius: BorderRadius.circular(18)),
+              color: AppColors.navy,
+              borderRadius: BorderRadius.circular(18),
+            ),
             child: const Column(
               children: [
                 GhiyarakLogo(size: 62),
                 SizedBox(height: 12),
-                Text('فريق دعم غيارك',
-                    style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 19,
-                        fontWeight: FontWeight.bold)),
+                Text(
+                  'فريق دعم غيارك',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 19,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
                 SizedBox(height: 4),
                 Text(
                   'نحن هنا لمساعدتك في أي استفسار أو مشكلة تقنية على مدار الساعة',
@@ -1195,20 +985,23 @@ class SupportScreen extends StatelessWidget {
           Card(
             child: ListTile(
               leading: const Icon(Icons.phone, color: AppColors.orange),
-              title: const Text('الاتصال الهاتفي',
-                  style: TextStyle(fontWeight: FontWeight.bold)),
+              title: const Text(
+                'الاتصال الهاتفي',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
               subtitle: const Text(EnvConfig.supportPhone),
               trailing: const Icon(Icons.arrow_forward_ios, size: 15),
-              onTap: () =>
-                  launchUrl(Uri.parse('tel:${EnvConfig.supportPhone}')),
+              onTap: () => launchUrl(Uri.parse('tel:${EnvConfig.supportPhone}')),
             ),
           ),
           const SizedBox(height: 10),
           Card(
             child: ListTile(
               leading: const Icon(Icons.chat, color: AppColors.success),
-              title: const Text('واتساب الدعم الفني',
-                  style: TextStyle(fontWeight: FontWeight.bold)),
+              title: const Text(
+                'واتساب الدعم الفني',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
               subtitle: const Text('+${EnvConfig.supportWhatsapp}'),
               trailing: const Icon(Icons.arrow_forward_ios, size: 15),
               onTap: () => launchUrl(
@@ -1221,12 +1014,17 @@ class SupportScreen extends StatelessWidget {
           Card(
             child: ListTile(
               leading: const Icon(Icons.email_outlined, color: AppColors.navy),
-              title: const Text('البريد الإلكتروني',
-                  style: TextStyle(fontWeight: FontWeight.bold)),
+              title: const Text(
+                'البريد الإلكتروني',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
               subtitle: const Text(EnvConfig.supportEmail),
               trailing: const Icon(Icons.arrow_forward_ios, size: 15),
-              onTap: () => launchUrl(Uri.parse(
-                  'mailto:${EnvConfig.supportEmail}?subject=دعم فني تطبيق غيارك')),
+              onTap: () => launchUrl(
+                Uri.parse(
+                  'mailto:${EnvConfig.supportEmail}?subject=دعم فني تطبيق غيارك',
+                ),
+              ),
             ),
           ),
         ],
@@ -1238,8 +1036,11 @@ class SupportScreen extends StatelessWidget {
 class UserProfileScreen extends StatefulWidget {
   final CustomerProfile profile;
   final VoidCallback onSaved;
-  const UserProfileScreen(
-      {super.key, required this.profile, required this.onSaved});
+  const UserProfileScreen({
+    super.key,
+    required this.profile,
+    required this.onSaved,
+  });
 
   @override
   State<UserProfileScreen> createState() => _UserProfileScreenState();
@@ -1287,7 +1088,6 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
   }
 
   Future<void> _saveProfile() async {
-    FocusScope.of(context).unfocus();
     setState(() => _saving = true);
     try {
       await _db.from('customers').update({
@@ -1309,8 +1109,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-              content: Text('تعذر التحديث: $e'), backgroundColor: Colors.red),
+          SnackBar(content: Text('تعذر التحديث: $e'), backgroundColor: Colors.red),
         );
       }
     } finally {
@@ -1323,38 +1122,43 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
   @override
   Widget build(BuildContext context) {
     final p = widget.profile;
-    final isMechanic = p.role == 'mechanic';
     return Scaffold(
       appBar: AppBar(title: const Text('ملفي الشخصي (البروفايل)')),
       body: ListView(
-        keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
         padding: const EdgeInsets.all(16),
         children: [
           Container(
             padding: const EdgeInsets.all(18),
             decoration: BoxDecoration(
-                color: AppColors.navy, borderRadius: BorderRadius.circular(16)),
+              color: AppColors.navy,
+              borderRadius: BorderRadius.circular(16),
+            ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
                   p.fullName ?? 'المستخدم',
                   style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 19,
-                      fontWeight: FontWeight.bold),
+                    color: Colors.white,
+                    fontSize: 19,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
                 const SizedBox(height: 4),
-                Text('اسم المستخدم: @${p.username ?? "-"}',
-                    style:
-                        const TextStyle(color: Colors.white70, fontSize: 13)),
-                Text('البريد الإلكتروني: ${p.email ?? "-"}',
-                    style:
-                        const TextStyle(color: Colors.white70, fontSize: 13)),
                 Text(
-                  'نوع الحساب: ${StatusLabels.role(p.isAdmin ? "admin" : p.role)}',
+                  'اسم المستخدم: @${p.username ?? "-"}',
+                  style: const TextStyle(color: Colors.white70, fontSize: 13),
+                ),
+                Text(
+                  'البريد الإلكتروني: ${p.email ?? "-"}',
+                  style: const TextStyle(color: Colors.white70, fontSize: 13),
+                ),
+                Text(
+                  'نوع الحساب: ${p.role}',
                   style: const TextStyle(
-                      color: AppColors.orange, fontWeight: FontWeight.bold),
+                    color: AppColors.orange,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
                 if (_country != null || _age != null)
                   Text(
@@ -1367,7 +1171,6 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
           const SizedBox(height: 18),
           TextField(
             controller: _nameCtrl,
-            textInputAction: TextInputAction.next,
             decoration: InputDecoration(
               labelText: 'الاسم الكامل',
               filled: true,
@@ -1380,11 +1183,6 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
           TextField(
             controller: _phoneCtrl,
             keyboardType: TextInputType.phone,
-            textInputAction:
-                isMechanic ? TextInputAction.next : TextInputAction.done,
-            onSubmitted: (_) {
-              if (!isMechanic && !_saving) _saveProfile();
-            },
             decoration: InputDecoration(
               labelText: 'رقم الهاتف',
               filled: true,
@@ -1393,14 +1191,10 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                   OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
             ),
           ),
-          if (isMechanic) ...[
+          if (p.role == 'mechanic') ...[
             const SizedBox(height: 12),
             TextField(
               controller: _addressCtrl,
-              textInputAction: TextInputAction.done,
-              onSubmitted: (_) {
-                if (!_saving) _saveProfile();
-              },
               decoration: InputDecoration(
                 labelText: 'عنوان الورشة',
                 filled: true,
@@ -1423,13 +1217,16 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
               foregroundColor: Colors.white,
               padding: const EdgeInsets.symmetric(vertical: 15),
               shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(14)),
+                borderRadius: BorderRadius.circular(14),
+              ),
             ),
             onPressed: _saving ? null : _saveProfile,
             child: _saving
                 ? const CircularProgressIndicator(color: Colors.white)
-                : const Text('حفظ التعديلات',
-                    style: TextStyle(fontWeight: FontWeight.bold)),
+                : const Text(
+                    'حفظ التعديلات',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
           ),
         ],
       ),

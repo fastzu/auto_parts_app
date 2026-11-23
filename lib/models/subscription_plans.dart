@@ -6,7 +6,7 @@ class PlanDetails {
   final double commissionRate;
   final bool trustedBadge;
   final bool boostedVisibility;
-  final int maxPostsLimit;
+  final int maxPostsLimit; // -1 تعني منشورات لا نهائية
   final int monthlyFreeAds;
   final List<String> features;
 
@@ -22,6 +22,11 @@ class PlanDetails {
     this.monthlyFreeAds = 0,
     required this.features,
   });
+
+  bool get isUnlimitedPosts => maxPostsLimit < 0;
+
+  String get postsLimitLabel =>
+      isUnlimitedPosts ? 'منشورات لا نهائية' : 'حتى $maxPostsLimit منشور';
 }
 
 class AppSubscriptionCatalog {
@@ -33,7 +38,7 @@ class AppSubscriptionCatalog {
       durationDays: 0,
       commissionRate: 0.02,
       features: [
-        'عمولة 2% عند شراء القطع أو دفع خدمات الورشة',
+        'عمولة 2% عند دفع خدمات الورش والطوارئ',
       ],
     ),
     PlanDetails(
@@ -43,8 +48,8 @@ class AppSubscriptionCatalog {
       durationDays: 30,
       commissionRate: 0.0,
       features: [
-        'معفى من العمولة (0%) على جميع القطع والخدمات',
-        'خصومات على جميع القطع والخدمات',
+        'معفى من العمولة (0%) على جميع الورش والخدمات',
+        'خصومات حصرية على الخدمات والورش',
       ],
     ),
   ];
@@ -69,9 +74,10 @@ class AppSubscriptionCatalog {
       durationDays: 30,
       commissionRate: 0.10,
       trustedBadge: true,
-      maxPostsLimit: 50,
+      maxPostsLimit: 15,
       features: [
-        'عمولة (10%)',
+        'حتى 15 منشور قطع غيار',
+        'عمولة مخفضة (10%)',
         'علامة تاجر موثوق',
       ],
     ),
@@ -83,8 +89,9 @@ class AppSubscriptionCatalog {
       commissionRate: 0.065,
       trustedBadge: true,
       boostedVisibility: true,
-      maxPostsLimit: 150,
+      maxPostsLimit: 30,
       features: [
+        'حتى 30 منشور قطع غيار',
         'عمولة أقل (6.5%)',
         'علامة تاجر موثوق',
         'ظهور أكثر في نتائج البحث والرئيسية',
@@ -98,28 +105,30 @@ class AppSubscriptionCatalog {
       commissionRate: 0.025,
       trustedBadge: true,
       boostedVisibility: true,
-      maxPostsLimit: 500,
+      maxPostsLimit: 45,
       features: [
-        'العمولة (2.5%)',
+        'حتى 45 منشور قطع غيار',
+        'عمولة مميزة (2.5%)',
         'علامة تاجر موثوق',
         'ظهور أكثر في نتائج البحث والرئيسية',
       ],
     ),
     PlanDetails(
       code: 'provider_12m',
-      title: 'اشتراك 12 شهر',
+      title: 'اشتراك 12 شهر (سنوي)',
       priceJod: 24.95,
       durationDays: 365,
       commissionRate: 0.0,
       trustedBadge: true,
       boostedVisibility: true,
-      maxPostsLimit: 9999,
+      maxPostsLimit: -1, // لا نهائي
       monthlyFreeAds: 1,
       features: [
+        'منشورات لا نهائية (بدون حد أقصى)',
         'بدون عمولة (0%)',
         'علامة تاجر موثوق',
-        'ظهور أكثر في نتائج البحث والرئيسية',
-        'إعلان 1 في الصفحة الرئيسية كل شهر',
+        'ظهور أولوية في البحث والرئيسية',
+        'إعلان مجاني في الصفحة الرئيسية كل شهر',
       ],
     ),
   ];

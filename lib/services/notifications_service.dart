@@ -1,106 +1,129 @@
 import 'dart:async';
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import '../main.dart' show appNavigatorKey;
 import '../theme/app_theme.dart';
 
 class NotificationsService {
-  NotificationsService._();
-  static final NotificationsService instance = NotificationsService._();
+  NotificationsService._internal();
+  static final NotificationsService instance = NotificationsService._internal();
   factory NotificationsService() => instance;
 
-  static const String _channelId = 'ghayarak_heads_up_v3';
-  static const String _channelName = 'إشعارات غيارك الفورية';
-
   final SupabaseClient _db = Supabase.instance.client;
-  final FlutterLocalNotificationsPlugin _localNotifications =
+  final FlutterLocalNotificationsPlugin _local =
       FlutterLocalNotificationsPlugin();
 
   bool _initialized = false;
-  StreamSubscription<List<Map<String, dynamic>>>? _globalSub;
+  RealtimeChannel? _notifChannel;
+  RealtimeChannel? _msgChannel;
   String? _listeningUserId;
-  final Set<String> _seenIds = {};
-  bool _initialSnapshotLoaded = false;
-  OverlayEntry? _activeBanner;
+  final Set<String> _shownIds = {};
 
-  Future<void> initLocalNotifications() async {
-    if (_initialized || kIsWeb) return;
+  static const AndroidNotificationChannel _androidChannel =
+      AndroidNotificationChannel(
+    'ghyarak_high_importance',
+    'إشعارات غيارك المهمة',
+    description: 'تنبيهات الطلبات والمواعيد والطوارئ والرسائل',
+    importance: Importance.max,
+    playSound: true,
+    enableVibration: true,
+  );
+
+  bool get _isMobileNative =>
+      !kIsWeb &&
+      (defaultTargetPlatform == TargetPlatform.android ||
+          defaultTargetPlatform == TargetPlatform.iOS);
+
+  /// تهيئة نظام الإشعارات المحلية على الهاتف وطلب الصلاحيات (iOS & Android)
+  Future<void> init() async {
+    if (_initialized || !_isMobileNative) {
+      _initialized = true;
+      return;
+    }
+
+    const androidSettings =
+        AndroidInitializationSettings('@mipmap/ic_launcher');
+    const darwinSettings = DarwinInitializationSettings(
+      requestAlertPermission: true,
+      requestBadgePermission: true,
+      requestSoundPermission: true,
+      defaultPresentAlert: true,
+      defaultPresentBanner: true,
+      defaultPresentList: true,
+      defaultPresentSound: true,
+      defaultPresentBadge: true,
+    );
+
+    const initSettings = InitializationSettings(
+      android: androidSettings,
+      iOS: darwinSettings,
+    );
+
     try {
-      const androidSettings =
-          AndroidInitializationSettings('@mipmap/ic_launcher');
-      const darwinSettings = DarwinInitializationSettings(
-        requestAlertPermission: true,
-        requestBadgePermission: true,
-        requestSoundPermission: true,
+      await _local.initialize(settings: initSettings);
+
+      final androidPlugin = _local.resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin>();
+      await androidPlugin?.createNotificationChannel(_androidChannel);
+      await androidPlugin?.requestNotificationsPermission();
+
+      final iosPlugin = _local.resolvePlatformSpecificImplementation<
+          IOSFlutterLocalNotificationsPlugin>();
+      await iosPlugin?.requestPermissions(
+        alert: true,
+        badge: true,
+        sound: true,
       );
-      const initSettings = InitializationSettings(
-        android: androidSettings,
-        iOS: darwinSettings,
-      );
-
-      await _localNotifications.initialize(settings: initSettings);
-
-      final androidPlugin = _localNotifications
-          .resolvePlatformSpecificImplementation<
-              AndroidFlutterLocalNotificationsPlugin>();
-      if (androidPlugin != null) {
-        await androidPlugin.requestNotificationsPermission();
-        const channel = AndroidNotificationChannel(
-          _channelId,
-          _channelName,
-          description: 'تنبيهات الطلبات والمواعيد والعروض الفورية من غيارك',
-          importance: Importance.max,
-          playSound: true,
-          enableVibration: true,
-        );
-        await androidPlugin.createNotificationChannel(channel);
-      }
-
-      await _localNotifications
-          .resolvePlatformSpecificImplementation<
-              IOSFlutterLocalNotificationsPlugin>()
-          ?.requestPermissions(alert: true, badge: true, sound: true);
 
       _initialized = true;
     } catch (_) {}
   }
 
-  Future<void> showLocalNotification({
+  /// إظهار إشعار حقيقي في شريط الهاتف (Banner + صوت + اهتزاز)
+  Future<void> showLocalPhoneNotification({
     required String title,
     required String body,
+    String? dedupeKey,
   }) async {
-    if (kIsWeb) return;
-    if (!_initialized) {
-      await initLocalNotifications();
+    if (!_isMobileNative) return;
+    if (dedupeKey != null) {
+      if (_shownIds.contains(dedupeKey)) return;
+      _shownIds.add(dedupeKey);
+      if (_shownIds.length > 200) {
+        _shownIds.remove(_shownIds.first);
+      }
     }
-    try {
-      const androidDetails = AndroidNotificationDetails(
-        _channelId,
-        _channelName,
-        channelDescription: 'تنبيهات الطلبات والمواعيد والعروض الفورية من غيارك',
+
+    if (!_initialized) {
+      await init();
+    }
+
+    final details = NotificationDetails(
+      android: AndroidNotificationDetails(
+        _androidChannel.id,
+        _androidChannel.name,
+        channelDescription: _androidChannel.description,
         importance: Importance.max,
-        priority: Priority.max,
+        priority: Priority.high,
         playSound: true,
         enableVibration: true,
-        visibility: NotificationVisibility.public,
-        ticker: 'غيارك',
-      );
-      const iosDetails = DarwinNotificationDetails(
+        icon: '@mipmap/ic_launcher',
+      ),
+      iOS: const DarwinNotificationDetails(
         presentAlert: true,
         presentBanner: true,
+        presentList: true,
         presentSound: true,
         presentBadge: true,
-        presentList: true,
-      );
-      const details = NotificationDetails(
-        android: androidDetails,
-        iOS: iosDetails,
-      );
+        interruptionLevel: InterruptionLevel.timeSensitive,
+      ),
+    );
 
-      await _localNotifications.show(
-        id: DateTime.now().millisecondsSinceEpoch.remainder(100000),
+    final notifId = DateTime.now().millisecondsSinceEpoch.remainder(100000);
+    try {
+      await _local.show(
+        id: notifId,
         title: title,
         body: body,
         notificationDetails: details,
@@ -108,89 +131,80 @@ class NotificationsService {
     } catch (_) {}
   }
 
-  void showTopBanner({
-    BuildContext? context,
-    required String title,
-    required String body,
-  }) {
-    final overlay = appNavigatorKey.currentState?.overlay ??
-        (context != null ? Overlay.maybeOf(context, rootOverlay: true) : null);
-    if (overlay == null) return;
+  /// تشغيل مستمع Supabase Realtime العام للإشعارات والرسائل الواردة للمستخدم
+  Future<void> startRealtimeListener([String? explicitUserId]) async {
+    final uid = explicitUserId ?? _db.auth.currentUser?.id;
+    if (uid == null || uid.isEmpty) return;
+    if (_listeningUserId == uid && _notifChannel != null) return;
 
-    _activeBanner?.remove();
-    _activeBanner = null;
-
-    late OverlayEntry entry;
-    entry = OverlayEntry(
-      builder: (_) => _TopNotificationDropBanner(
-        title: title,
-        body: body,
-        onDismiss: () {
-          if (_activeBanner == entry) {
-            entry.remove();
-            _activeBanner = null;
-          }
-        },
-      ),
-    );
-    _activeBanner = entry;
-    overlay.insert(entry);
-  }
-
-  void startGlobalListener([BuildContext? context]) {
-    final uid = _db.auth.currentUser?.id;
-    if (uid == null) return;
-    if (_listeningUserId == uid && _globalSub != null) return;
-
-    stopGlobalListener();
+    await stopRealtimeListener();
+    await init();
     _listeningUserId = uid;
-    _seenIds.clear();
-    _initialSnapshotLoaded = false;
 
-    initLocalNotifications();
-
-    _globalSub = _db
-        .from('notifications')
-        .stream(primaryKey: ['id'])
-        .eq('user_id', uid)
-        .order('created_at', ascending: false)
-        .listen(
-          (rows) {
-            if (!_initialSnapshotLoaded) {
-              for (final r in rows) {
-                final id = r['id']?.toString();
-                if (id != null) _seenIds.add(id);
-              }
-              _initialSnapshotLoaded = true;
-              return;
-            }
-
-            for (final r in rows.reversed) {
-              final id = r['id']?.toString();
-              if (id == null || _seenIds.contains(id)) continue;
-              _seenIds.add(id);
-              if (r['is_read'] == true) continue;
-
-              final title = (r['title'] as String?) ?? 'إشعار جديد من غيارك';
-              final body = (r['body'] as String?) ?? '';
-
-              // 1) إشعار النظام (ينزل من أعلى الهاتف)
-              showLocalNotification(title: title, body: body);
-
-              // 2) بانر علوي داخل التطبيق (أبيض أنيق)
-              showTopBanner(context: context, title: title, body: body);
-            }
+    _notifChannel = _db
+        .channel('user_notifs_$uid')
+        .onPostgresChanges(
+          event: PostgresChangeEvent.insert,
+          schema: 'public',
+          table: 'notifications',
+          filter: PostgresChangeFilter(
+            type: PostgresChangeFilterType.eq,
+            column: 'user_id',
+            value: uid,
+          ),
+          callback: (payload) {
+            final row = payload.newRecord;
+            final id = (row['id'] ?? '').toString();
+            final title = (row['title'] as String?) ?? 'إشعار جديد — غيارك';
+            final body = (row['body'] as String?) ?? '';
+            showLocalPhoneNotification(
+              title: title,
+              body: body,
+              dedupeKey: id.isNotEmpty ? 'notif_$id' : null,
+            );
           },
-          onError: (_) {},
-        );
+        )
+        .subscribe();
+
+    _msgChannel = _db
+        .channel('user_msgs_$uid')
+        .onPostgresChanges(
+          event: PostgresChangeEvent.insert,
+          schema: 'public',
+          table: 'messages',
+          filter: PostgresChangeFilter(
+            type: PostgresChangeFilterType.eq,
+            column: 'receiver_id',
+            value: uid,
+          ),
+          callback: (payload) {
+            final row = payload.newRecord;
+            final id = (row['id'] ?? '').toString();
+            final msg = (row['message'] as String?) ?? 'لديك رسالة جديدة';
+            showLocalPhoneNotification(
+              title: 'رسالة جديدة في غيارك 💬',
+              body: msg,
+              dedupeKey: id.isNotEmpty ? 'msg_$id' : null,
+            );
+          },
+        )
+        .subscribe();
   }
 
-  void stopGlobalListener() {
-    _globalSub?.cancel();
-    _globalSub = null;
+  Future<void> stopRealtimeListener() async {
     _listeningUserId = null;
-    _seenIds.clear();
-    _initialSnapshotLoaded = false;
+    if (_notifChannel != null) {
+      try {
+        await _db.removeChannel(_notifChannel!);
+      } catch (_) {}
+      _notifChannel = null;
+    }
+    if (_msgChannel != null) {
+      try {
+        await _db.removeChannel(_msgChannel!);
+      } catch (_) {}
+      _msgChannel = null;
+    }
   }
 
   Future<void> sendNotification({
@@ -209,47 +223,57 @@ class NotificationsService {
     });
   }
 
+  /// إرسال إشعار جماعي حسب الدور أو لمستخدم محدد عبر targetUserId
   Future<int> sendBroadcastNotification({
     required String title,
     required String body,
-    String type = 'promo',
     String targetRole = 'all',
     String? targetUserId,
+    String type = 'broadcast',
     String? referenceId,
   }) async {
-    if (targetUserId != null && targetUserId.isNotEmpty) {
-      await sendNotification(
-        targetUserId: targetUserId,
-        title: title,
-        body: body,
-        type: type,
-        referenceId: referenceId,
-      );
+    // 1) إذا تم تحديد مستخدم معيّن نرسل له مباشرة
+    if (targetUserId != null && targetUserId.trim().isNotEmpty) {
+      await _db.from('notifications').insert({
+        'user_id': targetUserId.trim(),
+        'title': title,
+        'body': body,
+        'type': type,
+        'reference_id': referenceId,
+      });
       return 1;
     }
 
+    // 2) إرسال جماعي للكل أو لفئة محددة (merchant / mechanic / towing / user)
     var query = _db.from('customers').select('id');
-    if (targetRole != 'all') {
-      query = query.eq('role', targetRole);
+    if (targetRole != 'all' && targetRole.trim().isNotEmpty) {
+      query = query.eq('role', targetRole.trim());
     }
-    final users = List<Map<String, dynamic>>.from(await query);
-    if (users.isEmpty) return 0;
+    final rows = await query;
+    final list = List<Map<String, dynamic>>.from(rows);
+    if (list.isEmpty) return 0;
 
-    final payloads = users
-        .map((u) => {
-              'user_id': u['id'],
-              'title': title,
-              'body': body,
-              'type': type,
-              'reference_id': referenceId,
-            })
+    final inserts = list
+        .map(
+          (r) => {
+            'user_id': r['id'],
+            'title': title,
+            'body': body,
+            'type': type,
+            'reference_id': referenceId,
+          },
+        )
         .toList();
 
-    for (var i = 0; i < payloads.length; i += 100) {
-      final end = (i + 100 < payloads.length) ? i + 100 : payloads.length;
-      await _db.from('notifications').insert(payloads.sublist(i, end));
+    // إدراج على دفعات لتجنب حدود الحجم
+    const chunkSize = 100;
+    for (var i = 0; i < inserts.length; i += chunkSize) {
+      final end = (i + chunkSize < inserts.length)
+          ? i + chunkSize
+          : inserts.length;
+      await _db.from('notifications').insert(inserts.sublist(i, end));
     }
-    return payloads.length;
+    return inserts.length;
   }
 
   Stream<List<Map<String, dynamic>>> streamMyNotifications() {
@@ -265,132 +289,63 @@ class NotificationsService {
   }
 
   Future<void> markAsRead(String notifId) async {
-    await _db.from('notifications').update({'is_read': true}).eq('id', notifId);
-  }
-
-  Future<void> markAllAsRead() async {
-    final uid = _db.auth.currentUser?.id;
-    if (uid == null) return;
     await _db
         .from('notifications')
-        .update({'is_read': true})
-        .eq('user_id', uid)
-        .eq('is_read', false);
+        .update({'is_read': true}).eq('id', notifId);
   }
 
   void openNotificationsSheet(BuildContext context) {
     showModalBottomSheet(
       context: context,
-      backgroundColor: Colors.white,
-      isScrollControlled: true,
       shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
       builder: (_) => StreamBuilder<List<Map<String, dynamic>>>(
         stream: streamMyNotifications(),
         builder: (ctx, snap) {
           final list = snap.data ?? [];
-          final hasUnread = list.any((n) => n['is_read'] != true);
-          return Container(
-            color: Colors.white,
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+          return Padding(
+            padding: const EdgeInsets.all(16),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Center(
-                  child: Container(
-                    width: 42,
-                    height: 4,
-                    margin: const EdgeInsets.only(bottom: 12),
-                    decoration: BoxDecoration(
-                      color: Colors.grey.shade300,
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                  ),
+                const Text(
+                  'الإشعارات',
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                 ),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    const Text(
-                      'الإشعارات',
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                        color: AppColors.navy,
-                      ),
-                    ),
-                    if (hasUnread)
-                      TextButton(
-                        onPressed: markAllAsRead,
-                        child: const Text(
-                          'تحديد الكل كمقروء',
-                          style: TextStyle(
-                            color: AppColors.orange,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 12,
-                          ),
-                        ),
-                      ),
-                  ],
-                ),
-                const SizedBox(height: 8),
+                const SizedBox(height: 10),
                 if (list.isEmpty)
                   const Padding(
-                    padding: EdgeInsets.symmetric(vertical: 34),
-                    child: Center(
-                      child: Text(
-                        'لا توجد إشعارات حالياً',
-                        style: TextStyle(color: AppColors.textSecondary),
-                      ),
-                    ),
+                    padding: EdgeInsets.symmetric(vertical: 28),
+                    child: Center(child: Text('لا توجد إشعارات حالياً')),
                   )
                 else
                   ConstrainedBox(
-                    constraints: const BoxConstraints(maxHeight: 400),
+                    constraints: const BoxConstraints(maxHeight: 360),
                     child: ListView.separated(
                       shrinkWrap: true,
                       itemCount: list.length,
-                      separatorBuilder: (_, __) =>
-                          Divider(height: 1, color: Colors.grey.shade200),
+                      separatorBuilder: (_, __) => const Divider(),
                       itemBuilder: (_, i) {
                         final n = list[i];
                         final read = n['is_read'] == true;
-                        return Container(
-                          color: read
-                              ? Colors.white
-                              : AppColors.orange.withValues(alpha: 0.06),
-                          child: ListTile(
-                            leading: CircleAvatar(
-                              backgroundColor: read
-                                  ? Colors.grey.shade100
-                                  : AppColors.orange.withValues(alpha: 0.14),
-                              child: Icon(
-                                Icons.notifications_active,
-                                size: 20,
-                                color: read
-                                    ? AppColors.textSecondary
-                                    : AppColors.orange,
-                              ),
-                            ),
-                            title: Text(
-                              (n['title'] as String?) ?? '',
-                              style: TextStyle(
-                                color: AppColors.navy,
-                                fontWeight:
-                                    read ? FontWeight.w500 : FontWeight.bold,
-                                fontSize: 13.5,
-                              ),
-                            ),
-                            subtitle: Text(
-                              (n['body'] as String?) ?? '',
-                              style: const TextStyle(
-                                color: AppColors.textSecondary,
-                                fontSize: 12,
-                              ),
-                            ),
-                            onTap: () => markAsRead(n['id'].toString()),
+                        return ListTile(
+                          leading: Icon(
+                            Icons.notifications_active,
+                            color: read
+                                ? AppColors.textSecondary
+                                : AppColors.orange,
                           ),
+                          title: Text(
+                            n['title'] ?? '',
+                            style: TextStyle(
+                              fontWeight:
+                                  read ? FontWeight.normal : FontWeight.bold,
+                            ),
+                          ),
+                          subtitle: Text(n['body'] ?? ''),
+                          onTap: () => markAsRead(n['id']),
                         );
                       },
                     ),
@@ -404,161 +359,58 @@ class NotificationsService {
   }
 }
 
-class _TopNotificationDropBanner extends StatefulWidget {
-  final String title;
-  final String body;
-  final VoidCallback onDismiss;
-
-  const _TopNotificationDropBanner({
-    required this.title,
-    required this.body,
-    required this.onDismiss,
-  });
-
-  @override
-  State<_TopNotificationDropBanner> createState() =>
-      _TopNotificationDropBannerState();
-}
-
-class _TopNotificationDropBannerState extends State<_TopNotificationDropBanner>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _ctrl = AnimationController(
-    vsync: this,
-    duration: const Duration(milliseconds: 340),
-  );
-  late final Animation<Offset> _slide = Tween<Offset>(
-    begin: const Offset(0, -1.2),
-    end: Offset.zero,
-  ).animate(CurvedAnimation(parent: _ctrl, curve: Curves.easeOutCubic));
-
-  Timer? _timer;
-
-  @override
-  void initState() {
-    super.initState();
-    _ctrl.forward();
-    _timer = Timer(const Duration(seconds: 4), _close);
-  }
-
-  Future<void> _close() async {
-    if (!mounted) return;
-    await _ctrl.reverse();
-    widget.onDismiss();
-  }
-
-  @override
-  void dispose() {
-    _timer?.cancel();
-    _ctrl.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final topPad = MediaQuery.of(context).padding.top + 8;
-    return Positioned(
-      top: topPad,
-      left: 14,
-      right: 14,
-      child: SlideTransition(
-        position: _slide,
-        child: Material(
-          color: Colors.transparent,
-          child: GestureDetector(
-            onTap: _close,
-            onVerticalDragEnd: (_) => _close(),
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(
-                  color: AppColors.orange.withValues(alpha: 0.45),
-                  width: 1.2,
-                ),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.14),
-                    blurRadius: 18,
-                    offset: const Offset(0, 6),
-                  ),
-                ],
-              ),
-              child: Row(
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      color: AppColors.orange.withValues(alpha: 0.12),
-                      shape: BoxShape.circle,
-                    ),
-                    child: const Icon(
-                      Icons.notifications_active,
-                      color: AppColors.orange,
-                      size: 20,
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          widget.title,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            color: AppColors.navy,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 13.5,
-                          ),
-                        ),
-                        if (widget.body.isNotEmpty) ...[
-                          const SizedBox(height: 2),
-                          Text(
-                            widget.body,
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              color: AppColors.textSecondary,
-                              fontSize: 12,
-                            ),
-                          ),
-                        ],
-                      ],
-                    ),
-                  ),
-                  const Icon(Icons.close, size: 16, color: Colors.black38),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class NotificationBellButton extends StatelessWidget {
+class NotificationBellButton extends StatefulWidget {
   final Color iconColor;
   const NotificationBellButton({super.key, this.iconColor = Colors.white});
 
   @override
+  State<NotificationBellButton> createState() => _NotificationBellButtonState();
+}
+
+class _NotificationBellButtonState extends State<NotificationBellButton> {
+  final _service = NotificationsService.instance;
+  String? _lastAlertId;
+
+  @override
   Widget build(BuildContext context) {
-    final service = NotificationsService.instance;
     return StreamBuilder<List<Map<String, dynamic>>>(
-      stream: service.streamMyNotifications(),
+      stream: _service.streamMyNotifications(),
       builder: (context, snap) {
         final list = snap.data ?? [];
-        final unreadCount = list.where((n) => n['is_read'] != true).length;
+        final unreadList = list.where((n) => n['is_read'] != true).toList();
+        if (unreadList.isNotEmpty) {
+          final newest = unreadList.first;
+          final id = newest['id'] as String?;
+          if (id != null && _lastAlertId != null && _lastAlertId != id) {
+            final title = (newest['title'] as String?) ?? 'إشعار جديد';
+            final body = (newest['body'] as String?) ?? '';
+            _service.showLocalPhoneNotification(
+              title: title,
+              body: body,
+              dedupeKey: 'notif_$id',
+            );
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (!mounted) return;
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  backgroundColor: AppColors.orange,
+                  content: Text('$title: $body'),
+                ),
+              );
+            });
+          }
+          _lastAlertId ??= id;
+          if (id != null) {
+            _lastAlertId = id;
+          }
+        }
 
         return IconButton(
-          onPressed: () => service.openNotificationsSheet(context),
+          onPressed: () => _service.openNotificationsSheet(context),
           icon: Badge(
-            isLabelVisible: unreadCount > 0,
-            label: Text('$unreadCount'),
-            child: Icon(Icons.notifications_none, color: iconColor),
+            isLabelVisible: unreadList.isNotEmpty,
+            label: Text('${unreadList.length}'),
+            child: Icon(Icons.notifications_none, color: widget.iconColor),
           ),
         );
       },

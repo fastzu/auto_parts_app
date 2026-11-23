@@ -7,7 +7,8 @@ import '../../theme/app_theme.dart';
 import '../../widgets/animations.dart';
 import '../mobile/customer_subscriptions_screen.dart';
 
-class WorkshopCheckoutScreen extends StatefulWidget {
+/// شاشة دفع فاتورة الورشة (متوافقة 100% مع كل استدعاءات التطبيق)
+class WorkshopCheckoutScreen extends StatelessWidget {
   final DbWorkshopAppointment appointment;
   final CustomerProfile customerProfile;
   final VoidCallback onPaymentCompleted;
@@ -20,361 +21,659 @@ class WorkshopCheckoutScreen extends StatefulWidget {
   });
 
   @override
-  State<WorkshopCheckoutScreen> createState() => _WorkshopCheckoutScreenState();
+  Widget build(BuildContext context) {
+    return _ServiceCheckoutScreen(
+      screenTitle: 'دفع فاتورة الورشة',
+      serviceTitle: appointment.serviceDescription ?? 'صيانة مركبة في الورشة',
+      serviceSubtitle:
+          'موعد بتاريخ ${appointment.appointmentDate} · ${appointment.appointmentTime}',
+      initialBaseAmount: appointment.totalAmount,
+      orderType: 'wrk',
+      transactionType: 'workshop_service',
+      tableName: 'workshop_appointments',
+      commissionColumnName: 'platform_commission',
+      referenceId: appointment.id,
+      providerId: appointment.workshopId,
+      customerProfile: customerProfile,
+      onPaymentCompleted: onPaymentCompleted,
+    );
+  }
 }
 
-class _WorkshopCheckoutScreenState extends State<WorkshopCheckoutScreen> {
-  final _db = Supabase.instance.client;
-  final _payService = PayTabsPaymentService();
-  final _promoCtrl = TextEditingController();
+/// شاشة دفع فاتورة الطوارئ والونش (جديدة ومربوطة بمحفظة الفني/الونش)
+class EmergencyCheckoutScreen extends StatelessWidget {
+  final DbMechanicRequest request;
+  final CustomerProfile customerProfile;
+  final VoidCallback onPaymentCompleted;
 
-  bool _checkingPromo = false;
-  bool _paying = false;
-  String? _appliedCode;
-  double _appliedPercent = 0.0;
-  double _discountAmount = 0.0;
-  String? _promoError;
+  const EmergencyCheckoutScreen({
+    super.key,
+    required this.request,
+    required this.customerProfile,
+    required this.onPaymentCompleted,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final isWinch = request.serviceType == 'winch';
+    return _ServiceCheckoutScreen(
+      screenTitle: isWinch ? 'دفع فاتورة ونش الطوارئ' : 'دفع فاتورة طوارئ الميكانيكي',
+      serviceTitle: (request.description ?? '').trim().isNotEmpty
+          ? request.description!
+          : (isWinch ? 'خدمة سحب ونش طوارئ' : 'خدمة ميكانيكي طوارئ ميداني'),
+      serviceSubtitle: request.carDetails.isNotEmpty
+          ? 'المركبة: ${request.carDetails}'
+          : 'طلب طوارئ مباشر #${request.id.substring(0, 6)}',
+      initialBaseAmount: request.totalAmount,
+      orderType: 'emg',
+      transactionType: isWinch ? 'emergency_winch' : 'emergency_mechanic',
+      tableName: 'mechanic_requests',
+      commissionColumnName: 'commission_amount',
+      referenceId: request.id,
+      providerId: request.mechanicId,
+      customerProfile: customerProfile,
+      onPaymentCompleted: onPaymentCompleted,
+    );
+  }
+}
+
+class _ServiceCheckoutScreen extends StatefulWidget {
+  final String screenTitle;
+  final String serviceTitle;
+  final String serviceSubtitle;
+  final double initialBaseAmount;
+  final String orderType; // 'wrk' | 'emg'
+  final String transactionType;
+  final String tableName; // 'workshop_appointments' | 'mechanic_requests'
+  final String commissionColumnName; // 'platform_commission' | 'commission_amount'
+  final String referenceId;
+  final String? providerId;
+  final CustomerProfile customerProfile;
+  final VoidCallback onPaymentCompleted;
+
+  const _ServiceCheckoutScreen({
+    required this.screenTitle,
+    required this.serviceTitle,
+    required this.serviceSubtitle,
+    required this.initialBaseAmount,
+    required this.orderType,
+    required this.transactionType,
+    required this.tableName,
+    required this.commissionColumnName,
+    required this.referenceId,
+    required this.providerId,
+    required this.customerProfile,
+    required this.onPaymentCompleted,
+  });
+
+  @override
+  State<_ServiceCheckoutScreen> createState() => _ServiceCheckoutScreenState();
+}
+
+class _ServiceCheckoutScreenState extends State<_ServiceCheckoutScreen> {
+  final _db = Supabase.instance.client;
+  final _customAmountCtrl = TextEditingController();
+  final _cliqRefCtrl = TextEditingController();
+
+  String _selectedMethod = 'visa'; // 'visa' | 'cliq' | 'cash'
+  String _cliqAlias = 'GHYARAK';
+  bool _processing = false;
+
+  bool get _needsManualAmount => widget.initialBaseAmount <= 0;
+
+  double get _baseAmount {
+    if (!_needsManualAmount) return widget.initialBaseAmount;
+    return double.tryParse(_customAmountCtrl.text.trim()) ?? 0.0;
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _loadCliqAlias();
+  }
 
   @override
   void dispose() {
-    _promoCtrl.dispose();
+    _customAmountCtrl.dispose();
+    _cliqRefCtrl.dispose();
     super.dispose();
   }
 
-  Future<void> _applyDiscountCode() async {
-    FocusScope.of(context).unfocus();
-    final raw = _promoCtrl.text.trim();
-    if (raw.isEmpty) return;
-
-    setState(() {
-      _checkingPromo = true;
-      _promoError = null;
-    });
-
+  Future<void> _loadCliqAlias() async {
     try {
-      final res = await _payService.validateDiscountCode(
-        rawCode: raw,
-        baseAmount: widget.appointment.totalAmount,
-        userRole: widget.customerProfile.role,
-      );
-      if (!mounted) return;
-      setState(() {
-        _appliedCode = res.code;
-        _appliedPercent = res.percent;
-        _discountAmount = res.discountAmount;
-        _checkingPromo = false;
-      });
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            'تم تطبيق خصم ${res.code} (-${res.percent.toInt()}%) بقيمة ${res.discountAmount.toStringAsFixed(2)} د.أ',
-          ),
-          backgroundColor: AppColors.success,
-        ),
-      );
-    } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _checkingPromo = false;
-        _promoError = e.toString().replaceFirst('Exception: ', '');
-      });
-    }
+      final row = await _db
+          .from('system_settings')
+          .select('value')
+          .eq('key', 'cliq_alias')
+          .maybeSingle();
+      final val = (row?['value'] as String?)?.trim();
+      if (val != null && val.isNotEmpty && mounted) {
+        setState(() => _cliqAlias = val);
+      }
+    } catch (_) {}
   }
 
-  Future<void> _startCheckout(
-    double discountedBase,
-    double customerFee,
-  ) async {
-    if (_paying) return;
-    setState(() => _paying = true);
+  /// تسجيل العملية المالية وتحديث حالة الطلب ومحفظة مقدم الخدمة + إرسال إشعار
+  Future<void> _recordPaymentAndSyncProviderWallet({
+    required double grossAmount,
+    required String paymentMethod, // 'visa' | 'cliq' | 'cash'
+    String? cliqRef,
+  }) async {
+    final providerId = widget.providerId;
+    double commRate = 0.15;
+    double currentWallet = 0.0;
+    double currentDebt = 0.0;
 
+    if (providerId != null && providerId.isNotEmpty) {
+      try {
+        final providerRow = await _db
+            .from('customers')
+            .select(
+              'subscription_plan, commission_rate, wallet_balance, pending_commission_debt',
+            )
+            .eq('id', providerId)
+            .maybeSingle();
+
+        if (providerRow != null) {
+          final planCode =
+              (providerRow['subscription_plan'] as String?) ?? 'free';
+          final plan = AppSubscriptionCatalog.getProviderPlan(planCode);
+          commRate = (providerRow['commission_rate'] as num?)?.toDouble() ??
+              plan.commissionRate;
+          currentWallet =
+              (providerRow['wallet_balance'] as num?)?.toDouble() ?? 0.0;
+          currentDebt =
+              (providerRow['pending_commission_debt'] as num?)?.toDouble() ??
+                  0.0;
+        }
+      } catch (_) {}
+    }
+
+    final commissionAmount =
+        double.parse((grossAmount * commRate).toStringAsFixed(2));
+    final netAmount =
+        double.parse((grossAmount - commissionAmount).toStringAsFixed(2));
+
+    final isPendingVerification = paymentMethod == 'cliq';
+    final paymentStatus =
+        isPendingVerification ? 'pending_verification' : 'paid';
+    final txStatus = isPendingVerification ? 'pending' : 'completed';
+
+    // 1) تحديث الفاتورة في جدول الورشة أو الطوارئ
+    final updateData = <String, dynamic>{
+      'total_amount': grossAmount,
+      widget.commissionColumnName: commissionAmount,
+      'payment_status': paymentStatus,
+    };
     try {
-      // حفظ كود الخصم على موعد الورشة قبل الدفع
-      if (_appliedCode != null && _discountAmount > 0) {
+      await _db.from(widget.tableName).update({
+        ...updateData,
+        'payment_method': paymentMethod,
+      }).eq('id', widget.referenceId);
+    } catch (_) {
+      // في حال لم يُضف عمود payment_method بعد
+      await _db
+          .from(widget.tableName)
+          .update(updateData)
+          .eq('id', widget.referenceId);
+    }
+
+    // 2) تجنب تكرار الحركة في wallet_transactions لنفس الطلب
+    final existingTx = await _db
+        .from('wallet_transactions')
+        .select('id')
+        .eq('reference_id', widget.referenceId)
+        .maybeSingle();
+
+    if (existingTx == null && providerId != null && providerId.isNotEmpty) {
+      await _db.from('wallet_transactions').insert({
+        'provider_id': providerId,
+        'customer_id': widget.customerProfile.id,
+        'reference_id': widget.referenceId,
+        'transaction_type': widget.transactionType,
+        'payment_method': paymentMethod,
+        'gross_amount': grossAmount,
+        'commission_rate': commRate,
+        'commission_amount': commissionAmount,
+        'net_amount': netAmount,
+        'status': txStatus,
+      });
+
+      // 3) تحديث محفظة مقدم الخدمة أو ذمة العمولة فوراً
+      if (paymentMethod == 'visa') {
+        await _db.from('customers').update({
+          'wallet_balance':
+              double.parse((currentWallet + netAmount).toStringAsFixed(2)),
+        }).eq('id', providerId);
+      } else if (paymentMethod == 'cash' && commissionAmount > 0) {
+        await _db.from('customers').update({
+          'pending_commission_debt':
+              double.parse((currentDebt + commissionAmount).toStringAsFixed(2)),
+        }).eq('id', providerId);
+      }
+
+      // 4) تسجيل طلب حوالة CliQ إن كانت وسيلة الدفع CliQ
+      if (paymentMethod == 'cliq' && (cliqRef ?? '').isNotEmpty) {
         try {
-          await _db.from('workshop_appointments').update({
-            'discount_code': _appliedCode,
-            'discount_amount': _discountAmount,
-          }).eq('id', widget.appointment.id);
+          await _db.from('cliq_requests').insert({
+            'user_id': widget.customerProfile.id,
+            'user_email': widget.customerProfile.email,
+            'transaction_ref': cliqRef,
+            'status': 'pending',
+          });
         } catch (_) {}
       }
 
-      if (!mounted) return;
-      final shortId = widget.appointment.id.length >= 6
-          ? widget.appointment.id.substring(0, 6)
-          : widget.appointment.id;
+      // 5) إرسال إشعار فوري لمقدم الخدمة (ورشة / ونش / ميكانيكي)
+      final notifTitle = paymentMethod == 'visa'
+          ? 'تم دفع الفاتورة وإيداع الصافي بمحفظتك 💰'
+          : paymentMethod == 'cliq'
+              ? 'حوالة CliQ جديدة قيد المراجعة 🏦'
+              : 'تم تأكيد الدفع النقدي للفاتورة 💵';
+      final notifBody = paymentMethod == 'visa'
+          ? 'دفع العميل ${grossAmount.toStringAsFixed(2)} د.أ إلكترونياً. تم إضافة صافي ${netAmount.toStringAsFixed(2)} د.أ إلى محفظتك.'
+          : paymentMethod == 'cliq'
+              ? 'أرسل العميل حوالة CliQ بمبلغ ${grossAmount.toStringAsFixed(2)} د.أ (المرجع: $cliqRef). سيتم إيداعها بمحفظتك بعد الاعتماد.'
+              : 'أكد العميل دفع ${grossAmount.toStringAsFixed(2)} د.أ نقداً. عمولة المنصة المسجلة: ${commissionAmount.toStringAsFixed(2)} د.أ.';
 
-      final ok = await _payService.startPaymentFlow(
-        context: context,
-        baseAmount: discountedBase,
-        feeAmount: customerFee,
-        title: 'دفع فاتورة ورشة #$shortId',
-        orderType: 'wrk',
-        referenceId: widget.appointment.id,
-        email: widget.customerProfile.email,
-        phone: widget.customerProfile.phone,
-        name: widget.customerProfile.fullName,
-        discountCode: _appliedCode,
-        discountAmount: _discountAmount,
-        userRole: widget.customerProfile.role,
+      try {
+        await _db.from('notifications').insert({
+          'user_id': providerId,
+          'title': notifTitle,
+          'body': notifBody,
+          'type': 'payment_received',
+          'reference_id': widget.referenceId,
+        });
+      } catch (_) {}
+    }
+  }
+
+  Future<void> _submitPayment() async {
+    final baseAmount = _baseAmount;
+    if (baseAmount <= 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('يرجى إدخال قيمة الفاتورة الصحيحة قبل المتابعة'),
+          backgroundColor: Colors.red,
+        ),
       );
+      return;
+    }
 
-      if (ok && mounted) {
-        widget.onPaymentCompleted();
-        Navigator.pop(context);
+    if (_selectedMethod == 'cliq' && _cliqRefCtrl.text.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('يرجى إدخال رقم مرجع حوالة CliQ أو اسم المحوّل'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    final feeRate = AppSubscriptionCatalog.customerFeeRate(
+      widget.customerProfile.subscriptionPlan,
+    );
+    final customerFee =
+        double.parse((baseAmount * feeRate).toStringAsFixed(2));
+    final totalToPay =
+        double.parse((baseAmount + customerFee).toStringAsFixed(2));
+
+    setState(() => _processing = true);
+    try {
+      if (_selectedMethod == 'visa') {
+        final ok = await PayTabsPaymentService().payWithCardRedirect(
+          context: context,
+          amount: totalToPay,
+          title:
+              '${widget.screenTitle} #${widget.referenceId.substring(0, 6)}',
+          orderType: widget.orderType,
+          referenceId: widget.referenceId,
+          email: widget.customerProfile.email,
+          phone: widget.customerProfile.phone,
+          name: widget.customerProfile.fullName,
+        );
+        if (!ok) return;
+
+        await _recordPaymentAndSyncProviderWallet(
+          grossAmount: baseAmount,
+          paymentMethod: 'visa',
+        );
+      } else if (_selectedMethod == 'cliq') {
+        await _recordPaymentAndSyncProviderWallet(
+          grossAmount: baseAmount,
+          paymentMethod: 'cliq',
+          cliqRef: _cliqRefCtrl.text.trim(),
+        );
+      } else {
+        // دفع نقدي (كاش)
+        await _recordPaymentAndSyncProviderWallet(
+          grossAmount: baseAmount,
+          paymentMethod: 'cash',
+        );
+      }
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: AppColors.success,
+          content: Text(
+            _selectedMethod == 'cliq'
+                ? 'تم إرسال بيانات حوالة CliQ للمراجعة وربطها بحساب مقدم الخدمة ✓'
+                : 'تم إتمام دفع الفاتورة وربطها بمحفظة مقدم الخدمة بنجاح ✓',
+          ),
+        ),
+      );
+      widget.onPaymentCompleted();
+      Navigator.pop(context, true);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('تعذر إتمام الدفع: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
       }
     } finally {
-      if (mounted) setState(() => _paying = false);
+      if (mounted) setState(() => _processing = false);
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    final double mechanicAmount = widget.appointment.totalAmount;
-    final double discountedBase = double.parse(
-      (mechanicAmount - _discountAmount)
-          .clamp(0.0, double.infinity)
-          .toStringAsFixed(2),
-    );
-    final double feeRate = AppSubscriptionCatalog.customerFeeRate(
+    final baseAmount = _baseAmount;
+    final feeRate = AppSubscriptionCatalog.customerFeeRate(
       widget.customerProfile.subscriptionPlan,
     );
-    final double customerFee =
-        double.parse((discountedBase * feeRate).toStringAsFixed(2));
-    final double totalToPay =
-        double.parse((discountedBase + customerFee).toStringAsFixed(2));
-    final bool isPro = feeRate == 0.0;
+    final customerFee =
+        double.parse((baseAmount * feeRate).toStringAsFixed(2));
+    final totalToPay =
+        double.parse((baseAmount + customerFee).toStringAsFixed(2));
+    final isPro = feeRate == 0.0;
 
     return Scaffold(
-      appBar: AppBar(title: const Text('إتمام دفع الورشة')),
-      body: SingleChildScrollView(
-        keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+      appBar: AppBar(title: Text(widget.screenTitle)),
+      body: ListView(
         padding: const EdgeInsets.all(16),
-        child: Column(
-          children: [
-            FadeSlideIn(
-              child: Container(
-                padding: const EdgeInsets.all(18),
-                decoration: BoxDecoration(
-                  color: AppColors.surface,
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: AppColors.border),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'تفاصيل الفاتورة',
-                      style:
-                          TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      widget.appointment.serviceDescription ?? 'صيانة مركبة',
-                      style: const TextStyle(
-                          color: AppColors.textSecondary, fontSize: 13),
-                    ),
-                    const Divider(height: 24),
-                    _row(
-                      'تكلفة الصيانة (قبل العمولة)',
-                      '${mechanicAmount.toStringAsFixed(2)} د.أ',
-                    ),
-                    if (_discountAmount > 0) ...[
-                      const SizedBox(height: 10),
-                      _row(
-                        'خصم الكود (${_appliedCode ?? ''} - ${_appliedPercent.toInt()}%)',
-                        '-${_discountAmount.toStringAsFixed(2)} د.أ',
-                        valueColor: AppColors.success,
-                      ),
-                    ],
-                    const SizedBox(height: 10),
-                    _row(
-                      isPro
-                          ? 'عمولة التطبيق (عضوية برو)'
-                          : 'عمولة الخدمة (2% - المجانية)',
-                      isPro
-                          ? '0.00 د.أ (معفى)'
-                          : '${customerFee.toStringAsFixed(2)} د.أ',
-                      valueColor: isPro ? AppColors.success : AppColors.orange,
-                    ),
-                    const Divider(height: 24),
-                    _row(
-                      'الإجمالي المطلوب للدفع',
-                      '${totalToPay.toStringAsFixed(2)} د.أ',
-                      isBold: true,
-                      valueColor: AppColors.navy,
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            const SizedBox(height: 14),
-
-            // قسم كود الخصم
-            Container(
-              padding: const EdgeInsets.all(14),
+        children: [
+          FadeSlideIn(
+            child: Container(
+              padding: const EdgeInsets.all(18),
               decoration: BoxDecoration(
                 color: AppColors.surface,
-                borderRadius: BorderRadius.circular(14),
+                borderRadius: BorderRadius.circular(16),
                 border: Border.all(color: AppColors.border),
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   const Text(
-                    'استخدام كود خصم',
-                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                    'تفاصيل الفاتورة',
+                    style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
                   ),
-                  const SizedBox(height: 8),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: TextField(
-                          controller: _promoCtrl,
-                          textCapitalization: TextCapitalization.characters,
-                          textInputAction: TextInputAction.done,
-                          onSubmitted: (_) => _applyDiscountCode(),
-                          decoration: InputDecoration(
-                            hintText: 'أدخل كود الخصم',
-                            isDense: true,
-                            filled: true,
-                            fillColor: Colors.white,
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                          ),
+                  const SizedBox(height: 6),
+                  Text(
+                    widget.serviceTitle,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w700,
+                      fontSize: 14,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    widget.serviceSubtitle,
+                    style: const TextStyle(
+                      color: AppColors.textSecondary,
+                      fontSize: 12,
+                    ),
+                  ),
+                  if (_needsManualAmount) ...[
+                    const SizedBox(height: 14),
+                    TextField(
+                      controller: _customAmountCtrl,
+                      keyboardType:
+                          const TextInputType.numberWithOptions(decimal: true),
+                      onChanged: (_) => setState(() {}),
+                      decoration: InputDecoration(
+                        labelText: 'أدخل قيمة الفاتورة المتفق عليها (د.أ)',
+                        prefixIcon: const Icon(
+                          Icons.payments_outlined,
+                          color: AppColors.orange,
+                        ),
+                        filled: true,
+                        fillColor: AppColors.background,
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
                         ),
                       ),
-                      const SizedBox(width: 8),
-                      ElevatedButton(
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: AppColors.navy,
-                          foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 16, vertical: 13),
-                        ),
-                        onPressed: _checkingPromo ? null : _applyDiscountCode,
-                        child: _checkingPromo
-                            ? const SizedBox(
-                                width: 16,
-                                height: 16,
-                                child: CircularProgressIndicator(
-                                    color: Colors.white, strokeWidth: 2),
-                              )
-                            : const Text('تطبيق'),
-                      ),
-                    ],
+                    ),
+                  ],
+                  const Divider(height: 24),
+                  _row(
+                    'قيمة الخدمة (قبل العمولة)',
+                    '${baseAmount.toStringAsFixed(2)} د.أ',
                   ),
-                  if (_promoError != null) ...[
-                    const SizedBox(height: 6),
-                    Text(
-                      _promoError!,
-                      style: const TextStyle(color: Colors.red, fontSize: 12),
-                    ),
-                  ],
-                  if (_appliedCode != null && _discountAmount > 0) ...[
-                    const SizedBox(height: 6),
-                    Row(
-                      children: [
-                        const Icon(Icons.check_circle,
-                            color: AppColors.success, size: 16),
-                        const SizedBox(width: 6),
-                        Expanded(
-                          child: Text(
-                            'الكود $_appliedCode مفعّل (-${_discountAmount.toStringAsFixed(2)} د.أ)',
-                            style: const TextStyle(
-                              color: AppColors.success,
-                              fontWeight: FontWeight.bold,
-                              fontSize: 12,
-                            ),
-                          ),
-                        ),
-                        TextButton(
-                          onPressed: () {
-                            setState(() {
-                              _appliedCode = null;
-                              _appliedPercent = 0;
-                              _discountAmount = 0;
-                              _promoCtrl.clear();
-                            });
-                          },
-                          child: const Text('إزالة',
-                              style:
-                                  TextStyle(color: Colors.red, fontSize: 12)),
-                        ),
-                      ],
-                    ),
-                  ],
+                  const SizedBox(height: 10),
+                  _row(
+                    isPro
+                        ? 'عمولة التطبيق (عضوية برو)'
+                        : 'عمولة الخدمة (2% - المجانية)',
+                    isPro
+                        ? '0.00 د.أ (معفى)'
+                        : '${customerFee.toStringAsFixed(2)} د.أ',
+                    valueColor: isPro ? AppColors.success : AppColors.orange,
+                  ),
+                  const Divider(height: 24),
+                  _row(
+                    'الإجمالي المطلوب للدفع',
+                    '${totalToPay.toStringAsFixed(2)} د.أ',
+                    isBold: true,
+                    valueColor: AppColors.navy,
+                  ),
                 ],
               ),
             ),
-
-            const SizedBox(height: 14),
-            if (!isPro)
-              InkWell(
-                onTap: () {
-                  Navigator.push(
-                    context,
-                    animatedRoute(CustomerSubscriptionsScreen(
+          ),
+          const SizedBox(height: 14),
+          if (!isPro)
+            InkWell(
+              onTap: () {
+                Navigator.push(
+                  context,
+                  animatedRoute(
+                    CustomerSubscriptionsScreen(
                       currentPlanCode: widget.customerProfile.subscriptionPlan,
                       onSubscribed: widget.onPaymentCompleted,
-                    )),
-                  );
-                },
-                child: Container(
-                  padding: const EdgeInsets.all(14),
-                  decoration: BoxDecoration(
-                    color: AppColors.orangeLight,
-                    borderRadius: BorderRadius.circular(14),
-                    border: Border.all(color: AppColors.orange),
+                    ),
                   ),
-                  child: const Row(
-                    children: [
-                      Icon(Icons.workspace_premium, color: AppColors.orange),
-                      SizedBox(width: 10),
-                      Expanded(
-                        child: Text(
-                          'اشترك بباقة البرو بـ 1.95 د.أ/شهر وألغِ عمولة الـ 2% مع خصومات على القطع!',
-                          style: TextStyle(
-                              color: AppColors.orange,
-                              fontWeight: FontWeight.bold,
-                              fontSize: 12),
+                );
+              },
+              child: Container(
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: AppColors.orangeLight,
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: AppColors.orange),
+                ),
+                child: const Row(
+                  children: [
+                    Icon(Icons.workspace_premium, color: AppColors.orange),
+                    SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        'اشترك بباقة البرو بـ 1.95 د.أ/شهر وألغِ عمولة الـ 2% مع خصومات على القطع والخدمات!',
+                        style: TextStyle(
+                          color: AppColors.orange,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 12,
                         ),
                       ),
-                      Icon(Icons.arrow_forward_ios,
-                          size: 14, color: AppColors.orange),
-                    ],
-                  ),
+                    ),
+                    Icon(
+                      Icons.arrow_forward_ios,
+                      size: 14,
+                      color: AppColors.orange,
+                    ),
+                  ],
                 ),
               ),
-            const SizedBox(height: 24),
-            BounceTap(
-              onTap: _paying
-                  ? () {}
-                  : () => _startCheckout(discountedBase, customerFee),
-              child: Container(
-                width: double.infinity,
+            ),
+          const SizedBox(height: 18),
+          const Text(
+            'اختر وسيلة الدفع',
+            style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 10),
+          _methodTile(
+            code: 'visa',
+            icon: Icons.credit_card,
+            title: 'Visa / Mastercard (MEPS)',
+            subtitle: 'دفع إلكتروني فوري — يُضاف الصافي مباشرة لمحفظة مقدم الخدمة',
+          ),
+          const SizedBox(height: 8),
+          _methodTile(
+            code: 'cliq',
+            icon: Icons.account_balance,
+            title: 'حوالة CliQ البنكية',
+            subtitle: 'تحويل فوري على اسم المعرّف: $_cliqAlias',
+          ),
+          if (_selectedMethod == 'cliq') ...[
+            const SizedBox(height: 10),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: AppColors.surface,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: AppColors.border),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'حوّل مبلغ ${totalToPay.toStringAsFixed(2)} د.أ على معرّف CliQ: $_cliqAlias ثم أدخل رقم المرجع:',
+                    style: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: _cliqRefCtrl,
+                    decoration: InputDecoration(
+                      hintText: 'رقم مرجع الحوالة أو اسم المحوّل',
+                      filled: true,
+                      fillColor: AppColors.background,
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+          const SizedBox(height: 8),
+          _methodTile(
+            code: 'cash',
+            icon: Icons.payments_outlined,
+            title: 'الدفع نقداً (كاش)',
+            subtitle: 'ادفع مباشرة لمقدم الخدمة وتُحتسب عمولة المنصة تلقائياً على محفظته',
+          ),
+          const SizedBox(height: 22),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.orange,
+                foregroundColor: Colors.white,
                 padding: const EdgeInsets.symmetric(vertical: 16),
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                  color: AppColors.orange,
+                shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(14),
                 ),
-                child: _paying
-                    ? const SizedBox(
-                        width: 22,
-                        height: 22,
-                        child: CircularProgressIndicator(
-                            color: Colors.white, strokeWidth: 2.5),
-                      )
-                    : Text(
-                        'متابعة الدفع (${totalToPay.toStringAsFixed(2)} د.أ)',
-                        style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 15,
-                            fontWeight: FontWeight.bold),
-                      ),
               ),
+              onPressed: _processing ? null : _submitPayment,
+              child: _processing
+                  ? const SizedBox(
+                      width: 22,
+                      height: 22,
+                      child: CircularProgressIndicator(
+                        color: Colors.white,
+                        strokeWidth: 2.5,
+                      ),
+                    )
+                  : Text(
+                      _selectedMethod == 'visa'
+                          ? 'الدفع عبر MEPS (${totalToPay.toStringAsFixed(2)} د.أ)'
+                          : _selectedMethod == 'cliq'
+                              ? 'تأكيد إرسال حوالة CliQ (${totalToPay.toStringAsFixed(2)} د.أ)'
+                              : 'تأكيد الدفع نقداً (${totalToPay.toStringAsFixed(2)} د.أ)',
+                      style: const TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _methodTile({
+    required String code,
+    required IconData icon,
+    required String title,
+    required String subtitle,
+  }) {
+    final selected = _selectedMethod == code;
+    return InkWell(
+      borderRadius: BorderRadius.circular(14),
+      onTap: () => setState(() => _selectedMethod = code),
+      child: Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: selected ? AppColors.orangeLight : AppColors.surface,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+            color: selected ? AppColors.orange : AppColors.border,
+            width: selected ? 1.6 : 1,
+          ),
+        ),
+        child: Row(
+          children: [
+            Icon(
+              icon,
+              color: selected ? AppColors.orange : AppColors.navy,
+              size: 26,
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 14,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    subtitle,
+                    style: const TextStyle(
+                      color: AppColors.textSecondary,
+                      fontSize: 11.5,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Icon(
+              selected
+                  ? Icons.radio_button_checked
+                  : Icons.radio_button_off,
+              color: selected ? AppColors.orange : AppColors.textSecondary,
             ),
           ],
         ),
@@ -382,24 +681,28 @@ class _WorkshopCheckoutScreenState extends State<WorkshopCheckoutScreen> {
     );
   }
 
-  Widget _row(String label, String val,
-      {bool isBold = false, Color? valueColor}) {
+  Widget _row(
+    String label,
+    String val, {
+    bool isBold = false,
+    Color? valueColor,
+  }) {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
-        Expanded(
-          child: Text(
-            label,
-            style: TextStyle(
-                fontWeight: isBold ? FontWeight.bold : FontWeight.w500),
+        Text(
+          label,
+          style: TextStyle(
+            fontWeight: isBold ? FontWeight.bold : FontWeight.w500,
           ),
         ),
         Text(
           val,
           style: TextStyle(
-              fontWeight: isBold ? FontWeight.w800 : FontWeight.bold,
-              fontSize: isBold ? 17 : 14,
-              color: valueColor),
+            fontWeight: isBold ? FontWeight.w800 : FontWeight.bold,
+            fontSize: isBold ? 17 : 14,
+            color: valueColor,
+          ),
         ),
       ],
     );

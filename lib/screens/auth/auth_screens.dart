@@ -12,6 +12,16 @@ import '../../widgets/animations.dart';
 typedef PickedMedia = ({String name, Uint8List bytes});
 const String _oauthRedirectUrl = 'com.autoparts.app://login-callback';
 
+bool _isProviderRole(String role) =>
+    role == 'merchant' || role == 'mechanic' || role == 'towing';
+
+String _roleArabicTitle(String role) => switch (role) {
+      'merchant' => 'تاجر قطع غيار',
+      'mechanic' => 'ميكانيكي / صاحب ورشة',
+      'towing' => 'صاحب ونش طوارئ',
+      _ => 'مستخدم',
+    };
+
 Future<int> _fetchDefaultPostLimit(SupabaseClient db) async {
   try {
     final row = await db
@@ -25,137 +35,24 @@ Future<int> _fetchDefaultPostLimit(SupabaseClient db) async {
   }
 }
 
-/// نافذة الشروط والأحكام وسياسة الخصوصية (متطلب Apple App Store Review)
-Future<void> showTermsAndPrivacySheet(BuildContext context) async {
-  await showModalBottomSheet(
-    context: context,
-    isScrollControlled: true,
-    backgroundColor: Colors.white,
-    shape: const RoundedRectangleBorder(
-      borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-    ),
-    builder: (ctx) => DraggableScrollableSheet(
-      initialChildSize: 0.78,
-      minChildSize: 0.45,
-      maxChildSize: 0.92,
-      expand: false,
-      builder: (_, scrollCtrl) => Column(
-        children: [
-          const SizedBox(height: 10),
-          Container(
-            width: 44,
-            height: 4,
-            decoration: BoxDecoration(
-              color: AppColors.border,
-              borderRadius: BorderRadius.circular(4),
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(20, 14, 20, 10),
-            child: Row(
-              children: [
-                const Icon(Icons.verified_user_outlined, color: AppColors.orange),
-                const SizedBox(width: 8),
-                const Expanded(
-                  child: Text(
-                    'الشروط والأحكام وسياسة الخصوصية',
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.navy),
-                  ),
-                ),
-                IconButton(
-                  icon: const Icon(Icons.close),
-                  onPressed: () => Navigator.pop(ctx),
-                ),
-              ],
-            ),
-          ),
-          const Divider(height: 1),
-          Expanded(
-            child: ListView(
-              controller: scrollCtrl,
-              padding: const EdgeInsets.all(20),
-              children: const [
-                _LegalSection(
-                  title: '1. قبول الشروط واستخدام تطبيق غيارك',
-                  body:
-                      'بإنشائك حساباً أو استخدامك لتطبيق غيارك (Ghyarak)، فإنك توافق على الالتزام بهذه الشروط والأحكام وبكافة القوانين السارية في المملكة الأردنية الهاشمية. يعمل التطبيق كوسيط تقني يربط بين مالكي المركبات وتجار قطع الغيار والورش ومزودي خدمات الونش.',
-                ),
-                _LegalSection(
-                  title: '2. سياسة الخصوصية والبيانات المجمّعة',
-                  body:
-                      '• نجمع فقط البيانات اللازمة لتشغيل الخدمة: الاسم، اسم المستخدم، رقم الهاتف، البريد الإلكتروني، وصور القطع أو التراخيص التي ترفعها طوعاً.\n'
-                      '• يُستخدم الموقع الجغرافي (GPS) فقط عند طلب مساعدة طارئة أو حجز موعد ورشة لحساب المسافة والتتبع المباشر، ولا يتم بيع بياناتك لأي طرف ثالث.\n'
-                      '• يمكنك طلب تعديل بياناتك أو حذف حسابك نهائياً في أي وقت من صفحة (حسابي ← حذف الحساب نهائياً).',
-                ),
-                _LegalSection(
-                  title: '3. التزامات التجار والورش والونشات',
-                  body:
-                      '• يتحمل التاجر أو الورشة كامل المسؤولية القانونية عن دقة أوصاف القطع وأسعارها وحالتها وجودتها.\n'
-                      '• تخضع الباقات والعمولات للسياسة المعلنة داخل التطبيق، وتُحتسب عمولة المنصة بشفافية في محفظة المزود.\n'
-                      '• يحق لإدارة غيارك إخفاء أي إعلان مخالف أو إيقاف الحساب في حال التلاعب بالأسعار أو الاحتيال.',
-                ),
-                _LegalSection(
-                  title: '4. سياسة المحتوى والإبلاغ (Zero-Tolerance)',
-                  body:
-                      '• يُمنع منعاً باتاً نشر أي محتوى مسيء أو مضلل أو مخالف للآداب العامة أو القانون.\n'
-                      '• يتيح التطبيق زر (إبلاغ عن محتوى/مستخدم) في جميع الإعلانات والملفات الشخصية، وتلتزم الإدارة بمراجعة البلاغات واتخاذ إجراء خلال 24 ساعة.',
-                ),
-                _LegalSection(
-                  title: '5. المدفوعات والاسترداد والتواصل',
-                  body:
-                      'تُعالج المدفوعات الإلكترونية عبر بوابات دفع مرخصة وآمنة، ولا يقوم التطبيق بتخزين أرقام بطاقاتك البنكية. لأي استفسار أو شكوى يرجى التواصل معنا عبر:\n'
-                      '• البريد الإلكتروني: ${EnvConfig.supportEmail}\n'
-                      '• الهاتف / واتساب: ${EnvConfig.supportPhone}',
-                ),
-              ],
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(20, 8, 20, 20),
-            child: SizedBox(
-              width: double.infinity,
-              child: ElevatedButton(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.navy,
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(vertical: 14),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                ),
-                onPressed: () => Navigator.pop(ctx),
-                child: const Text('فهمت وأغلق', style: TextStyle(fontWeight: FontWeight.bold)),
-              ),
-            ),
-          ),
-        ],
-      ),
-    ),
-  );
-}
-
-class _LegalSection extends StatelessWidget {
-  final String title;
-  final String body;
-  const _LegalSection({required this.title, required this.body});
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            title,
-            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: AppColors.navy),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            body,
-            style: const TextStyle(fontSize: 13, height: 1.6, color: AppColors.textPrimary),
-          ),
-        ],
-      ),
-    );
+/// حفظ بيانات المستخدم مع توثيق العقد بسلاسة (مع حماية في حال لم يُشغَّل SQL العقد بعد)
+Future<void> _upsertCustomerRecord(
+  SupabaseClient db,
+  Map<String, dynamic> payload,
+) async {
+  try {
+    await db.from('customers').upsert(payload);
+  } on PostgrestException catch (e) {
+    if (e.code == 'PGRST204' &&
+        (e.message.contains('contract_accepted') ||
+            e.message.contains('contract_accepted_at'))) {
+      final fallback = Map<String, dynamic>.from(payload)
+        ..remove('contract_accepted')
+        ..remove('contract_accepted_at');
+      await db.from('customers').upsert(fallback);
+    } else {
+      rethrow;
+    }
   }
 }
 
@@ -171,7 +68,6 @@ class _LoginScreenState extends State<LoginScreen> {
   String _loginMode = 'phone';
   final _identifierCtrl = TextEditingController();
   final _passCtrl = TextEditingController();
-  bool _obscurePass = true;
   bool _loading = false;
 
   @override
@@ -188,7 +84,6 @@ class _LoginScreenState extends State<LoginScreen> {
       };
 
   Future<void> _login() async {
-    FocusScope.of(context).unfocus();
     final input = _identifierCtrl.text.trim();
     if (input.isEmpty || _passCtrl.text.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -201,11 +96,13 @@ class _LoginScreenState extends State<LoginScreen> {
       final db = Supabase.instance.client;
       final emailToUse = _loginMode == 'email'
           ? input
-          : await db.rpc('get_email_for_login', params: {'identifier': input}) as String?;
+          : await db.rpc('get_email_for_login', params: {'identifier': input})
+              as String?;
       if (emailToUse == null || emailToUse.isEmpty) {
         throw Exception('لا يوجد حساب مسجل بهذه البيانات');
       }
-      await db.auth.signInWithPassword(email: emailToUse, password: _passCtrl.text);
+      await db.auth
+          .signInWithPassword(email: emailToUse, password: _passCtrl.text);
       if (mounted) {
         if (Navigator.canPop(context)) {
           Navigator.pop(context);
@@ -215,7 +112,8 @@ class _LoginScreenState extends State<LoginScreen> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('فشل الدخول: $e'), backgroundColor: Colors.red),
+          SnackBar(
+              content: Text('فشل الدخول: $e'), backgroundColor: Colors.red),
         );
       }
     } finally {
@@ -239,7 +137,9 @@ class _LoginScreenState extends State<LoginScreen> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('تعذر تسجيل الدخول: $e'), backgroundColor: Colors.red),
+          SnackBar(
+              content: Text('تعذر تسجيل الدخول: $e'),
+              backgroundColor: Colors.red),
         );
       }
     } finally {
@@ -255,7 +155,6 @@ class _LoginScreenState extends State<LoginScreen> {
       appBar: AppBar(title: const Text('تسجيل الدخول — غيارك')),
       body: SafeArea(
         child: ListView(
-          keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
           padding: const EdgeInsets.all(24),
           children: [
             const Center(child: GhiyarakLogo(size: 64)),
@@ -285,43 +184,38 @@ class _LoginScreenState extends State<LoginScreen> {
             const SizedBox(height: 16),
             TextField(
               controller: _identifierCtrl,
-              keyboardType:
-                  _loginMode == 'phone' ? TextInputType.phone : TextInputType.emailAddress,
-              textInputAction: TextInputAction.next,
+              keyboardType: _loginMode == 'phone'
+                  ? TextInputType.phone
+                  : TextInputType.emailAddress,
               decoration: InputDecoration(
                 labelText: _hintText,
                 filled: true,
                 fillColor: AppColors.surface,
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+                border:
+                    OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
               ),
             ),
             const SizedBox(height: 12),
             TextField(
               controller: _passCtrl,
-              obscureText: _obscurePass,
-              textInputAction: TextInputAction.done,
-              onSubmitted: (_) {
-                if (!_loading) _login();
-              },
+              obscureText: true,
               decoration: InputDecoration(
                 labelText: 'كلمة المرور',
                 filled: true,
                 fillColor: AppColors.surface,
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
-                suffixIcon: IconButton(
-                  icon: Icon(_obscurePass ? Icons.visibility_off : Icons.visibility),
-                  onPressed: () => setState(() => _obscurePass = !_obscurePass),
-                ),
+                border:
+                    OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
               ),
             ),
             Align(
               alignment: Alignment.centerLeft,
               child: TextButton(
-                onPressed: () =>
-                    Navigator.push(context, animatedRoute(const ForgotPasswordScreen())),
+                onPressed: () => Navigator.push(
+                    context, animatedRoute(const ForgotPasswordScreen())),
                 child: const Text(
                   'نسيت كلمة المرور؟',
-                  style: TextStyle(color: AppColors.orange, fontWeight: FontWeight.bold),
+                  style: TextStyle(
+                      color: AppColors.orange, fontWeight: FontWeight.bold),
                 ),
               ),
             ),
@@ -340,12 +234,15 @@ class _LoginScreenState extends State<LoginScreen> {
                     ? const SizedBox(
                         width: 22,
                         height: 22,
-                        child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2.5),
+                        child: CircularProgressIndicator(
+                            color: Colors.white, strokeWidth: 2.5),
                       )
                     : const Text(
                         'دخول',
                         style: TextStyle(
-                            color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+                            color: Colors.white,
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold),
                       ),
               ),
             ),
@@ -356,7 +253,8 @@ class _LoginScreenState extends State<LoginScreen> {
                 Padding(
                   padding: EdgeInsets.symmetric(horizontal: 10),
                   child: Text('أو الدخول السريع عبر',
-                      style: TextStyle(color: AppColors.textSecondary, fontSize: 12)),
+                      style: TextStyle(
+                          color: AppColors.textSecondary, fontSize: 12)),
                 ),
                 Expanded(child: Divider()),
               ],
@@ -366,13 +264,16 @@ class _LoginScreenState extends State<LoginScreen> {
               style: OutlinedButton.styleFrom(
                 backgroundColor: AppColors.surface,
                 padding: const EdgeInsets.symmetric(vertical: 13),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14)),
               ),
-              onPressed: _loading ? null : () => _oauthSignIn(OAuthProvider.google),
+              onPressed:
+                  _loading ? null : () => _oauthSignIn(OAuthProvider.google),
               icon: const GoogleLogoIcon(size: 20),
               label: const Text(
                 'المتابعة باستخدام Google',
-                style: TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.bold),
+                style: TextStyle(
+                    color: AppColors.textPrimary, fontWeight: FontWeight.bold),
               ),
             ),
             const SizedBox(height: 10),
@@ -381,9 +282,11 @@ class _LoginScreenState extends State<LoginScreen> {
                 backgroundColor: Colors.black,
                 foregroundColor: Colors.white,
                 padding: const EdgeInsets.symmetric(vertical: 13),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14)),
               ),
-              onPressed: _loading ? null : () => _oauthSignIn(OAuthProvider.apple),
+              onPressed:
+                  _loading ? null : () => _oauthSignIn(OAuthProvider.apple),
               icon: const Icon(Icons.apple, size: 22),
               label: const Text('المتابعة باستخدام Apple',
                   style: TextStyle(fontWeight: FontWeight.bold)),
@@ -392,11 +295,13 @@ class _LoginScreenState extends State<LoginScreen> {
             TextButton(
               onPressed: () => Navigator.push(
                 context,
-                animatedRoute(SignUpScreen(onAuthenticated: widget.onAuthenticated)),
+                animatedRoute(
+                    SignUpScreen(onAuthenticated: widget.onAuthenticated)),
               ),
               child: const Text(
                 'ليس لديك حساب؟ إنشاء حساب جديد',
-                style: TextStyle(color: AppColors.navy, fontWeight: FontWeight.bold),
+                style: TextStyle(
+                    color: AppColors.navy, fontWeight: FontWeight.bold),
               ),
             ),
           ],
@@ -440,17 +345,19 @@ class CompleteOAuthProfileScreen extends StatefulWidget {
   const CompleteOAuthProfileScreen({super.key, required this.onCompleted});
 
   @override
-  State<CompleteOAuthProfileScreen> createState() => _CompleteOAuthProfileScreenState();
+  State<CompleteOAuthProfileScreen> createState() =>
+      _CompleteOAuthProfileScreenState();
 }
 
-class _CompleteOAuthProfileScreenState extends State<CompleteOAuthProfileScreen> {
+class _CompleteOAuthProfileScreenState
+    extends State<CompleteOAuthProfileScreen> {
   final _db = Supabase.instance.client;
   final _usernameCtrl = TextEditingController();
   final _nameCtrl = TextEditingController();
   final _phoneCtrl = TextEditingController();
   String _role = 'user';
   bool _hasTowing = false;
-  bool _acceptedTerms = false;
+  bool _contractAccepted = false;
   bool _saving = false;
 
   @override
@@ -471,25 +378,30 @@ class _CompleteOAuthProfileScreenState extends State<CompleteOAuthProfileScreen>
   }
 
   Future<void> _save() async {
-    FocusScope.of(context).unfocus();
     final username = _usernameCtrl.text.trim();
     final name = _nameCtrl.text.trim();
     final phone = _phoneCtrl.text.trim();
     if (username.isEmpty || name.isEmpty || phone.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('يرجى إدخال اسم المستخدم والاسم الكامل ورقم الهاتف')),
+        const SnackBar(
+            content:
+                Text('يرجى إدخال اسم المستخدم والاسم الكامل ورقم الهاتف')),
       );
       return;
     }
-    if (!_acceptedTerms) {
+
+    if (_isProviderRole(_role) && !_contractAccepted) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('يرجى الموافقة على الشروط والأحكام وسياسة الخصوصية أولاً'),
-          backgroundColor: AppColors.orange,
+          content: Text(
+            'يرجى قراءة عقد الشراكة والتعهد بدفع العمولات والموافقة عليه قبل المتابعة',
+          ),
+          backgroundColor: Colors.red,
         ),
       );
       return;
     }
+
     setState(() => _saving = true);
     try {
       final user = _db.auth.currentUser!;
@@ -502,7 +414,8 @@ class _CompleteOAuthProfileScreenState extends State<CompleteOAuthProfileScreen>
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
-              content: Text('اسم المستخدم أو رقم الهاتف مسجل مسبقاً لحساب آخر'),
+              content:
+                  Text('اسم المستخدم أو رقم الهاتف مسجل مسبقاً لحساب آخر'),
               backgroundColor: Colors.red,
             ),
           );
@@ -526,6 +439,7 @@ class _CompleteOAuthProfileScreenState extends State<CompleteOAuthProfileScreen>
             age: null,
             password: '',
             hasTowing: EnvConfig.winchEnabled.value ? _hasTowing : false,
+            contractAccepted: _contractAccepted,
             onCompleted: widget.onCompleted,
           )),
         );
@@ -533,7 +447,8 @@ class _CompleteOAuthProfileScreenState extends State<CompleteOAuthProfileScreen>
       }
 
       final defaultLimit = await _fetchDefaultPostLimit(_db);
-      await _db.from('customers').upsert({
+      final isProvider = _isProviderRole(_role);
+      await _upsertCustomerRecord(_db, {
         'id': user.id,
         'username': username,
         'full_name': name,
@@ -544,7 +459,9 @@ class _CompleteOAuthProfileScreenState extends State<CompleteOAuthProfileScreen>
         'max_posts_limit': defaultLimit,
         'subscription_plan': 'free',
         'commission_rate': 0.15,
-        'accepted_terms_at': DateTime.now().toUtc().toIso8601String(),
+        if (isProvider) 'contract_accepted': true,
+        if (isProvider)
+          'contract_accepted_at': DateTime.now().toIso8601String(),
       });
       widget.onCompleted();
     } finally {
@@ -578,7 +495,6 @@ class _CompleteOAuthProfileScreenState extends State<CompleteOAuthProfileScreen>
         ],
       ),
       body: ListView(
-        keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
         padding: const EdgeInsets.all(20),
         children: [
           const Text(
@@ -596,24 +512,33 @@ class _CompleteOAuthProfileScreenState extends State<CompleteOAuthProfileScreen>
             children: roles.map((r) {
               final active = _role == r.$1;
               return GestureDetector(
-                onTap: () => setState(() => _role = r.$1),
+                onTap: () => setState(() {
+                  if (_role != r.$1) {
+                    _role = r.$1;
+                    _contractAccepted = false;
+                  }
+                }),
                 child: Container(
                   padding: const EdgeInsets.symmetric(horizontal: 10),
                   decoration: BoxDecoration(
                     color: active ? AppColors.navy : AppColors.surface,
                     borderRadius: BorderRadius.circular(14),
-                    border: Border.all(color: active ? AppColors.navy : AppColors.border),
+                    border: Border.all(
+                        color: active ? AppColors.navy : AppColors.border),
                   ),
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Icon(r.$3, color: active ? Colors.white : AppColors.textPrimary, size: 18),
+                      Icon(r.$3,
+                          color: active ? Colors.white : AppColors.textPrimary,
+                          size: 18),
                       const SizedBox(width: 6),
                       Flexible(
                         child: Text(
                           r.$2,
                           style: TextStyle(
-                            color: active ? Colors.white : AppColors.textPrimary,
+                            color:
+                                active ? Colors.white : AppColors.textPrimary,
                             fontWeight: FontWeight.bold,
                             fontSize: 12,
                           ),
@@ -628,38 +553,35 @@ class _CompleteOAuthProfileScreenState extends State<CompleteOAuthProfileScreen>
           const SizedBox(height: 16),
           TextField(
             controller: _usernameCtrl,
-            textInputAction: TextInputAction.next,
             decoration: InputDecoration(
               labelText: 'اسم المستخدم (username) - لا يتكرر',
               filled: true,
               fillColor: AppColors.surface,
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+              border:
+                  OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
             ),
           ),
           const SizedBox(height: 12),
           TextField(
             controller: _nameCtrl,
-            textInputAction: TextInputAction.next,
             decoration: InputDecoration(
               labelText: 'الاسم الكامل / اسم النشاط',
               filled: true,
               fillColor: AppColors.surface,
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+              border:
+                  OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
             ),
           ),
           const SizedBox(height: 12),
           TextField(
             controller: _phoneCtrl,
             keyboardType: TextInputType.phone,
-            textInputAction: TextInputAction.done,
-            onSubmitted: (_) {
-              if (!_saving) _save();
-            },
             decoration: InputDecoration(
               labelText: 'رقم الهاتف - لا يتكرر',
               filled: true,
               fillColor: AppColors.surface,
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+              border:
+                  OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
             ),
           ),
           if (_role == 'mechanic' && showWinch) ...[
@@ -670,24 +592,27 @@ class _CompleteOAuthProfileScreenState extends State<CompleteOAuthProfileScreen>
               onChanged: (v) => setState(() => _hasTowing = v),
             ),
           ],
-          const SizedBox(height: 12),
-          _TermsAgreementBox(
-            accepted: _acceptedTerms,
-            onChanged: (v) => setState(() => _acceptedTerms = v),
-            onOpenTerms: () => showTermsAndPrivacySheet(context),
-          ),
-          const SizedBox(height: 18),
+          if (_isProviderRole(_role)) ...[
+            const SizedBox(height: 16),
+            _ProviderContractCard(
+              role: _role,
+              accepted: _contractAccepted,
+              onChanged: (v) => setState(() => _contractAccepted = v),
+            ),
+          ],
+          const SizedBox(height: 20),
           ElevatedButton(
             style: ElevatedButton.styleFrom(
               backgroundColor: AppColors.orange,
               foregroundColor: Colors.white,
               padding: const EdgeInsets.symmetric(vertical: 15),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
             ),
             onPressed: _saving ? null : _save,
             child: _saving
                 ? const CircularProgressIndicator(color: Colors.white)
-                : Text(_role == 'mechanic' ? 'التالي: معلومات الورشة' : 'حفظ والدخول'),
+                : Text(_role == 'mechanic'
+                    ? 'التالي: معلومات الورشة'
+                    : 'حفظ والدخول'),
           ),
         ],
       ),
@@ -722,10 +647,10 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
   }
 
   Future<void> _sendRecoveryCode() async {
-    FocusScope.of(context).unfocus();
     final input = _identifierCtrl.text.trim();
     if (input.isEmpty) {
-      setState(() => _securityAlert = 'يرجى إدخال الإيميل أو رقم الهاتف أو اسم المستخدم');
+      setState(() =>
+          _securityAlert = 'يرجى إدخال الإيميل أو رقم الهاتف أو اسم المستخدم');
       return;
     }
     setState(() {
@@ -735,9 +660,11 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
     try {
       final email = input.contains('@')
           ? input
-          : await _db.rpc('get_email_for_login', params: {'identifier': input}) as String?;
+          : await _db.rpc('get_email_for_login', params: {'identifier': input})
+              as String?;
       if (email == null || email.isEmpty) {
-        setState(() => _securityAlert = 'تنبيه: لم يتم العثور على أي حساب مسجل بهذه البيانات.');
+        setState(() => _securityAlert =
+            'تنبيه: لم يتم العثور على أي حساب مسجل بهذه البيانات.');
         return;
       }
       await _db.auth.resetPasswordForEmail(email);
@@ -747,7 +674,9 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
           _codeSent = true;
         });
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('تم إرسال رمز الأمان إلى: $email'), backgroundColor: AppColors.success),
+          SnackBar(
+              content: Text('تم إرسال رمز الأمان إلى: $email'),
+              backgroundColor: AppColors.success),
         );
       }
     } catch (e) {
@@ -762,14 +691,16 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
   }
 
   Future<void> _verifyAndResetPassword() async {
-    FocusScope.of(context).unfocus();
     final code = _codeCtrl.text.trim();
     if (code.length < 6) {
-      _showSecurityWarning('رمز الأمان ناقص! يرجى إدخال كود الأمان المرسل لبريدك بشكل صحيح.');
+      _showSecurityWarning(
+          'رمز الأمان ناقص! يرجى إدخال كود الأمان المرسل لبريدك بشكل صحيح.');
       return;
     }
-    if (_newPassCtrl.text.length < 6 || _newPassCtrl.text != _confirmPassCtrl.text) {
-      _showSecurityWarning('تأكد من كتابة كلمة مرور من 6 أحرف على الأقل وتطابقها.');
+    if (_newPassCtrl.text.length < 6 ||
+        _newPassCtrl.text != _confirmPassCtrl.text) {
+      _showSecurityWarning(
+          'تأكد من كتابة كلمة مرور من 6 أحرف على الأقل وتطابقها.');
       return;
     }
     setState(() {
@@ -777,7 +708,8 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
       _securityAlert = null;
     });
     try {
-      await _db.auth.verifyOTP(email: _resolvedEmail!, token: code, type: OtpType.recovery);
+      await _db.auth.verifyOTP(
+          email: _resolvedEmail!, token: code, type: OtpType.recovery);
       await _db.auth.updateUser(UserAttributes(password: _newPassCtrl.text));
       await _db.auth.signOut();
       if (mounted) {
@@ -813,13 +745,16 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
           children: [
             Icon(Icons.security, color: Colors.red),
             SizedBox(width: 8),
-            Text('تنبيه أمني', style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold)),
+            Text('تنبيه أمني',
+                style:
+                    TextStyle(color: Colors.red, fontWeight: FontWeight.bold)),
           ],
         ),
         content: Text(msg),
         actions: [
           ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
+            style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.red, foregroundColor: Colors.white),
             onPressed: () => Navigator.pop(ctx),
             child: const Text('حسناً'),
           ),
@@ -833,7 +768,6 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
     return Scaffold(
       appBar: AppBar(title: const Text('استعادة كلمة المرور')),
       body: ListView(
-        keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
         padding: const EdgeInsets.all(20),
         children: [
           if (_securityAlert != null)
@@ -847,21 +781,21 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
               ),
               child: Text(
                 _securityAlert!,
-                style: const TextStyle(color: Colors.red, fontWeight: FontWeight.bold, fontSize: 12),
+                style: const TextStyle(
+                    color: Colors.red,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 12),
               ),
             ),
           if (!_codeSent) ...[
             TextField(
               controller: _identifierCtrl,
-              textInputAction: TextInputAction.done,
-              onSubmitted: (_) {
-                if (!_loading) _sendRecoveryCode();
-              },
               decoration: InputDecoration(
                 labelText: 'الإيميل / رقم الهاتف / اسم المستخدم',
                 filled: true,
                 fillColor: AppColors.surface,
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+                border:
+                    OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
               ),
             ),
             const SizedBox(height: 16),
@@ -878,39 +812,36 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
             TextField(
               controller: _codeCtrl,
               keyboardType: TextInputType.number,
-              textInputAction: TextInputAction.next,
               decoration: InputDecoration(
                 labelText: 'رمز الأمان (OTP)',
                 filled: true,
                 fillColor: AppColors.surface,
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+                border:
+                    OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
               ),
             ),
             const SizedBox(height: 12),
             TextField(
               controller: _newPassCtrl,
               obscureText: true,
-              textInputAction: TextInputAction.next,
               decoration: InputDecoration(
                 labelText: 'كلمة المرور الجديدة',
                 filled: true,
                 fillColor: AppColors.surface,
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+                border:
+                    OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
               ),
             ),
             const SizedBox(height: 12),
             TextField(
               controller: _confirmPassCtrl,
               obscureText: true,
-              textInputAction: TextInputAction.done,
-              onSubmitted: (_) {
-                if (!_loading) _verifyAndResetPassword();
-              },
               decoration: InputDecoration(
                 labelText: 'تأكيد كلمة المرور',
                 filled: true,
                 fillColor: AppColors.surface,
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+                border:
+                    OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
               ),
             ),
             const SizedBox(height: 16),
@@ -942,8 +873,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
   String _selectedRole = 'user';
   bool _hasTowing = false;
   bool _isOwnerDriver = true;
-  bool _acceptedTerms = false;
-  bool _obscurePass = true;
+  bool _contractAccepted = false;
 
   final _usernameCtrl = TextEditingController();
   final _nameCtrl = TextEditingController();
@@ -977,12 +907,8 @@ class _SignUpScreenState extends State<SignUpScreen> {
   }
 
   Future<void> _pickImage(bool isDriverLicense) async {
-    final picked = await _picker.pickImage(
-      source: ImageSource.gallery,
-      maxWidth: 1280,
-      maxHeight: 1280,
-      imageQuality: 72,
-    );
+    final picked =
+        await _picker.pickImage(source: ImageSource.gallery, imageQuality: 75);
     if (picked == null) {
       return;
     }
@@ -999,15 +925,19 @@ class _SignUpScreenState extends State<SignUpScreen> {
     });
   }
 
-  Future<String> _uploadMedia(PickedMedia media, String folder, String uid) async {
+  Future<String> _uploadMedia(
+      PickedMedia media, String folder, String uid) async {
     final safe = media.name.replaceAll(RegExp(r'[^a-zA-Z0-9._-]'), '_');
     final path = '$folder/$uid/${DateTime.now().millisecondsSinceEpoch}_$safe';
     await Supabase.instance.client.storage.from('app_media').uploadBinary(
           path,
           media.bytes,
-          fileOptions: const FileOptions(contentType: 'image/jpeg', upsert: true),
+          fileOptions:
+              const FileOptions(contentType: 'image/jpeg', upsert: true),
         );
-    return Supabase.instance.client.storage.from('app_media').getPublicUrl(path);
+    return Supabase.instance.client.storage
+        .from('app_media')
+        .getPublicUrl(path);
   }
 
   Future<void> _oauthSignUp(OAuthProvider provider) async {
@@ -1035,7 +965,6 @@ class _SignUpScreenState extends State<SignUpScreen> {
   }
 
   Future<void> _submitStep1() async {
-    FocusScope.of(context).unfocus();
     final showWinch = EnvConfig.winchEnabled.value;
     final username = _usernameCtrl.text.trim();
     final fullName = _nameCtrl.text.trim();
@@ -1050,16 +979,19 @@ class _SignUpScreenState extends State<SignUpScreen> {
         password.length < 6) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-            content: Text('يرجى تعبئة اسم المستخدم، الاسم الكامل، الهاتف، الإيميل وكلمة المرور')),
+            content: Text(
+                'يرجى تعبئة اسم المستخدم، الاسم الكامل، الهاتف، الإيميل وكلمة المرور')),
       );
       return;
     }
 
-    if (!_acceptedTerms) {
+    if (_isProviderRole(_selectedRole) && !_contractAccepted) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('يرجى الموافقة على الشروط والأحكام وسياسة الخصوصية لإتمام التسجيل'),
-          backgroundColor: AppColors.orange,
+          content: Text(
+            'يرجى قراءة عقد الشراكة والتعهد بدفع العمولات والموافقة عليه قبل إنشاء الحساب',
+          ),
+          backgroundColor: Colors.red,
         ),
       );
       return;
@@ -1070,14 +1002,18 @@ class _SignUpScreenState extends State<SignUpScreen> {
           _winchLicenseFile == null ||
           _winchPlateCtrl.text.trim().isEmpty) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('يرجى رفع رخصة السائق ورخصة الونش وكتابة نمرة الونش')),
+          const SnackBar(
+              content:
+                  Text('يرجى رفع رخصة السائق ورخصة الونش وكتابة نمرة الونش')),
         );
         return;
       }
       if (!_isOwnerDriver &&
-          (_driverNameCtrl.text.trim().isEmpty || _driverPhoneCtrl.text.trim().isEmpty)) {
+          (_driverNameCtrl.text.trim().isEmpty ||
+              _driverPhoneCtrl.text.trim().isEmpty)) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('يرجى إدخال اسم سائق الونش ورقم هاتفه')),
+          const SnackBar(
+              content: Text('يرجى إدخال اسم سائق الونش ورقم هاتفه')),
         );
         return;
       }
@@ -1093,8 +1029,8 @@ class _SignUpScreenState extends State<SignUpScreen> {
       }) as String;
       if (checkMsg != 'OK') {
         if (mounted) {
-          ScaffoldMessenger.of(context)
-              .showSnackBar(SnackBar(content: Text(checkMsg), backgroundColor: Colors.red));
+          ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text(checkMsg), backgroundColor: Colors.red));
         }
         return;
       }
@@ -1114,6 +1050,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
             age: int.tryParse(_ageCtrl.text.trim()),
             password: password,
             hasTowing: showWinch ? _hasTowing : false,
+            contractAccepted: _contractAccepted,
             onCompleted: widget.onAuthenticated,
           )),
         );
@@ -1141,7 +1078,8 @@ class _SignUpScreenState extends State<SignUpScreen> {
         winchUrl = await _uploadMedia(_winchLicenseFile!, 'licenses', uid);
       }
 
-      await db.from('customers').upsert({
+      final isProvider = _isProviderRole(_selectedRole);
+      await _upsertCustomerRecord(db, {
         'id': uid,
         'username': username,
         'full_name': fullName,
@@ -1151,21 +1089,27 @@ class _SignUpScreenState extends State<SignUpScreen> {
         'age': int.tryParse(_ageCtrl.text.trim()),
         'role': _selectedRole,
         'has_towing': showWinch && _selectedRole == 'towing',
-        'is_owner_winch_driver': (showWinch && _selectedRole == 'towing') ? _isOwnerDriver : true,
-        'winch_driver_name': (showWinch && _selectedRole == 'towing' && !_isOwnerDriver)
-            ? _driverNameCtrl.text.trim()
+        'is_owner_winch_driver':
+            (showWinch && _selectedRole == 'towing') ? _isOwnerDriver : true,
+        'winch_driver_name':
+            (showWinch && _selectedRole == 'towing' && !_isOwnerDriver)
+                ? _driverNameCtrl.text.trim()
+                : null,
+        'winch_driver_phone':
+            (showWinch && _selectedRole == 'towing' && !_isOwnerDriver)
+                ? _driverPhoneCtrl.text.trim()
+                : null,
+        'winch_plate_number': (showWinch && _selectedRole == 'towing')
+            ? _winchPlateCtrl.text.trim()
             : null,
-        'winch_driver_phone': (showWinch && _selectedRole == 'towing' && !_isOwnerDriver)
-            ? _driverPhoneCtrl.text.trim()
-            : null,
-        'winch_plate_number':
-            (showWinch && _selectedRole == 'towing') ? _winchPlateCtrl.text.trim() : null,
         'driver_license_url': driverUrl,
         'winch_license_url': winchUrl,
         'max_posts_limit': defaultLimit,
         'subscription_plan': 'free',
         'commission_rate': 0.15,
-        'accepted_terms_at': DateTime.now().toUtc().toIso8601String(),
+        if (isProvider) 'contract_accepted': true,
+        if (isProvider)
+          'contract_accepted_at': DateTime.now().toIso8601String(),
       });
 
       if (mounted) {
@@ -1175,7 +1119,8 @@ class _SignUpScreenState extends State<SignUpScreen> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('خطأ بالتسجيل: $e'), backgroundColor: Colors.red),
+          SnackBar(
+              content: Text('خطأ بالتسجيل: $e'), backgroundColor: Colors.red),
         );
       }
     } finally {
@@ -1191,7 +1136,6 @@ class _SignUpScreenState extends State<SignUpScreen> {
     if (!showWinch && _selectedRole == 'towing') {
       _selectedRole = 'user';
     }
-    final isTowing = _selectedRole == 'towing' && showWinch;
     final roles = [
       ('user', 'مستخدم عادي', Icons.person_outline),
       ('merchant', 'تاجر قطع', Icons.storefront_outlined),
@@ -1202,7 +1146,6 @@ class _SignUpScreenState extends State<SignUpScreen> {
     return Scaffold(
       appBar: AppBar(title: const Text('إنشاء حساب جديد — غيارك')),
       body: ListView(
-        keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
         padding: const EdgeInsets.all(16),
         children: [
           Row(
@@ -1212,14 +1155,19 @@ class _SignUpScreenState extends State<SignUpScreen> {
                   style: OutlinedButton.styleFrom(
                     backgroundColor: AppColors.surface,
                     padding: const EdgeInsets.symmetric(vertical: 12),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12)),
                   ),
-                  onPressed: _loading ? null : () => _oauthSignUp(OAuthProvider.google),
+                  onPressed: _loading
+                      ? null
+                      : () => _oauthSignUp(OAuthProvider.google),
                   icon: const GoogleLogoIcon(size: 18),
                   label: const Text(
                     'تسجيل بـ Google',
                     style: TextStyle(
-                        color: AppColors.textPrimary, fontSize: 12, fontWeight: FontWeight.bold),
+                        color: AppColors.textPrimary,
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold),
                   ),
                 ),
               ),
@@ -1230,12 +1178,15 @@ class _SignUpScreenState extends State<SignUpScreen> {
                     backgroundColor: Colors.black,
                     foregroundColor: Colors.white,
                     padding: const EdgeInsets.symmetric(vertical: 12),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12)),
                   ),
-                  onPressed: _loading ? null : () => _oauthSignUp(OAuthProvider.apple),
+                  onPressed:
+                      _loading ? null : () => _oauthSignUp(OAuthProvider.apple),
                   icon: const Icon(Icons.apple, size: 20),
                   label: const Text('تسجيل بـ Apple',
-                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                      style:
+                          TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
                 ),
               ),
             ],
@@ -1254,25 +1205,34 @@ class _SignUpScreenState extends State<SignUpScreen> {
             children: roles.map((r) {
               final active = _selectedRole == r.$1;
               return GestureDetector(
-                onTap: () => setState(() => _selectedRole = r.$1),
+                onTap: () => setState(() {
+                  if (_selectedRole != r.$1) {
+                    _selectedRole = r.$1;
+                    _contractAccepted = false;
+                  }
+                }),
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 200),
                   padding: const EdgeInsets.symmetric(horizontal: 10),
                   decoration: BoxDecoration(
                     color: active ? AppColors.navy : AppColors.surface,
                     borderRadius: BorderRadius.circular(14),
-                    border: Border.all(color: active ? AppColors.navy : AppColors.border),
+                    border: Border.all(
+                        color: active ? AppColors.navy : AppColors.border),
                   ),
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Icon(r.$3, color: active ? Colors.white : AppColors.textPrimary, size: 18),
+                      Icon(r.$3,
+                          color: active ? Colors.white : AppColors.textPrimary,
+                          size: 18),
                       const SizedBox(width: 6),
                       Flexible(
                         child: Text(
                           r.$2,
                           style: TextStyle(
-                            color: active ? Colors.white : AppColors.textPrimary,
+                            color:
+                                active ? Colors.white : AppColors.textPrimary,
                             fontWeight: FontWeight.bold,
                             fontSize: 12,
                           ),
@@ -1285,44 +1245,21 @@ class _SignUpScreenState extends State<SignUpScreen> {
             }).toList(),
           ),
           const SizedBox(height: 16),
-          _field(_usernameCtrl, 'اسم المستخدم (username) - لا يتكرر',
-              action: TextInputAction.next),
-          _field(_nameCtrl, 'الاسم الكامل / اسم النشاط', action: TextInputAction.next),
-          _field(_phoneCtrl, 'رقم الهاتف - لا يتكرر',
-              type: TextInputType.phone, action: TextInputAction.next),
+          _field(_usernameCtrl, 'اسم المستخدم (username) - لا يتكرر'),
+          _field(_nameCtrl, 'الاسم الكامل / اسم النشاط'),
+          _field(_phoneCtrl, 'رقم الهاتف - لا يتكرر', type: TextInputType.phone),
           _field(_emailCtrl, 'البريد الإلكتروني - لا يتكرر',
-              type: TextInputType.emailAddress, action: TextInputAction.next),
+              type: TextInputType.emailAddress),
           Row(
             children: [
-              Expanded(child: _field(_countryCtrl, 'الدولة', action: TextInputAction.next)),
+              Expanded(child: _field(_countryCtrl, 'الدولة')),
               const SizedBox(width: 10),
               Expanded(
-                child: _field(_ageCtrl, 'العمر (اختياري)',
-                    type: TextInputType.number, action: TextInputAction.next),
-              ),
+                  child: _field(_ageCtrl, 'العمر (اختياري)',
+                      type: TextInputType.number)),
             ],
           ),
-          Padding(
-            padding: const EdgeInsets.only(bottom: 12),
-            child: TextField(
-              controller: _passCtrl,
-              obscureText: _obscurePass,
-              textInputAction: isTowing ? TextInputAction.next : TextInputAction.done,
-              onSubmitted: (_) {
-                if (!isTowing && !_loading) _submitStep1();
-              },
-              decoration: InputDecoration(
-                labelText: 'كلمة المرور (6 أحرف على الأقل)',
-                filled: true,
-                fillColor: AppColors.surface,
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
-                suffixIcon: IconButton(
-                  icon: Icon(_obscurePass ? Icons.visibility_off : Icons.visibility),
-                  onPressed: () => setState(() => _obscurePass = !_obscurePass),
-                ),
-              ),
-            ),
-          ),
+          _field(_passCtrl, 'كلمة المرور (6 أحرف على الأقل)', obscure: true),
           if (_selectedRole == 'mechanic' && showWinch)
             Container(
               padding: const EdgeInsets.all(14),
@@ -1334,7 +1271,8 @@ class _SignUpScreenState extends State<SignUpScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text('هل لديك ونش؟', style: TextStyle(fontWeight: FontWeight.bold)),
+                  const Text('هل لديك ونش؟',
+                      style: TextStyle(fontWeight: FontWeight.bold)),
                   const SizedBox(height: 8),
                   Row(
                     children: [
@@ -1360,7 +1298,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
                 ],
               ),
             ),
-          if (isTowing) ...[
+          if (_selectedRole == 'towing' && showWinch) ...[
             SwitchListTile(
               contentPadding: EdgeInsets.zero,
               title: const Text('هل سائق الونش هو نفسه صاحب الحساب؟',
@@ -1370,18 +1308,11 @@ class _SignUpScreenState extends State<SignUpScreen> {
               onChanged: (v) => setState(() => _isOwnerDriver = v),
             ),
             if (!_isOwnerDriver) ...[
-              _field(_driverNameCtrl, 'اسم سائق الونش (إجباري)', action: TextInputAction.next),
+              _field(_driverNameCtrl, 'اسم سائق الونش (إجباري)'),
               _field(_driverPhoneCtrl, 'رقم هاتف سائق الونش (إجباري)',
-                  type: TextInputType.phone, action: TextInputAction.next),
+                  type: TextInputType.phone),
             ],
-            _field(
-              _winchPlateCtrl,
-              'نمرة الونش (إجباري)',
-              action: TextInputAction.done,
-              onSubmitted: (_) {
-                if (!_loading) _submitStep1();
-              },
-            ),
+            _field(_winchPlateCtrl, 'نمرة الونش (إجباري)'),
             _UploadTile(
               title: 'صورة رخصة السائق (إجباري)',
               media: _driverLicenseFile,
@@ -1394,26 +1325,32 @@ class _SignUpScreenState extends State<SignUpScreen> {
               onTap: () => _pickImage(false),
             ),
           ],
-          const SizedBox(height: 14),
-          _TermsAgreementBox(
-            accepted: _acceptedTerms,
-            onChanged: (v) => setState(() => _acceptedTerms = v),
-            onOpenTerms: () => showTermsAndPrivacySheet(context),
-          ),
-          const SizedBox(height: 18),
+          if (_isProviderRole(_selectedRole)) ...[
+            const SizedBox(height: 16),
+            _ProviderContractCard(
+              role: _selectedRole,
+              accepted: _contractAccepted,
+              onChanged: (v) => setState(() => _contractAccepted = v),
+            ),
+          ],
+          const SizedBox(height: 22),
           ElevatedButton(
             style: ElevatedButton.styleFrom(
               backgroundColor: AppColors.orange,
               foregroundColor: Colors.white,
               padding: const EdgeInsets.symmetric(vertical: 16),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14)),
             ),
             onPressed: _loading ? null : _submitStep1,
             child: _loading
                 ? const CircularProgressIndicator(color: Colors.white)
                 : Text(
-                    _selectedRole == 'mechanic' ? 'التالي: معلومات الورشة' : 'إنشاء الحساب',
-                    style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                    _selectedRole == 'mechanic'
+                        ? 'التالي: معلومات الورشة'
+                        : 'إنشاء الحساب',
+                    style: const TextStyle(
+                        fontSize: 16, fontWeight: FontWeight.bold),
                   ),
           ),
         ],
@@ -1421,82 +1358,20 @@ class _SignUpScreenState extends State<SignUpScreen> {
     );
   }
 
-  Widget _field(
-    TextEditingController c,
-    String label, {
-    bool obscure = false,
-    TextInputType? type,
-    TextInputAction action = TextInputAction.next,
-    ValueChanged<String>? onSubmitted,
-  }) {
+  Widget _field(TextEditingController c, String label,
+      {bool obscure = false, TextInputType? type}) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: TextField(
         controller: c,
         obscureText: obscure,
         keyboardType: type,
-        textInputAction: action,
-        onSubmitted: onSubmitted,
         decoration: InputDecoration(
           labelText: label,
           filled: true,
           fillColor: AppColors.surface,
           border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
         ),
-      ),
-    );
-  }
-}
-
-class _TermsAgreementBox extends StatelessWidget {
-  final bool accepted;
-  final ValueChanged<bool> onChanged;
-  final VoidCallback onOpenTerms;
-
-  const _TermsAgreementBox({
-    required this.accepted,
-    required this.onChanged,
-    required this.onOpenTerms,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: accepted ? AppColors.success : AppColors.border),
-      ),
-      child: Row(
-        children: [
-          Checkbox(
-            value: accepted,
-            activeColor: AppColors.orange,
-            onChanged: (v) => onChanged(v ?? false),
-          ),
-          Expanded(
-            child: Wrap(
-              crossAxisAlignment: WrapCrossAlignment.center,
-              children: [
-                const Text('أوافق على ', style: TextStyle(fontSize: 12.5)),
-                GestureDetector(
-                  onTap: onOpenTerms,
-                  child: const Text(
-                    'الشروط والأحكام وسياسة الخصوصية',
-                    style: TextStyle(
-                      fontSize: 12.5,
-                      color: AppColors.orange,
-                      fontWeight: FontWeight.bold,
-                      decoration: TextDecoration.underline,
-                    ),
-                  ),
-                ),
-                const Text(' لتطبيق غيارك.', style: TextStyle(fontSize: 12.5)),
-              ],
-            ),
-          ),
-        ],
       ),
     );
   }
@@ -1512,6 +1387,7 @@ class WorkshopSetupScreen extends StatefulWidget {
   final int? age;
   final String password;
   final bool hasTowing;
+  final bool contractAccepted;
   final VoidCallback onCompleted;
 
   const WorkshopSetupScreen({
@@ -1525,6 +1401,7 @@ class WorkshopSetupScreen extends StatefulWidget {
     required this.age,
     required this.password,
     required this.hasTowing,
+    this.contractAccepted = true,
     required this.onCompleted,
   });
 
@@ -1600,12 +1477,8 @@ class _WorkshopSetupScreenState extends State<WorkshopSetupScreen> {
   }
 
   Future<PickedMedia?> _pickPhoto() async {
-    final picked = await _picker.pickImage(
-      source: ImageSource.gallery,
-      maxWidth: 1280,
-      maxHeight: 1280,
-      imageQuality: 72,
-    );
+    final picked =
+        await _picker.pickImage(source: ImageSource.gallery, imageQuality: 75);
     if (picked == null) {
       return null;
     }
@@ -1618,13 +1491,15 @@ class _WorkshopSetupScreenState extends State<WorkshopSetupScreen> {
     await Supabase.instance.client.storage.from('app_media').uploadBinary(
           path,
           media.bytes,
-          fileOptions: const FileOptions(contentType: 'image/jpeg', upsert: true),
+          fileOptions:
+              const FileOptions(contentType: 'image/jpeg', upsert: true),
         );
-    return Supabase.instance.client.storage.from('app_media').getPublicUrl(path);
+    return Supabase.instance.client.storage
+        .from('app_media')
+        .getPublicUrl(path);
   }
 
   Future<void> _finishRegistration() async {
-    FocusScope.of(context).unfocus();
     final cap = int.tryParse(_capacityCtrl.text.trim()) ?? 0;
     if (!_locationConfirmed ||
         _workshopImage == null ||
@@ -1639,10 +1514,13 @@ class _WorkshopSetupScreenState extends State<WorkshopSetupScreen> {
       return;
     }
     if (widget.hasTowing &&
-        (_driverLicense == null || _winchLicense == null || _winchPlateCtrl.text.trim().isEmpty)) {
+        (_driverLicense == null ||
+            _winchLicense == null ||
+            _winchPlateCtrl.text.trim().isEmpty)) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-            content: Text('يرجى رفع صورة رخصة السائق ورخصة الونش وكتابة نمرة الونش')),
+            content: Text(
+                'يرجى رفع صورة رخصة السائق ورخصة الونش وكتابة نمرة الونش')),
       );
       return;
     }
@@ -1680,7 +1558,7 @@ class _WorkshopSetupScreenState extends State<WorkshopSetupScreen> {
       if (!mounted) {
         return;
       }
-      await db.from('customers').upsert({
+      await _upsertCustomerRecord(db, {
         'id': uid,
         'username': widget.username,
         'full_name': widget.fullName,
@@ -1694,22 +1572,29 @@ class _WorkshopSetupScreenState extends State<WorkshopSetupScreen> {
         'workshop_longitude': _workshopLatLng.longitude,
         'workshop_address': _workshopAddress,
         'street_name': _streetCtrl.text.trim(),
-        'building_number': _buildingCtrl.text.trim().isEmpty ? null : _buildingCtrl.text.trim(),
+        'building_number': _buildingCtrl.text.trim().isEmpty
+            ? null
+            : _buildingCtrl.text.trim(),
         'workshop_image_url': workshopUrl,
         'max_car_capacity': cap,
-        'opening_hours': '${_openTime.format(context)} - ${_closeTime.format(context)}',
+        'opening_hours':
+            '${_openTime.format(context)} - ${_closeTime.format(context)}',
         'is_owner_winch_driver': widget.hasTowing ? _isOwnerDriver : true,
-        'winch_driver_name':
-            (widget.hasTowing && !_isOwnerDriver) ? _driverNameCtrl.text.trim() : null,
-        'winch_driver_phone':
-            (widget.hasTowing && !_isOwnerDriver) ? _driverPhoneCtrl.text.trim() : null,
-        'winch_plate_number': widget.hasTowing ? _winchPlateCtrl.text.trim() : null,
+        'winch_driver_name': (widget.hasTowing && !_isOwnerDriver)
+            ? _driverNameCtrl.text.trim()
+            : null,
+        'winch_driver_phone': (widget.hasTowing && !_isOwnerDriver)
+            ? _driverPhoneCtrl.text.trim()
+            : null,
+        'winch_plate_number':
+            widget.hasTowing ? _winchPlateCtrl.text.trim() : null,
         'driver_license_url': driverUrl,
         'winch_license_url': winchUrl,
         'max_posts_limit': defaultLimit,
         'subscription_plan': 'free',
         'commission_rate': 0.15,
-        'accepted_terms_at': DateTime.now().toUtc().toIso8601String(),
+        'contract_accepted': widget.contractAccepted,
+        'contract_accepted_at': DateTime.now().toIso8601String(),
       });
 
       if (mounted) {
@@ -1734,7 +1619,6 @@ class _WorkshopSetupScreenState extends State<WorkshopSetupScreen> {
     return Scaffold(
       appBar: AppBar(title: const Text('معلومات الورشة')),
       body: ListView(
-        keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
         padding: const EdgeInsets.all(16),
         children: [
           const Text('موقع الورشة على الخريطة (إجباري)',
@@ -1756,7 +1640,8 @@ class _WorkshopSetupScreenState extends State<WorkshopSetupScreen> {
                           _workshopLatLng = latLng;
                           _locationConfirmed = true;
                         });
-                        final addr = await _locationService.getAddressFromLatLng(latLng);
+                        final addr =
+                            await _locationService.getAddressFromLatLng(latLng);
                         if (mounted) {
                           setState(() => _workshopAddress = addr);
                         }
@@ -1764,7 +1649,8 @@ class _WorkshopSetupScreenState extends State<WorkshopSetupScreen> {
                     ),
                     children: [
                       TileLayer(
-                        urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                        urlTemplate:
+                            'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
                         userAgentPackageName: 'com.autoparts.app',
                       ),
                       MarkerLayer(markers: [
@@ -1772,7 +1658,8 @@ class _WorkshopSetupScreenState extends State<WorkshopSetupScreen> {
                           point: _workshopLatLng,
                           width: 44,
                           height: 44,
-                          child: const Icon(Icons.location_on, color: AppColors.orange, size: 40),
+                          child: const Icon(Icons.location_on,
+                              color: AppColors.orange, size: 40),
                         ),
                       ]),
                     ],
@@ -1793,8 +1680,11 @@ class _WorkshopSetupScreenState extends State<WorkshopSetupScreen> {
           ),
           const SizedBox(height: 6),
           Text(
-            _workshopAddress.isEmpty ? 'اضغط على الخريطة لتحديد الموقع' : _workshopAddress,
-            style: const TextStyle(color: AppColors.textSecondary, fontSize: 12),
+            _workshopAddress.isEmpty
+                ? 'اضغط على الخريطة لتحديد الموقع'
+                : _workshopAddress,
+            style:
+                const TextStyle(color: AppColors.textSecondary, fontSize: 12),
           ),
           const SizedBox(height: 14),
           _UploadTile(
@@ -1810,42 +1700,40 @@ class _WorkshopSetupScreenState extends State<WorkshopSetupScreen> {
           const SizedBox(height: 12),
           TextField(
             controller: _streetCtrl,
-            textInputAction: TextInputAction.next,
             decoration: InputDecoration(
               labelText: 'اسم الشارع (إجباري)',
               filled: true,
               fillColor: AppColors.surface,
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+              border:
+                  OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
             ),
           ),
           const SizedBox(height: 12),
           TextField(
             controller: _buildingCtrl,
-            textInputAction: TextInputAction.next,
             decoration: InputDecoration(
               labelText: 'رقم المبنى (اختياري)',
               filled: true,
               fillColor: AppColors.surface,
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+              border:
+                  OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
             ),
           ),
           const SizedBox(height: 12),
           TextField(
             controller: _capacityCtrl,
             keyboardType: TextInputType.number,
-            textInputAction: widget.hasTowing ? TextInputAction.next : TextInputAction.done,
-            onSubmitted: (_) {
-              if (!widget.hasTowing && !_saving) _finishRegistration();
-            },
             decoration: InputDecoration(
               labelText: 'كم سيارة تتسع الورشة باليوم؟ (إجباري)',
               filled: true,
               fillColor: AppColors.surface,
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+              border:
+                  OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
             ),
           ),
           const SizedBox(height: 12),
-          const Text('ساعات الدوام (إجباري)', style: TextStyle(fontWeight: FontWeight.bold)),
+          const Text('ساعات الدوام (إجباري)',
+              style: TextStyle(fontWeight: FontWeight.bold)),
           const SizedBox(height: 8),
           Row(
             children: [
@@ -1860,7 +1748,8 @@ class _WorkshopSetupScreenState extends State<WorkshopSetupScreen> {
               Expanded(
                 child: OutlinedButton.icon(
                   onPressed: () => _pickClock(false),
-                  icon: const Icon(Icons.access_time_filled, color: AppColors.orange),
+                  icon: const Icon(Icons.access_time_filled,
+                      color: AppColors.orange),
                   label: Text('يسكر: ${_closeTime.format(context)}'),
                 ),
               ),
@@ -1879,39 +1768,36 @@ class _WorkshopSetupScreenState extends State<WorkshopSetupScreen> {
             if (!_isOwnerDriver) ...[
               TextField(
                 controller: _driverNameCtrl,
-                textInputAction: TextInputAction.next,
                 decoration: InputDecoration(
                   labelText: 'اسم سائق الونش (إجباري)',
                   filled: true,
                   fillColor: AppColors.surface,
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+                  border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(14)),
                 ),
               ),
               const SizedBox(height: 10),
               TextField(
                 controller: _driverPhoneCtrl,
                 keyboardType: TextInputType.phone,
-                textInputAction: TextInputAction.next,
                 decoration: InputDecoration(
                   labelText: 'رقم هاتف سائق الونش (إجباري)',
                   filled: true,
                   fillColor: AppColors.surface,
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+                  border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(14)),
                 ),
               ),
               const SizedBox(height: 10),
             ],
             TextField(
               controller: _winchPlateCtrl,
-              textInputAction: TextInputAction.done,
-              onSubmitted: (_) {
-                if (!_saving) _finishRegistration();
-              },
               decoration: InputDecoration(
                 labelText: 'نمرة الونش (إجباري)',
                 filled: true,
                 fillColor: AppColors.surface,
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+                border:
+                    OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
               ),
             ),
             const SizedBox(height: 10),
@@ -1943,12 +1829,241 @@ class _WorkshopSetupScreenState extends State<WorkshopSetupScreen> {
               backgroundColor: AppColors.orange,
               foregroundColor: Colors.white,
               padding: const EdgeInsets.symmetric(vertical: 16),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14)),
             ),
             onPressed: _saving ? null : _finishRegistration,
             child: _saving
                 ? const CircularProgressIndicator(color: Colors.white)
-                : const Text('إتمام التسجيل', style: TextStyle(fontWeight: FontWeight.bold)),
+                : const Text('إتمام التسجيل',
+                    style: TextStyle(fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// بطاقة عقد الشراكة والتعهد القانوني الإلزامي للتاجر والورشة والونش
+class _ProviderContractCard extends StatelessWidget {
+  final String role;
+  final bool accepted;
+  final ValueChanged<bool> onChanged;
+
+  const _ProviderContractCard({
+    required this.role,
+    required this.accepted,
+    required this.onChanged,
+  });
+
+  static const List<(String, String)> _clauses = [
+    (
+      '1. الالتزام بسداد العمولات المستحقة',
+      'يتعهد الطرف الثاني (مقدم الخدمة) بسداد عمولة تطبيق غيارك المستحقة عن كافة الطلبات والمواعيد وطلبات الطوارئ والونش التي تتم عبر التطبيق — بما فيها العمولات المترتبة على الدفع النقدي (الكاش) المسجلة كذمم مالية في المحفظة — وفق النسبة المعتمدة لباقته الاشتراكية وفي المواعيد المحددة دون تأخير.',
+    ),
+    (
+      '2. صدق البيانات والأسعار والتراخيص',
+      'يقر مقدم الخدمة بصحة كافة البيانات والمستندات والتراخيص والأسعار المعلنة، ويلتزم بعدم نشر إعلانات وهمية أو مضللة أو قطع غير مطابقة للوصف.',
+    ),
+    (
+      '3. حظر التحايل أو تجاوز المنصة',
+      'يحظر تماماً التلاعب أو الإلغاء الصوري للطلبات أو الاتفاق الجانبي مع العملاء بغرض التهرب من احتساب عمولة تطبيق غيارك المستحقة.',
+    ),
+    (
+      '4. جودة الخدمة والمسؤولية المهنية',
+      'يلتزم مقدم الخدمة بتقديم خدماته بمهنية عالية والالتزام بالمواعيد والأسعار المتفق عليها مع العميل داخل التطبيق، ويتحمل المسؤولية القانونية الكاملة عن جودة القطع وأعمال الصيانة أو السحب.',
+    ),
+    (
+      '5. حق التعليق والمساءلة القانونية',
+      'يحق لإدارة تطبيق غيارك تعليق أو إيقاف الحساب فوراً عند التأخر في سداد الذمم المالية أو مخالفة أي بند من بنود هذا العقد، مع احتفاظها الكامل بحقها في المطالبة بالعمولات والمستحقات وفق القوانين والأنظمة المعمول بها في المملكة الأردنية الهاشمية.',
+    ),
+  ];
+
+  void _openFullContractDialog(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Row(
+          children: [
+            const Icon(Icons.gavel_rounded, color: AppColors.orange),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'عقد الشراكة والتعهد (${_roleArabicTitle(role)})',
+                style:
+                    const TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
+              ),
+            ),
+          ],
+        ),
+        content: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: _clauses
+                .map(
+                  (c) => Padding(
+                    padding: const EdgeInsets.only(bottom: 12),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          c.$1,
+                          style: const TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 13,
+                            color: AppColors.navy,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          c.$2,
+                          style: const TextStyle(
+                            fontSize: 12.5,
+                            height: 1.5,
+                            color: AppColors.textPrimary,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                )
+                .toList(),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('إغلاق'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.success,
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () {
+              onChanged(true);
+              Navigator.pop(ctx);
+            },
+            child: const Text('أوافق وأتعهد بالالتزام'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: accepted ? AppColors.success : AppColors.orange,
+          width: 1.5,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            decoration: const BoxDecoration(
+              color: AppColors.navy,
+              borderRadius: BorderRadius.vertical(top: Radius.circular(14)),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.gavel_rounded,
+                    color: AppColors.orange, size: 22),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'عقد الشراكة والتعهد القانوني — غيارك',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 13.5,
+                        ),
+                      ),
+                      Text(
+                        'صفة الشريك: ${_roleArabicTitle(role)}',
+                        style: const TextStyle(
+                          color: Colors.white70,
+                          fontSize: 11.5,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                TextButton(
+                  onPressed: () => _openFullContractDialog(context),
+                  child: const Text(
+                    'قراءة كاملة',
+                    style: TextStyle(
+                      color: AppColors.orange,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Container(
+            height: 175,
+            padding: const EdgeInsets.all(12),
+            decoration: const BoxDecoration(color: AppColors.background),
+            child: Scrollbar(
+              thumbVisibility: true,
+              child: ListView.separated(
+                itemCount: _clauses.length,
+                separatorBuilder: (_, __) => const Divider(height: 14),
+                itemBuilder: (_, i) {
+                  final c = _clauses[i];
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        c.$1,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 12.5,
+                          color: AppColors.navy,
+                        ),
+                      ),
+                      const SizedBox(height: 3),
+                      Text(
+                        c.$2,
+                        style: const TextStyle(
+                          fontSize: 11.5,
+                          height: 1.45,
+                          color: AppColors.textSecondary,
+                        ),
+                      ),
+                    ],
+                  );
+                },
+              ),
+            ),
+          ),
+          CheckboxListTile(
+            value: accepted,
+            activeColor: AppColors.success,
+            controlAffinity: ListTileControlAffinity.leading,
+            contentPadding:
+                const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+            onChanged: (v) => onChanged(v ?? false),
+            title: const Text(
+              'أقرّ وأتعهد رسمياً بقراءة هذا العقد والالتزام الكامل بدفع كافة العمولات المستحقة وبجميع شروط وأحكام تطبيق غيارك.',
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.bold,
+                color: AppColors.navy,
+              ),
+            ),
           ),
         ],
       ),
@@ -1960,7 +2075,8 @@ class _UploadTile extends StatelessWidget {
   final String title;
   final PickedMedia? media;
   final VoidCallback onTap;
-  const _UploadTile({required this.title, required this.media, required this.onTap});
+  const _UploadTile(
+      {required this.title, required this.media, required this.onTap});
 
   @override
   Widget build(BuildContext context) {
@@ -1972,14 +2088,16 @@ class _UploadTile extends StatelessWidget {
         decoration: BoxDecoration(
           color: AppColors.surface,
           borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: media != null ? AppColors.success : AppColors.border),
+          border: Border.all(
+              color: media != null ? AppColors.success : AppColors.border),
         ),
         child: Row(
           children: [
             if (media != null)
               ClipRRect(
                 borderRadius: BorderRadius.circular(8),
-                child: Image.memory(media!.bytes, width: 48, height: 48, fit: BoxFit.cover),
+                child: Image.memory(media!.bytes,
+                    width: 48, height: 48, fit: BoxFit.cover),
               )
             else
               const Icon(Icons.add_a_photo_outlined, color: AppColors.orange),
@@ -1992,7 +2110,8 @@ class _UploadTile extends StatelessWidget {
             ),
             Icon(
               media != null ? Icons.check_circle : Icons.upload,
-              color: media != null ? AppColors.success : AppColors.textSecondary,
+              color:
+                  media != null ? AppColors.success : AppColors.textSecondary,
             ),
           ],
         ),

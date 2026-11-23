@@ -2,10 +2,12 @@ import 'package:material_ui/material_ui.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../models/db_models.dart';
+import '../screens/mobile/workshop_checkout_screen.dart';
 import '../services/dynamic_island_service.dart';
 import '../services/live_progress_tracker.dart';
 import '../theme/app_theme.dart';
-import '../utils/status_labels.dart';
+import 'animations.dart';
+
 
 class HomeLiveProgressBanner extends StatefulWidget {
   final CustomerProfile? viewerProfile;
@@ -22,22 +24,24 @@ class _HomeLiveProgressBannerState extends State<HomeLiveProgressBanner> {
   final Set<String> _startedTracking = {};
   final Map<String, ({double? lat, double? lng, String address})>
       _workshopLocations = {};
-  final Map<String, double> _initialApptDistanceKm = {};
-  final Map<String, double> _initialEmgDistanceKm = {};
 
   Future<void> _ensureWorkshopGps(Map<String, dynamic> appt) async {
     final id = appt['id'] as String;
-    if (_startedTracking.contains(id)) return;
+    if (_startedTracking.contains(id)) {
+      return;
+    }
     _startedTracking.add(id);
 
     final wId = appt['workshop_id'] as String?;
-    if (wId == null) return;
-
+    if (wId == null) {
+      return;
+    }
     try {
       final w = await _db
           .from('customers')
           .select(
-              'workshop_latitude, workshop_longitude, street_name, workshop_address')
+            'workshop_latitude, workshop_longitude, street_name, workshop_address',
+          )
           .eq('id', wId)
           .maybeSingle();
 
@@ -85,108 +89,65 @@ class _HomeLiveProgressBannerState extends State<HomeLiveProgressBanner> {
     await launchUrl(uri, mode: LaunchMode.externalApplication);
   }
 
-  double _computeWorkshopLiveProgress(
-    Map<String, dynamic> appt,
-    String step,
-    ({double? lat, double? lng, String address})? wLoc,
-  ) {
-    if (step == 'pending') return 0.06;
-    if (step == 'on_the_way') {
-      // 1) الأولوية لتتبع الـ GPS المباشر من جهاز العميل
-      final trackerProg = _tracker.workshopGpsProgress.value;
-      if (trackerProg > 0.0) {
-        return (0.08 + (trackerProg.clamp(0.0, 1.0) * 0.36)).clamp(0.08, 0.44);
-      }
-      // 2) احتياطياً نحسبها من إحداثيات القاعدة إذا توفرت
-      final double? cLat = (appt['customer_latitude'] as num?)?.toDouble();
-      final double? cLng = (appt['customer_longitude'] as num?)?.toDouble();
-      final double? wLat = wLoc?.lat;
-      final double? wLng = wLoc?.lng;
-      if (cLat != null && cLng != null && wLat != null && wLng != null) {
-        final dist =
-            LiveProgressTracker.distanceKmBetween(cLat, cLng, wLat, wLng);
-        final id = appt['id'] as String;
-        final initial = _initialApptDistanceKm.putIfAbsent(
-          id,
-          () => dist < 0.3 ? 1.0 : dist,
-        );
-        final ratio = (1.0 - (dist / initial)).clamp(0.0, 1.0);
-        return (0.08 + (ratio * 0.36)).clamp(0.08, 0.44);
-      }
-      return 0.14;
-    }
-
+  double _workshopProgressValue(String step) {
     return switch (step) {
-      'arrived_at_workshop' => 0.46,
-      'diagnosis' => 0.60,
-      'repairing' => 0.75,
+      'pending' => 0.10,
+      'on_the_way' => 0.25,
+      'arrived_at_workshop' => 0.42,
+      'diagnosis' => 0.58,
+      'repairing' => 0.74,
       'testing' => 0.88,
       'awaiting_payment' => 0.95,
       'completed' => 1.0,
-      _ => 0.12,
+      _ => 0.15,
     };
   }
 
-  ({double progress, double? remainingKm}) _computeEmergencyLiveProgress(
-    Map<String, dynamic> e,
-    String step,
-  ) {
-    if (step == 'pending') return (progress: 0.08, remainingKm: null);
-    if (step == 'arrived_at_pickup') {
-      return (progress: 0.86, remainingKm: 0.0);
-    }
-    if (step == 'completed') return (progress: 1.0, remainingKm: 0.0);
+  String _workshopStepLabel(String step) {
+    return switch (step) {
+      'on_the_way' => 'في الطريق إلى الورشة (GPS)',
+      'arrived_at_workshop' => 'تم الوصول للورشة ✓',
+      'diagnosis' => 'فحص السيارة وتشخيص العطل',
+      'repairing' => 'جاري الإصلاح في الورشة',
+      'testing' => 'الفحص والتجربة النهائية',
+      'awaiting_payment' => 'السيارة جاهزة — بانتظار دفع الفاتورة',
+      'completed' => 'مكتمل وتم التسليم ✓',
+      _ => 'بانتظار تأكيد الورشة',
+    };
+  }
 
-    if (step == 'on_the_way') {
-      final double? provLat = (e['latitude'] as num?)?.toDouble();
-      final double? provLng = (e['longitude'] as num?)?.toDouble();
-      final double? pickLat = (e['pickup_latitude'] as num?)?.toDouble();
-      final double? pickLng = (e['pickup_longitude'] as num?)?.toDouble();
+  double _emergencyProgressValue(String step) {
+    return switch (step) {
+      'pending' => 0.20,
+      'on_the_way' => 0.55,
+      'arrived_at_pickup' => 0.85,
+      'completed' => 1.0,
+      _ => 0.20,
+    };
+  }
 
-      if (provLat != null &&
-          provLng != null &&
-          pickLat != null &&
-          pickLng != null) {
-        final dist = LiveProgressTracker.distanceKmBetween(
-          provLat,
-          provLng,
-          pickLat,
-          pickLng,
-        );
-        final id = e['id'] as String;
-        final initial = _initialEmgDistanceKm.putIfAbsent(
-          id,
-          () => dist < 0.3 ? 1.0 : dist,
-        );
-        if (dist > initial) {
-          _initialEmgDistanceKm[id] = dist;
-        }
-        final denom = _initialEmgDistanceKm[id] ?? 1.0;
-        final ratio = (1.0 - (dist / denom)).clamp(0.0, 1.0);
-        final smooth = (0.14 + (ratio * 0.68)).clamp(0.14, 0.82);
-        return (
-          progress: smooth,
-          remainingKm: double.parse(dist.toStringAsFixed(1)),
-        );
-      }
-
-      final trackerEmg = _tracker.emergencyGpsProgress.value;
-      if (trackerEmg > 0.0) {
-        return (
-          progress: (0.14 + (trackerEmg.clamp(0.0, 1.0) * 0.68)),
-          remainingKm: null,
-        );
-      }
-      return (progress: 0.18, remainingKm: null);
-    }
-
-    return (progress: 0.12, remainingKm: null);
+  String _emergencyStepLabel(String step, String serviceType) {
+    final isWinch = serviceType == 'winch';
+    return switch (step) {
+      'pending' => isWinch
+          ? 'جاري البحث عن أقرب ونش طوارئ...'
+          : 'جاري البحث عن أقرب فني طوارئ...',
+      'on_the_way' => isWinch
+          ? 'ونش الطوارئ في طريقه إلى موقعك'
+          : 'الميكانيكي في طريقه إلى موقعك',
+      'arrived_at_pickup' => isWinch
+          ? 'وصل الونش إلى موقعك ✓'
+          : 'وصل الميكانيكي إلى موقعك ✓',
+      'completed' => 'تم إنهاء المساعدة الطارئة ✓',
+      _ => 'قيد المتابعة',
+    };
   }
 
   @override
   Widget build(BuildContext context) {
-    final uid = widget.viewerProfile?.id;
-    if (uid == null) {
+    final viewer = widget.viewerProfile;
+    final uid = viewer?.id;
+    if (uid == null || viewer == null) {
       return const SizedBox.shrink();
     }
 
@@ -195,26 +156,45 @@ class _HomeLiveProgressBannerState extends State<HomeLiveProgressBanner> {
           .from('workshop_appointments')
           .stream(primaryKey: ['id'])
           .eq('user_id', uid)
-          .order('created_at', ascending: false)
-          .limit(10),
+          .order('created_at', ascending: false),
       builder: (_, apptSnap) {
         return StreamBuilder<List<Map<String, dynamic>>>(
           stream: _db
               .from('mechanic_requests')
               .stream(primaryKey: ['id'])
               .eq('user_id', uid)
-              .order('created_at', ascending: false)
-              .limit(10),
+              .order('created_at', ascending: false),
           builder: (_, emgSnap) {
-            final activeAppts = (apptSnap.data ?? [])
-                .where((a) =>
-                    a['status'] == 'accepted' ||
-                    a['status'] == 'reschedule_proposed')
-                .toList();
-            final activeEmgs = (emgSnap.data ?? [])
-                .where((e) =>
-                    e['status'] != 'completed' && e['status'] != 'cancelled')
-                .toList();
+            final activeAppts = (apptSnap.data ?? []).where((a) {
+              final status = (a['status'] as String?) ?? '';
+              final payStatus = (a['payment_status'] as String?) ?? 'unpaid';
+              final amount = (a['total_amount'] as num?)?.toDouble() ?? 0.0;
+              if (status == 'accepted' || status == 'reschedule_proposed') {
+                return true;
+              }
+              // إبقاء الكرت ظاهراً إذا اكتمل العمل وبقي الدفع غير مكتمل
+              if (status == 'completed' &&
+                  amount > 0 &&
+                  payStatus != 'paid') {
+                return true;
+              }
+              return false;
+            }).toList();
+
+            final activeEmgs = (emgSnap.data ?? []).where((e) {
+              final status = (e['status'] as String?) ?? '';
+              final payStatus = (e['payment_status'] as String?) ?? 'unpaid';
+              final amount = (e['total_amount'] as num?)?.toDouble() ?? 0.0;
+              if (status != 'completed' && status != 'cancelled') {
+                return true;
+              }
+              if (status == 'completed' &&
+                  amount > 0 &&
+                  payStatus != 'paid') {
+                return true;
+              }
+              return false;
+            }).toList();
 
             if (activeAppts.isEmpty && activeEmgs.isEmpty) {
               return const SizedBox.shrink();
@@ -225,55 +205,74 @@ class _HomeLiveProgressBannerState extends State<HomeLiveProgressBanner> {
                 if (activeAppts.isNotEmpty)
                   Builder(builder: (_) {
                     final a = activeAppts.first;
-                    final status = (a['status'] as String?) ?? 'pending';
                     final step = (a['progress_step'] as String?) ?? 'pending';
-                    final label = StatusLabels.appointment(
-                      status,
-                      progressStep: step,
-                    );
+                    final progress = _workshopProgressValue(step);
+                    final label = a['status'] == 'reschedule_proposed'
+                        ? 'اقترحت الورشة موعداً بديلاً'
+                        : _workshopStepLabel(step);
+                    final amount =
+                        (a['total_amount'] as num?)?.toDouble() ?? 0.0;
+                    final payStatus =
+                        (a['payment_status'] as String?) ?? 'unpaid';
 
                     _ensureWorkshopGps(a);
                     final wLoc = _workshopLocations[a['workshop_id']];
 
-                    return ListenableBuilder(
-                      listenable: Listenable.merge([
-                        _tracker.workshopDistanceKm,
-                        _tracker.workshopGpsProgress,
-                      ]),
-                      builder: (_, __) {
-                        final km = _tracker.workshopDistanceKm.value;
-                        final progress =
-                            _computeWorkshopLiveProgress(a, step, wLoc);
-                        final statusLine = (step == 'on_the_way' && km != null)
-                            ? '$label · متبقي ${km.toStringAsFixed(1)} كم'
-                            : label;
+                    DynamicIslandService.instance.syncProgress(
+                      keyId: 'appt_${a['id']}',
+                      title: 'صيانة الورشة',
+                      statusText: label,
+                      progress: progress,
+                      etaOrDistance: '${a['appointment_time'] ?? ""}',
+                    );
 
-                        DynamicIslandService.instance.syncProgress(
-                          keyId: 'appt_${a['id']}',
-                          title: 'موعد الورشة',
-                          statusText: statusLine,
-                          progress: progress,
-                          etaOrDistance: km != null
-                              ? '${km.toStringAsFixed(1)} كم'
-                              : '${a['appointment_time'] ?? ""}',
-                        );
+                    final bool canPayWorkshop =
+                        payStatus != 'paid' &&
+                        payStatus != 'pending_verification' &&
+                        (amount > 0 || a['workshop_id'] != null);
 
+                    return ValueListenableBuilder<double?>(
+                      valueListenable: _tracker.workshopDistanceKm,
+                      builder: (_, km, __) {
                         return _progressCard(
-                          icon: Icons.build_circle,
-                          movingIcon: Icons.directions_car,
-                          title: 'موعد الورشة (${a['appointment_date'] ?? ''})',
-                          statusText: statusLine,
+                          headerIcon: Icons.build_circle,
+                          thumbIcon: Icons.build,
+                          title: 'حالة موعد الورشة (${a['appointment_date']})',
+                          statusText: (step == 'on_the_way' && km != null)
+                              ? '$label · متبقي $km كم'
+                              : label,
                           progress: progress,
-                          actionLabel:
-                              step == 'on_the_way' ? 'تأكيد وصولي للورشة' : null,
-                          onAction:
-                              step == 'on_the_way' && a['workshop_id'] != null
-                                  ? () => _tracker.markWorkshopArrived(
-                                        appointmentId: a['id'] as String,
-                                        workshopUserId:
-                                            a['workshop_id'] as String,
-                                      )
-                                  : null,
+                          paymentStatus: payStatus,
+                          payLabel: canPayWorkshop
+                              ? (amount > 0
+                                  ? 'دفع الفاتورة (${amount.toStringAsFixed(2)} د.أ)'
+                                  : 'دفع فاتورة الورشة')
+                              : null,
+                          onPayInvoice: canPayWorkshop
+                              ? () => Navigator.push(
+                                    context,
+                                    animatedRoute(
+                                      WorkshopCheckoutScreen(
+                                        appointment:
+                                            DbWorkshopAppointment.fromMap(a),
+                                        customerProfile: viewer,
+                                        onPaymentCompleted: () {
+                                          if (mounted) setState(() {});
+                                        },
+                                      ),
+                                    ),
+                                  )
+                              : null,
+                          actionLabel: step == 'on_the_way'
+                              ? 'تأكيد وصولي للورشة'
+                              : null,
+                          onAction: step == 'on_the_way' &&
+                                  a['workshop_id'] != null
+                              ? () => _tracker.markWorkshopArrived(
+                                    appointmentId: a['id'],
+                                    workshopUserId: a['workshop_id'],
+                                  )
+                              : null,
                           onOpenMaps: () => _openInGoogleMaps(
                             lat: wLoc?.lat,
                             lng: wLoc?.lng,
@@ -284,56 +283,73 @@ class _HomeLiveProgressBannerState extends State<HomeLiveProgressBanner> {
                     );
                   }),
                 if (activeEmgs.isNotEmpty)
-                  ListenableBuilder(
-                    listenable: _tracker.emergencyGpsProgress,
-                    builder: (_, __) {
-                      final e = activeEmgs.first;
-                      final status = (e['status'] as String?) ?? 'pending';
-                      final step = (e['progress_step'] as String?) ?? 'pending';
-                      final isWinch = e['service_type'] == 'winch';
-                      final label = StatusLabels.emergency(
-                        status,
-                        progressStep: step,
-                      );
-                      final live = _computeEmergencyLiveProgress(e, step);
-                      final statusLine =
-                          (step == 'on_the_way' && live.remainingKm != null)
-                              ? '$label · متبقي ${live.remainingKm} كم'
-                              : label;
+                  Builder(builder: (_) {
+                    final e = activeEmgs.first;
+                    final step = (e['progress_step'] as String?) ?? 'pending';
+                    final serviceType =
+                        (e['service_type'] as String?) ?? 'winch';
+                    final progress = _emergencyProgressValue(step);
+                    final label = _emergencyStepLabel(step, serviceType);
+                    final lat = (e['pickup_latitude'] as num?)?.toDouble();
+                    final lng = (e['pickup_longitude'] as num?)?.toDouble();
+                    final amount =
+                        (e['total_amount'] as num?)?.toDouble() ?? 0.0;
+                    final payStatus =
+                        (e['payment_status'] as String?) ?? 'unpaid';
+                    final hasProvider =
+                        (e['mechanic_id'] as String?)?.isNotEmpty == true;
 
-                      final double? lat =
-                          (e['latitude'] as num?)?.toDouble() ??
-                              (e['pickup_latitude'] as num?)?.toDouble();
-                      final double? lng =
-                          (e['longitude'] as num?)?.toDouble() ??
-                              (e['pickup_longitude'] as num?)?.toDouble();
+                    DynamicIslandService.instance.syncProgress(
+                      keyId: 'emg_${e['id']}',
+                      title: 'طوارئ غيارك',
+                      statusText: label,
+                      progress: progress,
+                      etaOrDistance: (e['estimated_time'] as String?) ?? '',
+                    );
 
-                      DynamicIslandService.instance.syncProgress(
-                        keyId: 'emg_${e['id']}',
-                        title: isWinch ? 'ونش غيارك' : 'طوارئ غيارك',
-                        statusText: statusLine,
-                        progress: live.progress,
-                        etaOrDistance: live.remainingKm != null
-                            ? '${live.remainingKm} كم'
-                            : ((e['estimated_time'] as String?) ?? ''),
-                      );
+                    final bool canPayEmergency =
+                        payStatus != 'paid' &&
+                        payStatus != 'pending_verification' &&
+                        (amount > 0 || hasProvider);
 
-                      return _progressCard(
-                        icon: isWinch ? Icons.local_shipping : Icons.car_crash,
-                        movingIcon:
-                            isWinch ? Icons.local_shipping : Icons.build,
-                        title:
-                            '${isWinch ? 'طلب ونش مباشر' : 'طلب طوارئ مباشر'} (${e['description'] ?? ''})',
-                        statusText: statusLine,
-                        progress: live.progress,
-                        onOpenMaps: () => _openInGoogleMaps(
-                          lat: lat,
-                          lng: lng,
-                          addressQuery: e['dropoff_address'] as String?,
-                        ),
-                      );
-                    },
-                  ),
+                    return _progressCard(
+                      headerIcon: serviceType == 'winch'
+                          ? Icons.local_shipping
+                          : Icons.car_crash,
+                      thumbIcon: serviceType == 'winch'
+                          ? Icons.local_shipping
+                          : Icons.build,
+                      title:
+                          'طلب الطوارئ المباشر (${e['description'] ?? ""})',
+                      statusText: label,
+                      progress: progress,
+                      paymentStatus: payStatus,
+                      payLabel: canPayEmergency
+                          ? (amount > 0
+                              ? 'دفع الفاتورة (${amount.toStringAsFixed(2)} د.أ)'
+                              : 'دفع فاتورة الطوارئ')
+                          : null,
+                      onPayInvoice: canPayEmergency
+                          ? () => Navigator.push(
+                                context,
+                                animatedRoute(
+                                  EmergencyCheckoutScreen(
+                                    request: DbMechanicRequest.fromMap(e),
+                                    customerProfile: viewer,
+                                    onPaymentCompleted: () {
+                                      if (mounted) setState(() {});
+                                    },
+                                  ),
+                                ),
+                              )
+                          : null,
+                      onOpenMaps: () => _openInGoogleMaps(
+                        lat: lat,
+                        lng: lng,
+                        addressQuery: e['dropoff_address'] as String?,
+                      ),
+                    );
+                  }),
               ],
             );
           },
@@ -343,16 +359,18 @@ class _HomeLiveProgressBannerState extends State<HomeLiveProgressBanner> {
   }
 
   Widget _progressCard({
-    required IconData icon,
-    required IconData movingIcon,
+    required IconData headerIcon,
+    required IconData thumbIcon,
     required String title,
     required String statusText,
     required double progress,
+    required String paymentStatus,
+    String? payLabel,
+    VoidCallback? onPayInvoice,
     String? actionLabel,
     VoidCallback? onAction,
     VoidCallback? onOpenMaps,
   }) {
-    final clamped = progress.clamp(0.0, 1.0);
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(14),
@@ -365,11 +383,13 @@ class _HomeLiveProgressBannerState extends State<HomeLiveProgressBanner> {
         children: [
           Row(
             children: [
-              Icon(icon, color: AppColors.orange, size: 22),
+              Icon(headerIcon, color: AppColors.orange, size: 22),
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
                   title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
                     color: Colors.white,
                     fontWeight: FontWeight.bold,
@@ -377,8 +397,9 @@ class _HomeLiveProgressBannerState extends State<HomeLiveProgressBanner> {
                   ),
                 ),
               ),
+              const SizedBox(width: 6),
               Text(
-                '${(clamped * 100).round()}%',
+                '${(progress * 100).toInt()}%',
                 style: const TextStyle(
                   color: AppColors.orange,
                   fontWeight: FontWeight.bold,
@@ -388,75 +409,169 @@ class _HomeLiveProgressBannerState extends State<HomeLiveProgressBanner> {
             ],
           ),
           const SizedBox(height: 6),
-          Text(
-            statusText,
-            style: const TextStyle(color: Colors.white70, fontSize: 12),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  statusText,
+                  style: const TextStyle(color: Colors.white70, fontSize: 12),
+                ),
+              ),
+              if (paymentStatus == 'paid')
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: AppColors.success,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: const Text(
+                    'تم الدفع ✓',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 10.5,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                )
+              else if (paymentStatus == 'pending_verification')
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: Colors.amber.shade700,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: const Text(
+                    'CliQ قيد المراجعة',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 10.5,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+            ],
           ),
           const SizedBox(height: 10),
+          // شريط التقدم + أيقونة المفتاح/الونش يتحركان معاً بنفس الاتجاه (RTL متطابق 100%)
           TweenAnimationBuilder<double>(
-            tween: Tween(begin: 0.0, end: clamped),
-            duration: const Duration(milliseconds: 650),
+            tween: Tween(begin: 0, end: progress.clamp(0.0, 1.0)),
+            duration: const Duration(milliseconds: 500),
             curve: Curves.easeOutCubic,
-            builder: (_, val, __) => LayoutBuilder(
-              builder: (_, constraints) {
-                final width = constraints.maxWidth;
-                final markerLeft = ((width - 24) * val).clamp(0.0, width - 24);
-                return SizedBox(
-                  height: 26,
-                  child: Stack(
-                    alignment: Alignment.centerLeft,
-                    children: [
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(8),
-                        child: LinearProgressIndicator(
-                          value: val,
-                          minHeight: 7,
-                          color: AppColors.orange,
-                          backgroundColor: Colors.white24,
-                        ),
-                      ),
-                      Positioned(
-                        left: markerLeft,
-                        child: Container(
-                          width: 24,
-                          height: 24,
+            builder: (_, val, __) {
+              return LayoutBuilder(
+                builder: (context, constraints) {
+                  final trackWidth = constraints.maxWidth;
+                  const double thumbSize = 26.0;
+                  final fillWidth = trackWidth * val;
+                  final thumbStart = (trackWidth - thumbSize) * val;
+
+                  return SizedBox(
+                    height: thumbSize + 4,
+                    child: Stack(
+                      alignment: AlignmentDirectional.centerStart,
+                      children: [
+                        // الخلفية
+                        Container(
+                          height: 7,
+                          width: trackWidth,
                           decoration: BoxDecoration(
-                            color: AppColors.orange,
-                            shape: BoxShape.circle,
-                            border: Border.all(color: Colors.white, width: 1.5),
-                          ),
-                          child: Icon(
-                            movingIcon,
-                            color: Colors.white,
-                            size: 13,
+                            color: Colors.white24,
+                            borderRadius: BorderRadius.circular(8),
                           ),
                         ),
-                      ),
-                    ],
-                  ),
-                );
-              },
-            ),
+                        // التعبئة البرتقالية من نفس جهة الانطلاق (start)
+                        PositionedDirectional(
+                          start: 0,
+                          child: Container(
+                            height: 7,
+                            width: fillWidth,
+                            decoration: BoxDecoration(
+                              color: AppColors.orange,
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                          ),
+                        ),
+                        // أيقونة المفتاح/الونش على رأس التعبئة البرتقالية تماماً
+                        PositionedDirectional(
+                          start: thumbStart,
+                          child: Container(
+                            width: thumbSize,
+                            height: thumbSize,
+                            decoration: BoxDecoration(
+                              color: AppColors.orange,
+                              shape: BoxShape.circle,
+                              border: Border.all(
+                                color: Colors.white,
+                                width: 2,
+                              ),
+                              boxShadow: [
+                                BoxShadow(
+                                  color:
+                                      AppColors.orange.withValues(alpha: 0.45),
+                                  blurRadius: 6,
+                                ),
+                              ],
+                            ),
+                            child: Icon(
+                              thumbIcon,
+                              color: Colors.white,
+                              size: 14,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                },
+              );
+            },
           ),
-          if (onOpenMaps != null ||
+          if (onPayInvoice != null ||
+              onOpenMaps != null ||
               (actionLabel != null && onAction != null)) ...[
             const SizedBox(height: 10),
             Wrap(
               spacing: 8,
               runSpacing: 8,
               children: [
+                if (onPayInvoice != null && payLabel != null)
+                  ElevatedButton.icon(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.success,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 8,
+                      ),
+                    ),
+                    onPressed: onPayInvoice,
+                    icon: const Icon(Icons.receipt_long, size: 16),
+                    label: Text(
+                      payLabel,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
                 if (onOpenMaps != null)
                   ElevatedButton.icon(
                     style: ElevatedButton.styleFrom(
                       backgroundColor: AppColors.orange,
                       foregroundColor: Colors.white,
                       padding: const EdgeInsets.symmetric(
-                          horizontal: 12, vertical: 8),
+                        horizontal: 12,
+                        vertical: 8,
+                      ),
                     ),
                     onPressed: onOpenMaps,
                     icon: const Icon(Icons.map_outlined, size: 16),
-                    label: const Text('فتح الموقع على الخريطة',
-                        style: TextStyle(fontSize: 12)),
+                    label: const Text(
+                      'فتح الموقع على Google Maps',
+                      style: TextStyle(fontSize: 12),
+                    ),
                   ),
                 if (actionLabel != null && onAction != null)
                   TextButton(
@@ -465,8 +580,10 @@ class _HomeLiveProgressBannerState extends State<HomeLiveProgressBanner> {
                       foregroundColor: Colors.white,
                     ),
                     onPressed: onAction,
-                    child:
-                        Text(actionLabel, style: const TextStyle(fontSize: 12)),
+                    child: Text(
+                      actionLabel,
+                      style: const TextStyle(fontSize: 12),
+                    ),
                   ),
               ],
             ),

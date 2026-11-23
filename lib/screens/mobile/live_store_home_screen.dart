@@ -1,10 +1,9 @@
 import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import '../../config/env_config.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../models/car_parts_catalog_az.dart';
 import '../../models/db_models.dart';
-import '../../services/paytabs_payment_service.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/admob_native_banner.dart';
 import '../../widgets/animations.dart';
@@ -1309,6 +1308,13 @@ class _ProductDetailsScreenState extends State<ProductDetailsScreen> {
     }
   }
 
+  Future<void> _callSeller(String phone) async {
+    final cleaned = phone.trim();
+    if (cleaned.isEmpty) return;
+    final uri = Uri(scheme: 'tel', path: cleaned);
+    await launchUrl(uri, mode: LaunchMode.externalApplication);
+  }
+
   Future<void> _sendMessage() async {
     FocusScope.of(context).unfocus();
     final text = _msgCtrl.text.trim();
@@ -1481,45 +1487,34 @@ class _ProductDetailsScreenState extends State<ProductDetailsScreen> {
             ),
             child: Text((p['description'] as String?) ?? ''),
           ),
-          if (EnvConfig.paymentsEnabled.value &&
-              !isOwnProduct &&
-              widget.viewerProfile != null) ...[
+          // تنبيه البيع والشراء المباشر بين العميل والتاجر (بدلاً من الشراء داخل التطبيق)
+          if (!isOwnProduct) ...[
             const SizedBox(height: 14),
-            SizedBox(
+            Container(
               width: double.infinity,
-              child: ElevatedButton.icon(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.orange,
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(vertical: 14),
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14)),
-                ),
-                icon: const Icon(Icons.shopping_cart_checkout),
-                label: Text(
-                  'شراء ودفع آمن عبر التطبيق (${displayPrice.toStringAsFixed(2)} د.أ)',
-                  style: const TextStyle(fontWeight: FontWeight.bold),
-                ),
-                onPressed: () async {
-                  final ok = await PayTabsPaymentService().startPaymentFlow(
-                    context: context,
-                    baseAmount: displayPrice,
-                    title: 'شراء قطعة: ${p['title']}',
-                    orderType: 'ord',
-                    referenceId: p['id'] as String,
-                    email: widget.viewerProfile?.email,
-                    phone: widget.viewerProfile?.phone,
-                    name: widget.viewerProfile?.fullName,
-                  );
-                  if (ok && context.mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('تم إرسال طلب الشراء بنجاح! ✓'),
-                        backgroundColor: AppColors.success,
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: AppColors.orangeLight,
+                borderRadius: BorderRadius.circular(14),
+                border:
+                    Border.all(color: AppColors.orange.withValues(alpha: 0.45)),
+              ),
+              child: const Row(
+                children: [
+                  Icon(Icons.handshake_outlined,
+                      color: AppColors.orange, size: 24),
+                  SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      'البيع والشراء يتم مباشرة بينك وبين التاجر — تواصل معه بالاتصال أو الدردشة المباشرة أدناه.',
+                      style: TextStyle(
+                        color: AppColors.navy,
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w700,
                       ),
-                    );
-                  }
-                },
+                    ),
+                  ),
+                ],
               ),
             ),
           ],
@@ -1647,6 +1642,28 @@ class _ProductDetailsScreenState extends State<ProductDetailsScreen> {
                       ),
                       const SizedBox(height: 12),
                       if (_seller != null) ...[
+                        if (!isOwnProduct &&
+                            (_seller!.phone ?? '').trim().isNotEmpty) ...[
+                          SizedBox(
+                            width: double.infinity,
+                            child: ElevatedButton.icon(
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: AppColors.success,
+                                foregroundColor: Colors.white,
+                                padding:
+                                    const EdgeInsets.symmetric(vertical: 12),
+                              ),
+                              onPressed: () => _callSeller(_seller!.phone!),
+                              icon: const Icon(Icons.call),
+                              label: Text(
+                                'اتصال مباشر بالتاجر (${_seller!.phone})',
+                                style: const TextStyle(
+                                    fontWeight: FontWeight.bold),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                        ],
                         SizedBox(
                           width: double.infinity,
                           child: ElevatedButton.icon(

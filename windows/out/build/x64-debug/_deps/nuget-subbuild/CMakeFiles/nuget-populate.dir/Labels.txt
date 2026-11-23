@@ -1,0 +1,15 @@
+# Target labels
+ nuget-populate
+# Source files and their labels
+D:/auto_parts_app/auto_parts_app/windows/out/build/x64-debug/_deps/nuget-subbuild/CMakeFiles/nuget-populate
+D:/auto_parts_app/auto_parts_app/windows/out/build/x64-debug/_deps/nuget-subbuild/CMakeFiles/nuget-populate.rule
+D:/auto_parts_app/auto_parts_app/windows/out/build/x64-debug/_deps/nuget-subbuild/CMakeFiles/nuget-populate-complete.rule
+D:/auto_parts_app/auto_parts_app/windows/out/build/x64-debug/_deps/nuget-subbuild/nuget-populate-prefix/src/nuget-populate-stamp/nuget-populate-build.rule
+D:/auto_parts_app/auto_parts_app/windows/out/build/x64-debug/_deps/nuget-subbuild/nuget-populate-prefix/src/nuget-populate-stamp/nuget-populate-configure.rule
+D:/auto_parts_app/auto_parts_app/windows/out/build/x64-debug/_deps/nuget-subbuild/nuget-populate-prefix/src/nuget-populate-stamp/nuget-populate-copyfile.rule
+D:/auto_parts_app/auto_parts_app/windows/out/build/x64-debug/_deps/nuget-subbuild/nuget-populate-prefix/src/nuget-populate-stamp/nuget-populate-download.rule
+D:/auto_parts_app/auto_parts_app/windows/out/build/x64-debug/_deps/nuget-subbuild/nuget-populate-prefix/src/nuget-populate-stamp/nuget-populate-install.rule
+D:/auto_parts_app/auto_parts_app/windows/out/build/x64-debug/_deps/nuget-subbuild/nuget-populate-prefix/src/nuget-populate-stamp/nuget-populate-mkdir.rule
+D:/auto_parts_app/auto_parts_app/windows/out/build/x64-debug/_deps/nuget-subbuild/nuget-populate-prefix/src/nuget-populate-stamp/nuget-populate-patch.rule
+D:/auto_parts_app/auto_parts_app/windows/out/build/x64-debug/_deps/nuget-subbuild/nuget-populate-prefix/src/nuget-populate-stamp/nuget-populate-test.rule
+D:/auto_parts_app/auto_parts_app/windows/out/build/x64-debug/_deps/nuget-subbuild/nuget-populate-prefix/src/nuget-populate-stamp/nuget-populate-update.rule
