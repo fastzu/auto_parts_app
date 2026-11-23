@@ -1,12 +1,11 @@
 import 'package:flutter/foundation.dart';
-import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
+import '../config/env_config.dart';
 import '../screens/payment/payment_webview_screen.dart';
 import '../theme/app_theme.dart';
 import '../widgets/animations.dart';
-import 'notifications_service.dart';
 
 class AppliedDiscountResult {
   final String code;
@@ -93,9 +92,8 @@ class PayTabsPaymentService {
       throw Exception('هذا الكود غير متاح لحسابك أو انتهت صلاحيته');
     }
 
-    final percent =
-        ((matched['discount_percent'] as num?)?.toDouble() ?? 0.0)
-            .clamp(0.0, 95.0);
+    final percent = ((matched['discount_percent'] as num?)?.toDouble() ?? 0.0)
+        .clamp(0.0, 95.0);
     if (percent <= 0) {
       throw Exception('نسبة الخصم غير صالحة');
     }
@@ -110,7 +108,7 @@ class PayTabsPaymentService {
     );
   }
 
-  /// 1) فتح قائمة وسائل الدفع: Visa/Mastercard (MEPS) و CliQ
+  /// 1) فتح قائمة وسائل الدفع: Visa/Mastercard (MEPS) + Apple Pay + Google Pay
   Future<bool> startPaymentFlow({
     required BuildContext context,
     required double baseAmount,
@@ -131,96 +129,98 @@ class PayTabsPaymentService {
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
       ),
-      builder: (ctx) => Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'اختر وسيلة الدفع',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 14),
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'اختر وسيلة الدفع',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 14),
 
-            // 1) Visa / Mastercard (MEPS)
-            Card(
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(14),
-                side: const BorderSide(color: AppColors.orange, width: 1.4),
-              ),
-              child: ListTile(
-                leading: const Icon(Icons.credit_card,
-                    color: AppColors.orange, size: 28),
-                title: const Text('Visa / Mastercard',
-                    style: TextStyle(fontWeight: FontWeight.bold)),
-                subtitle: const Text('الدفع الإلكتروني الآمن عبر MEPS'),
-                trailing: const Icon(Icons.arrow_forward_ios,
-                    size: 16, color: AppColors.orange),
-                onTap: () => Navigator.pop(ctx, 'visa'),
-              ),
-            ),
-            const SizedBox(height: 10),
-
-            // 2) CliQ (تحويل فوري محلي داخل الأردن)
-            Card(
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(14),
-                side: const BorderSide(color: AppColors.navy, width: 1.2),
-              ),
-              child: ListTile(
-                leading: const Icon(Icons.account_balance_wallet_outlined,
-                    color: AppColors.navy, size: 28),
-                title: const Text('CliQ · كليك (تحويل فوري)',
-                    style: TextStyle(fontWeight: FontWeight.bold)),
-                subtitle:
-                    const Text('حوّل عبر تطبيق بنكك وأرسل رقم المرجع للتأكيد'),
-                trailing: const Icon(Icons.arrow_forward_ios,
-                    size: 16, color: AppColors.navy),
-                onTap: () => Navigator.pop(ctx, 'cliq'),
-              ),
-            ),
-            const SizedBox(height: 10),
-
-            // 3) Apple Pay (قريباً)
-            Card(
-              color: AppColors.background,
-              child: ListTile(
-                leading: const Icon(Icons.apple,
-                    color: AppColors.textSecondary, size: 30),
-                title: const Text('Apple Pay',
-                    style: TextStyle(
-                        fontWeight: FontWeight.bold,
-                        color: AppColors.textSecondary)),
-                subtitle: const Text('سيتم تفعيل الخدمة قريباً'),
-                trailing: Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: AppColors.placeholder,
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: const Text('قريباً',
-                      style:
-                          TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+              // 1) Visa / Mastercard (MEPS)
+              Card(
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14),
+                  side: const BorderSide(color: AppColors.orange, width: 1.4),
                 ),
-                onTap: () {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text(
-                          'خدمة Apple Pay قيد التفعيل، يرجى استخدام Visa / Mastercard أو CliQ'),
-                    ),
-                  );
-                },
+                child: ListTile(
+                  leading: const Icon(Icons.credit_card,
+                      color: AppColors.orange, size: 28),
+                  title: const Text('Visa / Mastercard',
+                      style: TextStyle(fontWeight: FontWeight.bold)),
+                  subtitle: const Text('الدفع الإلكتروني الآمن عبر MEPS'),
+                  trailing: const Icon(Icons.arrow_forward_ios,
+                      size: 16, color: AppColors.orange),
+                  onTap: () => Navigator.pop(ctx, 'visa'),
+                ),
               ),
-            ),
-          ],
+              const SizedBox(height: 10),
+
+              // 2) Apple Pay
+              Card(
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14),
+                  side: BorderSide(
+                    color: EnvConfig.applePayEnabled
+                        ? Colors.black
+                        : AppColors.border,
+                    width: 1.2,
+                  ),
+                ),
+                child: ListTile(
+                  leading:
+                      const Icon(Icons.apple, color: Colors.black, size: 30),
+                  title: const Text('Apple Pay',
+                      style: TextStyle(fontWeight: FontWeight.bold)),
+                  subtitle: Text(
+                    EnvConfig.applePayEnabled
+                        ? 'دفع سريع وآمن عبر Apple Pay'
+                        : 'جاهز للتفعيل فور ربط حساب Apple Developer',
+                  ),
+                  trailing: const Icon(Icons.arrow_forward_ios,
+                      size: 16, color: Colors.black),
+                  onTap: () => Navigator.pop(ctx, 'apple_pay'),
+                ),
+              ),
+              const SizedBox(height: 10),
+
+              // 3) Google Pay
+              Card(
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14),
+                  side: BorderSide(
+                    color: EnvConfig.googlePayEnabled
+                        ? AppColors.navy
+                        : AppColors.border,
+                    width: 1.2,
+                  ),
+                ),
+                child: ListTile(
+                  leading: const GoogleLogoIcon(size: 24),
+                  title: const Text('Google Pay',
+                      style: TextStyle(fontWeight: FontWeight.bold)),
+                  subtitle: Text(
+                    EnvConfig.googlePayEnabled
+                        ? 'دفع سريع وآمن عبر Google Pay'
+                        : 'جاهز للتفعيل فور ربط حساب Google Pay Merchant',
+                  ),
+                  trailing: const Icon(Icons.arrow_forward_ios,
+                      size: 16, color: AppColors.navy),
+                  onTap: () => Navigator.pop(ctx, 'google_pay'),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
 
-    if ((chosenMethod != 'visa' && chosenMethod != 'cliq') ||
-        !context.mounted) {
+    if (chosenMethod == null || !context.mounted) {
       return false;
     }
 
@@ -229,7 +229,7 @@ class PayTabsPaymentService {
       animatedRoute(
         _MepsCheckoutPage(
           service: this,
-          paymentMethod: chosenMethod!,
+          paymentMethod: chosenMethod,
           title: title,
           baseAmount: baseAmount,
           feeAmount: feeAmount,
@@ -238,19 +238,48 @@ class PayTabsPaymentService {
           userRole: userRole,
           orderType: orderType,
           referenceId: referenceId,
-          onPayWithCard: (finalTotal, appliedCode, appliedDiscount) =>
-              payWithCardRedirect(
-            context: context,
-            amount: finalTotal,
-            title: title,
-            orderType: orderType,
-            referenceId: referenceId,
-            email: email,
-            phone: phone,
-            name: name,
-            discountCode: appliedCode,
-            discountAmount: appliedDiscount,
-          ),
+          onExecutePay: (finalTotal, appliedCode, appliedDiscount) {
+            if (chosenMethod == 'apple_pay') {
+              return payWithApplePay(
+                context: context,
+                amount: finalTotal,
+                title: title,
+                orderType: orderType,
+                referenceId: referenceId,
+                email: email,
+                phone: phone,
+                name: name,
+                discountCode: appliedCode,
+                discountAmount: appliedDiscount,
+              );
+            }
+            if (chosenMethod == 'google_pay') {
+              return payWithGooglePay(
+                context: context,
+                amount: finalTotal,
+                title: title,
+                orderType: orderType,
+                referenceId: referenceId,
+                email: email,
+                phone: phone,
+                name: name,
+                discountCode: appliedCode,
+                discountAmount: appliedDiscount,
+              );
+            }
+            return payWithCardRedirect(
+              context: context,
+              amount: finalTotal,
+              title: title,
+              orderType: orderType,
+              referenceId: referenceId,
+              email: email,
+              phone: phone,
+              name: name,
+              discountCode: appliedCode,
+              discountAmount: appliedDiscount,
+            );
+          },
         ),
       ),
     );
@@ -258,7 +287,85 @@ class PayTabsPaymentService {
     return paid == true;
   }
 
-  /// 3) الاتصال بدالة create-payment وفتح صفحة MEPS
+  /// الدفع عبر Apple Pay (يعمل فور وضع APPLE_PAY_MERCHANT_ID وتفعيل applePayEnabled في env_config.dart)
+  Future<bool> payWithApplePay({
+    required BuildContext context,
+    required double amount,
+    required String title,
+    required String orderType,
+    required String referenceId,
+    String? email,
+    String? phone,
+    String? name,
+    String? discountCode,
+    double discountAmount = 0.0,
+  }) async {
+    if (!EnvConfig.applePayEnabled) {
+      throw Exception(
+        'خدمة Apple Pay جاهزة برمجياً — ضع Apple Merchant ID وفعّل applePayEnabled في env_config.dart بعد الاشتراك بحساب Apple Developer.',
+      );
+    }
+    return payWithCardRedirect(
+      context: context,
+      amount: amount,
+      title: title,
+      orderType: orderType,
+      referenceId: referenceId,
+      email: email,
+      phone: phone,
+      name: name,
+      discountCode: discountCode,
+      discountAmount: discountAmount,
+      gatewayMethod: 'ApplePay',
+      extraBody: {
+        'apple_pay_merchant_id': EnvConfig.applePayMerchantId,
+        'country_code': EnvConfig.paymentCountryCode,
+        'currency': EnvConfig.paymentCurrencyCode,
+      },
+    );
+  }
+
+  /// الدفع عبر Google Pay (يعمل فور وضع GOOGLE_PAY_MERCHANT_ID وتفعيل googlePayEnabled في env_config.dart)
+  Future<bool> payWithGooglePay({
+    required BuildContext context,
+    required double amount,
+    required String title,
+    required String orderType,
+    required String referenceId,
+    String? email,
+    String? phone,
+    String? name,
+    String? discountCode,
+    double discountAmount = 0.0,
+  }) async {
+    if (!EnvConfig.googlePayEnabled) {
+      throw Exception(
+        'خدمة Google Pay جاهزة برمجياً — ضع Google Pay Merchant ID وفعّل googlePayEnabled في env_config.dart عند التفعيل.',
+      );
+    }
+    return payWithCardRedirect(
+      context: context,
+      amount: amount,
+      title: title,
+      orderType: orderType,
+      referenceId: referenceId,
+      email: email,
+      phone: phone,
+      name: name,
+      discountCode: discountCode,
+      discountAmount: discountAmount,
+      gatewayMethod: 'GooglePay',
+      extraBody: {
+        'google_pay_merchant_id': EnvConfig.googlePayMerchantId,
+        'google_pay_gateway': EnvConfig.googlePayGateway,
+        'google_pay_gateway_merchant_id': EnvConfig.googlePayGatewayMerchantId,
+        'country_code': EnvConfig.paymentCountryCode,
+        'currency': EnvConfig.paymentCurrencyCode,
+      },
+    );
+  }
+
+  /// الاتصال بدالة create-payment وفتح صفحة MEPS / Apple Pay / Google Pay
   Future<bool> payWithCardRedirect({
     required BuildContext context,
     required double amount,
@@ -270,6 +377,8 @@ class PayTabsPaymentService {
     String? name,
     String? discountCode,
     double discountAmount = 0.0,
+    String gatewayMethod = 'Card',
+    Map<String, dynamic>? extraBody,
   }) async {
     final user = _client.auth.currentUser;
     if (user == null) throw Exception('يرجى تسجيل الدخول أولاً');
@@ -283,7 +392,7 @@ class PayTabsPaymentService {
       body: {
         'user_id': user.id,
         'amount': safeAmount,
-        'payment_method': 'Card',
+        'payment_method': gatewayMethod,
         'description': title,
         'order_type': orderType,
         'reference_id': referenceId,
@@ -293,6 +402,7 @@ class PayTabsPaymentService {
         if (discountCode != null && discountCode.isNotEmpty)
           'discount_code': discountCode,
         if (discountAmount > 0) 'discount_amount': discountAmount,
+        if (extraBody != null) ...extraBody,
       },
     );
 
@@ -319,7 +429,6 @@ class PayTabsPaymentService {
       );
       return completed == true;
     } else {
-      // على Windows و Web: نفتح صفحة الدفع بالمتصفح الخارجي ثم نتحقق من التأكيد السيرفري
       await launchUrl(Uri.parse(redirectUrl),
           mode: LaunchMode.externalApplication);
       if (!context.mounted) return false;
@@ -405,7 +514,6 @@ class PayTabsPaymentService {
     }
   }
 
-  /// تحقق سيرفري على Windows/Web لمنع التلاعب اليدوي بزر تأكيد الدفع
   Future<bool> _verifyServerPayment({
     required String userId,
     required String referenceId,
@@ -413,25 +521,23 @@ class PayTabsPaymentService {
     required String sinceIso,
   }) async {
     try {
-      // 1) فحص سجل المعاملات المالية المؤكدة بعد بدء جلسة الدفع
       final txRows = await _client
           .from('wallet_transactions')
           .select('id, status')
-          .eq('user_id', userId)
+          .eq('customer_id', userId)
           .gte('created_at', sinceIso)
           .inFilter('status', ['completed', 'paid', 'success']).limit(5);
       if ((txRows as List).isNotEmpty) return true;
 
-      // 2) فحص حالة الفاتورة مباشرة في حال كانت ورشة
       if (orderType == 'wrk') {
         final appt = await _client
             .from('workshop_appointments')
-            .select('status, progress_step')
+            .select('status, progress_step, payment_status')
             .eq('id', referenceId)
             .maybeSingle();
         if (appt != null &&
-            (appt['status'] == 'completed' ||
-                appt['progress_step'] == 'completed')) {
+            (appt['payment_status'] == 'paid' ||
+                appt['status'] == 'completed')) {
           return true;
         }
       }
@@ -440,75 +546,12 @@ class PayTabsPaymentService {
       return false;
     }
   }
-
-  /// تسجيل طلب حوالة CliQ وإرسال إشعار للإدارة للمطابقة والتفعيل
-  Future<void> submitCliqTransferRequest({
-    required double amount,
-    required String title,
-    required String orderType,
-    required String referenceId,
-    required String senderNote,
-    String? discountCode,
-    double discountAmount = 0.0,
-  }) async {
-    final user = _client.auth.currentUser;
-    if (user == null) throw Exception('يرجى تسجيل الدخول أولاً');
-
-    final noteClean = senderNote.trim();
-    if (noteClean.isEmpty) {
-      throw Exception('يرجى إدخال رقم الحوالة أو اسم المحوّل');
-    }
-
-    await _client.from('wallet_transactions').insert({
-      'user_id': user.id,
-      'type': 'cliq_payment',
-      'amount': amount,
-      'status': 'pending_review',
-      'description':
-          '$title | CliQ ($orderType:${referenceId.substring(0, referenceId.length > 8 ? 8 : referenceId.length)}) | مرجع: $noteClean${discountCode != null && discountCode.isNotEmpty ? ' | كود: $discountCode (-${discountAmount.toStringAsFixed(2)})' : ''}',
-    });
-
-    // إشعار جميع الأدمن بمراجعة الحوالة
-    try {
-      final admins = await _client
-          .from('customers')
-          .select('id')
-          .eq('role', 'admin')
-          .limit(10);
-      for (final a in (admins as List)) {
-        final adminId = a['id'] as String?;
-        if (adminId != null) {
-          await NotificationsService.instance.sendNotification(
-            targetUserId: adminId,
-            title: 'حوالة CliQ جديدة بانتظار التأكيد',
-            body:
-                'مبلغ ${amount.toStringAsFixed(2)} د.أ · $title · مرجع: $noteClean',
-            type: 'payment_review',
-            referenceId: referenceId,
-          );
-        }
-      }
-    } catch (_) {}
-  }
-
-  Future<String> fetchCliqAlias() async {
-    try {
-      final row = await _client
-          .from('system_settings')
-          .select('value')
-          .eq('key', 'cliq_alias')
-          .maybeSingle();
-      final val = (row?['value'] as String? ?? '').trim();
-      if (val.isNotEmpty) return val;
-    } catch (_) {}
-    return 'GHAYARAKJO';
-  }
 }
 
-/// صفحة الـ Checkout التي تعرض الإجمالي + تفعيل كود الخصم + خيار MEPS أو CliQ
+/// صفحة الـ Checkout التي تعرض الإجمالي + تفعيل كود الخصم + وسيلة الدفع المختارة
 class _MepsCheckoutPage extends StatefulWidget {
   final PayTabsPaymentService service;
-  final String paymentMethod; // 'visa' | 'cliq'
+  final String paymentMethod; // 'visa' | 'apple_pay' | 'google_pay'
   final String title;
   final double baseAmount;
   final double feeAmount;
@@ -518,8 +561,8 @@ class _MepsCheckoutPage extends StatefulWidget {
   final String orderType;
   final String referenceId;
   final Future<bool> Function(
-      double finalTotal, String? discountCode, double discountAmount)
-      onPayWithCard;
+          double finalTotal, String? discountCode, double discountAmount)
+      onExecutePay;
 
   const _MepsCheckoutPage({
     required this.service,
@@ -529,7 +572,7 @@ class _MepsCheckoutPage extends StatefulWidget {
     required this.feeAmount,
     required this.orderType,
     required this.referenceId,
-    required this.onPayWithCard,
+    required this.onExecutePay,
     this.initialDiscountCode,
     this.initialDiscountAmount = 0.0,
     this.userRole,
@@ -541,7 +584,6 @@ class _MepsCheckoutPage extends StatefulWidget {
 
 class _MepsCheckoutPageState extends State<_MepsCheckoutPage> {
   final _promoCtrl = TextEditingController();
-  final _cliqRefCtrl = TextEditingController();
 
   bool _loading = false;
   bool _checkingPromo = false;
@@ -549,7 +591,6 @@ class _MepsCheckoutPageState extends State<_MepsCheckoutPage> {
   double _appliedPercent = 0.0;
   double _discountAmount = 0.0;
   String? _promoError;
-  String _cliqAlias = 'GHAYARAKJO';
 
   @override
   void initState() {
@@ -560,17 +601,11 @@ class _MepsCheckoutPageState extends State<_MepsCheckoutPage> {
       _promoCtrl.text = widget.initialDiscountCode!;
       _discountAmount = widget.initialDiscountAmount;
     }
-    if (widget.paymentMethod == 'cliq') {
-      widget.service.fetchCliqAlias().then((alias) {
-        if (mounted) setState(() => _cliqAlias = alias);
-      });
-    }
   }
 
   @override
   void dispose() {
     _promoCtrl.dispose();
-    _cliqRefCtrl.dispose();
     super.dispose();
   }
 
@@ -578,6 +613,12 @@ class _MepsCheckoutPageState extends State<_MepsCheckoutPage> {
     final total = widget.baseAmount - _discountAmount + widget.feeAmount;
     return double.parse((total < 0 ? 0.0 : total).toStringAsFixed(2));
   }
+
+  String get _methodLabel => switch (widget.paymentMethod) {
+        'apple_pay' => 'Apple Pay',
+        'google_pay' => 'Google Pay',
+        _ => 'Visa / Mastercard (MEPS)',
+      };
 
   Future<void> _applyPromo() async {
     FocusScope.of(context).unfocus();
@@ -622,34 +663,13 @@ class _MepsCheckoutPageState extends State<_MepsCheckoutPage> {
     FocusScope.of(context).unfocus();
     setState(() => _loading = true);
     try {
-      if (widget.paymentMethod == 'cliq') {
-        await widget.service.submitCliqTransferRequest(
-          amount: _finalTotal,
-          title: widget.title,
-          orderType: widget.orderType,
-          referenceId: widget.referenceId,
-          senderNote: _cliqRefCtrl.text,
-          discountCode: _appliedCode,
-          discountAmount: _discountAmount,
-        );
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-                'تم إرسال بيانات حوالة CliQ بنجاح! سيتم التفعيل فور مطابقة الحوالة'),
-            backgroundColor: AppColors.success,
-          ),
-        );
+      final ok = await widget.onExecutePay(
+        _finalTotal,
+        _appliedCode,
+        _discountAmount,
+      );
+      if (ok && mounted) {
         Navigator.pop(context, true);
-      } else {
-        final ok = await widget.onPayWithCard(
-          _finalTotal,
-          _appliedCode,
-          _discountAmount,
-        );
-        if (ok && mounted) {
-          Navigator.pop(context, true);
-        }
       }
     } catch (e) {
       if (mounted) {
@@ -667,7 +687,8 @@ class _MepsCheckoutPageState extends State<_MepsCheckoutPage> {
 
   @override
   Widget build(BuildContext context) {
-    final isCliq = widget.paymentMethod == 'cliq';
+    final isApple = widget.paymentMethod == 'apple_pay';
+    final isGoogle = widget.paymentMethod == 'google_pay';
 
     return Scaffold(
       appBar: AppBar(title: const Text('ملخص الدفع')),
@@ -695,9 +716,7 @@ class _MepsCheckoutPageState extends State<_MepsCheckoutPage> {
                     ),
                     const SizedBox(height: 6),
                     Text(
-                      isCliq
-                          ? 'وسيلة الدفع: CliQ · كليك (تحويل فوري)'
-                          : 'وسيلة الدفع: Visa / Mastercard (MEPS)',
+                      'وسيلة الدفع: $_methodLabel',
                       style: const TextStyle(
                           color: AppColors.textSecondary, fontSize: 13),
                     ),
@@ -830,83 +849,30 @@ class _MepsCheckoutPageState extends State<_MepsCheckoutPage> {
               ),
             ),
 
-            if (isCliq) ...[
-              const SizedBox(height: 16),
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: AppColors.navy.withValues(alpha: 0.05),
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(
-                      color: AppColors.navy.withValues(alpha: 0.25)),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'بيانات التحويل عبر CliQ',
-                      style: TextStyle(
-                          fontWeight: FontWeight.bold,
-                          fontSize: 14,
-                          color: AppColors.navy),
-                    ),
-                    const SizedBox(height: 10),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            'الاسم المستعار (Alias): $_cliqAlias',
-                            style: const TextStyle(
-                                fontWeight: FontWeight.bold, fontSize: 14),
-                          ),
-                        ),
-                        OutlinedButton.icon(
-                          onPressed: () {
-                            Clipboard.setData(ClipboardData(text: _cliqAlias));
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(
-                                  content:
-                                      Text('تم نسخ $_cliqAlias للحافظة ✓')),
-                            );
-                          },
-                          icon: const Icon(Icons.copy, size: 15),
-                          label: const Text('نسخ'),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 10),
-                    TextField(
-                      controller: _cliqRefCtrl,
-                      textInputAction: TextInputAction.done,
-                      onSubmitted: (_) => _submitPayment(),
-                      decoration: InputDecoration(
-                        labelText: 'رقم مرجع الحوالة أو اسم المحوّل',
-                        hintText: 'مثال: أحمد محمد - مرجع 482910',
-                        filled: true,
-                        fillColor: Colors.white,
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-
             const SizedBox(height: 24),
             SizedBox(
               width: double.infinity,
-              child: ElevatedButton(
+              child: ElevatedButton.icon(
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.orange,
+                  backgroundColor: isApple
+                      ? Colors.black
+                      : (isGoogle ? AppColors.navy : AppColors.orange),
                   foregroundColor: Colors.white,
                   padding: const EdgeInsets.symmetric(vertical: 16),
                   shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(14)),
                 ),
                 onPressed: _loading ? null : _submitPayment,
-                child: _loading
+                icon: _loading
+                    ? const SizedBox.shrink()
+                    : Icon(
+                        isApple
+                            ? Icons.apple
+                            : (isGoogle
+                                ? Icons.account_balance_wallet_outlined
+                                : Icons.credit_card),
+                      ),
+                label: _loading
                     ? const SizedBox(
                         width: 22,
                         height: 22,
@@ -914,11 +880,9 @@ class _MepsCheckoutPageState extends State<_MepsCheckoutPage> {
                             color: Colors.white, strokeWidth: 2.5),
                       )
                     : Text(
-                        isCliq
-                            ? 'تأكيد إرسال حوالة CliQ (${_finalTotal.toStringAsFixed(2)} د.أ)'
-                            : 'ادفع الآن (${_finalTotal.toStringAsFixed(2)} د.أ)',
+                        'الدفع عبر $_methodLabel (${_finalTotal.toStringAsFixed(2)} د.أ)',
                         style: const TextStyle(
-                            fontSize: 16, fontWeight: FontWeight.bold),
+                            fontSize: 15.5, fontWeight: FontWeight.bold),
                       ),
               ),
             ),

@@ -1,5 +1,6 @@
 import 'package:material_ui/material_ui.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import '../../config/env_config.dart';
 import '../../models/db_models.dart';
 import '../../models/subscription_plans.dart';
 import '../../services/paytabs_payment_service.dart';
@@ -7,7 +8,7 @@ import '../../theme/app_theme.dart';
 import '../../widgets/animations.dart';
 import 'customer_subscriptions_screen.dart';
 
-/// شاشة دفع فاتورة الورشة
+/// شاشة دفع فاتورة الورشة (المبلغ يُحدَّد من الميكانيكي فقط)
 class WorkshopCheckoutScreen extends StatelessWidget {
   final DbWorkshopAppointment appointment;
   final CustomerProfile customerProfile;
@@ -27,7 +28,7 @@ class WorkshopCheckoutScreen extends StatelessWidget {
       serviceTitle: appointment.serviceDescription ?? 'صيانة مركبة في الورشة',
       serviceSubtitle:
           'موعد بتاريخ ${appointment.appointmentDate} · ${appointment.appointmentTime}',
-      initialBaseAmount: appointment.totalAmount,
+      fixedBaseAmount: appointment.totalAmount,
       orderType: 'wrk',
       serviceKind: 'workshop',
       referenceId: appointment.id,
@@ -37,7 +38,7 @@ class WorkshopCheckoutScreen extends StatelessWidget {
   }
 }
 
-/// شاشة دفع فاتورة الطوارئ والونش
+/// شاشة دفع فاتورة الطوارئ والونش (المبلغ يُحدَّد من مقدم الخدمة فقط)
 class EmergencyCheckoutScreen extends StatelessWidget {
   final DbMechanicRequest request;
   final CustomerProfile customerProfile;
@@ -62,7 +63,7 @@ class EmergencyCheckoutScreen extends StatelessWidget {
       serviceSubtitle: request.carDetails.isNotEmpty
           ? 'المركبة: ${request.carDetails}'
           : 'طلب طوارئ مباشر #${request.id.substring(0, 6)}',
-      initialBaseAmount: request.totalAmount,
+      fixedBaseAmount: request.totalAmount,
       orderType: 'emg',
       serviceKind: 'emergency',
       referenceId: request.id,
@@ -76,7 +77,7 @@ class _ServiceCheckoutScreen extends StatefulWidget {
   final String screenTitle;
   final String serviceTitle;
   final String serviceSubtitle;
-  final double initialBaseAmount;
+  final double fixedBaseAmount;
   final String orderType; // 'wrk' | 'emg'
   final String serviceKind; // 'workshop' | 'emergency'
   final String referenceId;
@@ -87,7 +88,7 @@ class _ServiceCheckoutScreen extends StatefulWidget {
     required this.screenTitle,
     required this.serviceTitle,
     required this.serviceSubtitle,
-    required this.initialBaseAmount,
+    required this.fixedBaseAmount,
     required this.orderType,
     required this.serviceKind,
     required this.referenceId,
@@ -101,63 +102,19 @@ class _ServiceCheckoutScreen extends StatefulWidget {
 
 class _ServiceCheckoutScreenState extends State<_ServiceCheckoutScreen> {
   final _db = Supabase.instance.client;
-  final _customAmountCtrl = TextEditingController();
-  final _cliqRefCtrl = TextEditingController();
 
-  String _selectedMethod = 'visa'; // 'visa' | 'cliq' | 'cash'
-  String _cliqAlias = 'GHYARAK';
+  // 'visa' | 'apple_pay' | 'google_pay' | 'cash'
+  String _selectedMethod = 'visa';
   bool _processing = false;
 
-  bool get _needsManualAmount => widget.initialBaseAmount <= 0;
-
-  double get _baseAmount {
-    if (!_needsManualAmount) return widget.initialBaseAmount;
-    return double.tryParse(_customAmountCtrl.text.trim()) ?? 0.0;
-  }
-
-  @override
-  void initState() {
-    super.initState();
-    _loadCliqAlias();
-  }
-
-  @override
-  void dispose() {
-    _customAmountCtrl.dispose();
-    _cliqRefCtrl.dispose();
-    super.dispose();
-  }
-
-  Future<void> _loadCliqAlias() async {
-    try {
-      final row = await _db
-          .from('system_settings')
-          .select('value')
-          .eq('key', 'cliq_alias')
-          .maybeSingle();
-      final val = (row?['value'] as String?)?.trim();
-      if (val != null && val.isNotEmpty && mounted) {
-        setState(() => _cliqAlias = val);
-      }
-    } catch (_) {}
-  }
+  double get _baseAmount => widget.fixedBaseAmount;
 
   Future<void> _submitPayment() async {
     final baseAmount = _baseAmount;
     if (baseAmount <= 0) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('يرجى إدخال قيمة الفاتورة الصحيحة قبل المتابعة'),
-          backgroundColor: Colors.red,
-        ),
-      );
-      return;
-    }
-
-    if (_selectedMethod == 'cliq' && _cliqRefCtrl.text.trim().isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('يرجى إدخال رقم مرجع حوالة CliQ أو اسم المحوّل'),
+          content: Text('بانتظار قيام الميكانيكي بتحديد قيمة الفاتورة أولاً'),
           backgroundColor: Colors.red,
         ),
       );
@@ -174,12 +131,39 @@ class _ServiceCheckoutScreenState extends State<_ServiceCheckoutScreen> {
 
     setState(() => _processing = true);
     try {
+      final payService = PayTabsPaymentService();
+      final invoiceTitle =
+          '${widget.screenTitle} #${widget.referenceId.substring(0, 6)}';
+
       if (_selectedMethod == 'visa') {
-        final ok = await PayTabsPaymentService().payWithCardRedirect(
+        final ok = await payService.payWithCardRedirect(
           context: context,
           amount: totalToPay,
-          title:
-              '${widget.screenTitle} #${widget.referenceId.substring(0, 6)}',
+          title: invoiceTitle,
+          orderType: widget.orderType,
+          referenceId: widget.referenceId,
+          email: widget.customerProfile.email,
+          phone: widget.customerProfile.phone,
+          name: widget.customerProfile.fullName,
+        );
+        if (!ok) return;
+      } else if (_selectedMethod == 'apple_pay') {
+        final ok = await payService.payWithApplePay(
+          context: context,
+          amount: totalToPay,
+          title: invoiceTitle,
+          orderType: widget.orderType,
+          referenceId: widget.referenceId,
+          email: widget.customerProfile.email,
+          phone: widget.customerProfile.phone,
+          name: widget.customerProfile.fullName,
+        );
+        if (!ok) return;
+      } else if (_selectedMethod == 'google_pay') {
+        final ok = await payService.payWithGooglePay(
+          context: context,
+          amount: totalToPay,
+          title: invoiceTitle,
           orderType: widget.orderType,
           referenceId: widget.referenceId,
           email: widget.customerProfile.email,
@@ -195,18 +179,15 @@ class _ServiceCheckoutScreenState extends State<_ServiceCheckoutScreen> {
         'p_reference_id': widget.referenceId,
         'p_gross_amount': baseAmount,
         'p_payment_method': _selectedMethod,
-        'p_cliq_ref':
-            _selectedMethod == 'cliq' ? _cliqRefCtrl.text.trim() : null,
+        'p_cliq_ref': null,
       });
 
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
+        const SnackBar(
           backgroundColor: AppColors.success,
           content: Text(
-            _selectedMethod == 'cliq'
-                ? 'تم إرسال بيانات حوالة CliQ للمراجعة وربطها بحساب مقدم الخدمة ✓'
-                : 'تم إتمام دفع الفاتورة وربطها بمحفظة مقدم الخدمة بنجاح ✓',
+            'تم إتمام دفع الفاتورة وربطها بمحفظة مقدم الخدمة بنجاح ✓',
           ),
         ),
       );
@@ -216,7 +197,7 @@ class _ServiceCheckoutScreenState extends State<_ServiceCheckoutScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('تعذر إتمام الدفع: $e'),
+            content: Text(e.toString().replaceFirst('Exception: ', '')),
             backgroundColor: Colors.red,
           ),
         );
@@ -226,9 +207,20 @@ class _ServiceCheckoutScreenState extends State<_ServiceCheckoutScreen> {
     }
   }
 
+  String _payButtonText(double totalToPay) {
+    final amt = totalToPay.toStringAsFixed(2);
+    return switch (_selectedMethod) {
+      'apple_pay' => 'الدفع عبر Apple Pay ($amt د.أ)',
+      'google_pay' => 'الدفع عبر Google Pay ($amt د.أ)',
+      'cash' => 'تأكيد الدفع نقداً ($amt د.أ)',
+      _ => 'الدفع عبر MEPS ($amt د.أ)',
+    };
+  }
+
   @override
   Widget build(BuildContext context) {
     final baseAmount = _baseAmount;
+    final hasInvoice = baseAmount > 0;
     final feeRate = AppSubscriptionCatalog.customerFeeRate(
       widget.customerProfile.subscriptionPlan,
     );
@@ -274,30 +266,37 @@ class _ServiceCheckoutScreenState extends State<_ServiceCheckoutScreen> {
                       fontSize: 12,
                     ),
                   ),
-                  if (_needsManualAmount) ...[
+                  if (!hasInvoice) ...[
                     const SizedBox(height: 14),
-                    TextField(
-                      controller: _customAmountCtrl,
-                      keyboardType:
-                          const TextInputType.numberWithOptions(decimal: true),
-                      onChanged: (_) => setState(() {}),
-                      decoration: InputDecoration(
-                        labelText: 'أدخل قيمة الفاتورة المتفق عليها (د.أ)',
-                        prefixIcon: const Icon(
-                          Icons.payments_outlined,
-                          color: AppColors.orange,
-                        ),
-                        filled: true,
-                        fillColor: AppColors.background,
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: AppColors.orangeLight,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: AppColors.orange),
+                      ),
+                      child: const Row(
+                        children: [
+                          Icon(Icons.hourglass_top, color: AppColors.orange),
+                          SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              'بانتظار قيام الميكانيكي / مقدم الخدمة بإدخال قيمة الفاتورة النهائية.',
+                              style: TextStyle(
+                                color: AppColors.navy,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 12.5,
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ],
                   const Divider(height: 24),
                   _row(
-                    'قيمة الخدمة (قبل العمولة)',
+                    'قيمة الخدمة (محددة من مقدم الخدمة)',
                     '${baseAmount.toStringAsFixed(2)} د.أ',
                   ),
                   const SizedBox(height: 10),
@@ -348,7 +347,7 @@ class _ServiceCheckoutScreenState extends State<_ServiceCheckoutScreen> {
                     SizedBox(width: 10),
                     Expanded(
                       child: Text(
-                        'اشترك بباقة البرو بـ 1.95 د.أ/شهر وألغِ عمولة الـ 2% مع خصومات على القطع والخدمات!',
+                        'اشترك بباقة البرو بـ 1.95 د.أ/شهر وألغِ عمولة الـ 2% مع خصومات على الخدمات!',
                         style: TextStyle(
                           color: AppColors.orange,
                           fontWeight: FontWeight.bold,
@@ -373,57 +372,43 @@ class _ServiceCheckoutScreenState extends State<_ServiceCheckoutScreen> {
           const SizedBox(height: 10),
           _methodTile(
             code: 'visa',
-            icon: Icons.credit_card,
+            leading: Icon(
+              Icons.credit_card,
+              color:
+                  _selectedMethod == 'visa' ? AppColors.orange : AppColors.navy,
+              size: 26,
+            ),
             title: 'Visa / Mastercard (MEPS)',
             subtitle:
                 'دفع إلكتروني فوري — يُضاف الصافي مباشرة لمحفظة مقدم الخدمة',
           ),
           const SizedBox(height: 8),
           _methodTile(
-            code: 'cliq',
-            icon: Icons.account_balance,
-            title: 'حوالة CliQ البنكية',
-            subtitle: 'تحويل فوري على اسم المعرّف: $_cliqAlias',
+            code: 'apple_pay',
+            leading: const Icon(Icons.apple, color: Colors.black, size: 28),
+            title: 'Apple Pay',
+            subtitle: EnvConfig.applePayEnabled
+                ? 'دفع سريع وآمن عبر Apple Pay'
+                : 'جاهز للتفعيل فور ربط حساب Apple Developer',
           ),
-          if (_selectedMethod == 'cliq') ...[
-            const SizedBox(height: 10),
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: AppColors.surface,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: AppColors.border),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'حوّل مبلغ ${totalToPay.toStringAsFixed(2)} د.أ على معرّف CliQ: $_cliqAlias ثم أدخل رقم المرجع:',
-                    style: const TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  TextField(
-                    controller: _cliqRefCtrl,
-                    decoration: InputDecoration(
-                      hintText: 'رقم مرجع الحوالة أو اسم المحوّل',
-                      filled: true,
-                      fillColor: AppColors.background,
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
+          const SizedBox(height: 8),
+          _methodTile(
+            code: 'google_pay',
+            leading: const GoogleLogoIcon(size: 24),
+            title: 'Google Pay',
+            subtitle: EnvConfig.googlePayEnabled
+                ? 'دفع سريع وآمن عبر Google Pay'
+                : 'جاهز للتفعيل فور ربط حساب Google Pay',
+          ),
           const SizedBox(height: 8),
           _methodTile(
             code: 'cash',
-            icon: Icons.payments_outlined,
+            leading: Icon(
+              Icons.payments_outlined,
+              color:
+                  _selectedMethod == 'cash' ? AppColors.orange : AppColors.navy,
+              size: 26,
+            ),
             title: 'الدفع نقداً (كاش)',
             subtitle:
                 'ادفع مباشرة لمقدم الخدمة وتُحتسب عمولة المنصة تلقائياً على محفظته',
@@ -433,14 +418,16 @@ class _ServiceCheckoutScreenState extends State<_ServiceCheckoutScreen> {
             width: double.infinity,
             child: ElevatedButton(
               style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.orange,
+                backgroundColor: _selectedMethod == 'apple_pay'
+                    ? Colors.black
+                    : AppColors.orange,
                 foregroundColor: Colors.white,
                 padding: const EdgeInsets.symmetric(vertical: 16),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(14),
                 ),
               ),
-              onPressed: _processing ? null : _submitPayment,
+              onPressed: (_processing || !hasInvoice) ? null : _submitPayment,
               child: _processing
                   ? const SizedBox(
                       width: 22,
@@ -451,11 +438,9 @@ class _ServiceCheckoutScreenState extends State<_ServiceCheckoutScreen> {
                       ),
                     )
                   : Text(
-                      _selectedMethod == 'visa'
-                          ? 'الدفع عبر MEPS (${totalToPay.toStringAsFixed(2)} د.أ)'
-                          : _selectedMethod == 'cliq'
-                              ? 'تأكيد إرسال حوالة CliQ (${totalToPay.toStringAsFixed(2)} د.أ)'
-                              : 'تأكيد الدفع نقداً (${totalToPay.toStringAsFixed(2)} د.أ)',
+                      hasInvoice
+                          ? _payButtonText(totalToPay)
+                          : 'بانتظار تحديد الفاتورة من الميكانيكي',
                       style: const TextStyle(
                         fontSize: 15,
                         fontWeight: FontWeight.bold,
@@ -470,7 +455,7 @@ class _ServiceCheckoutScreenState extends State<_ServiceCheckoutScreen> {
 
   Widget _methodTile({
     required String code,
-    required IconData icon,
+    required Widget leading,
     required String title,
     required String subtitle,
   }) {
@@ -490,11 +475,7 @@ class _ServiceCheckoutScreenState extends State<_ServiceCheckoutScreen> {
         ),
         child: Row(
           children: [
-            Icon(
-              icon,
-              color: selected ? AppColors.orange : AppColors.navy,
-              size: 26,
-            ),
+            leading,
             const SizedBox(width: 12),
             Expanded(
               child: Column(
@@ -537,10 +518,12 @@ class _ServiceCheckoutScreenState extends State<_ServiceCheckoutScreen> {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
-        Text(
-          label,
-          style: TextStyle(
-            fontWeight: isBold ? FontWeight.bold : FontWeight.w500,
+        Expanded(
+          child: Text(
+            label,
+            style: TextStyle(
+              fontWeight: isBold ? FontWeight.bold : FontWeight.w500,
+            ),
           ),
         ),
         Text(

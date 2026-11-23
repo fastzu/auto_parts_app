@@ -49,6 +49,17 @@ class _WorkshopEmergencyDashboardState extends State<WorkshopEmergencyDashboard>
   DashboardPeriod _period = DashboardPeriod.month1;
   DateTimeRange? _customRange;
 
+  // Streams مخزنة في State لمنع إعادة إنشائها أو تصفيرها عند setState
+  late final Stream<List<Map<String, dynamic>>> _emergencyStream;
+  late final Stream<List<Map<String, dynamic>>> _appointmentsStream;
+
+  // بيانات المحفظة المحملة بشكل مستقر (لا ترجع أبداً إلى 0.00 أثناء التحديث)
+  List<DbWalletTransaction> _walletTxs = [];
+  late double _accountWalletBalance = widget.profile.walletBalance;
+  late double _accountPendingDebt = widget.profile.pendingCommissionDebt;
+  bool _walletLoading = true;
+  RealtimeChannel? _walletChannel;
+
   List<({int id, String label})> get _menuItems {
     final list = <({int id, String label})>[
       (id: 0, label: 'نظرة عامة'),
@@ -66,14 +77,101 @@ class _WorkshopEmergencyDashboardState extends State<WorkshopEmergencyDashboard>
   @override
   void initState() {
     super.initState();
+    _emergencyStream = _db
+        .from('mechanic_requests')
+        .stream(primaryKey: ['id'])
+        .order('created_at', ascending: false)
+        .limit(100);
+    _appointmentsStream = _db
+        .from('workshop_appointments')
+        .stream(primaryKey: ['id'])
+        .eq('workshop_id', widget.profile.id)
+        .order('created_at', ascending: false)
+        .limit(100);
+
+    _notifs.startRealtimeListener(widget.profile.id);
     _syncProviderGps();
+    _loadWalletData();
+    _subscribeWalletUpdates();
+  }
+
+  @override
+  void didUpdateWidget(covariant WorkshopEmergencyDashboard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.profile.id != widget.profile.id) {
+      _accountWalletBalance = widget.profile.walletBalance;
+      _accountPendingDebt = widget.profile.pendingCommissionDebt;
+      _loadWalletData();
+    }
+  }
+
+  Future<void> _loadWalletData({bool silent = false}) async {
+    if (!silent && mounted && _walletTxs.isEmpty) {
+      setState(() => _walletLoading = true);
+    }
+    try {
+      final results = await Future.wait([
+        _db
+            .from('customers')
+            .select('wallet_balance, pending_commission_debt')
+            .eq('id', widget.profile.id)
+            .maybeSingle(),
+        _db
+            .from('wallet_transactions')
+            .select()
+            .eq('provider_id', widget.profile.id)
+            .order('created_at', ascending: false)
+            .limit(200),
+      ]);
+
+      final customerRow = results[0] as Map<String, dynamic>?;
+      final txRows = List<Map<String, dynamic>>.from(results[1] as List);
+      final parsedTxs = txRows.map(DbWalletTransaction.fromMap).toList();
+
+      if (!mounted) return;
+      setState(() {
+        if (customerRow != null) {
+          _accountWalletBalance =
+              ((customerRow['wallet_balance'] as num?) ?? _accountWalletBalance).toDouble();
+          _accountPendingDebt =
+              ((customerRow['pending_commission_debt'] as num?) ?? _accountPendingDebt).toDouble();
+        }
+        _walletTxs = parsedTxs;
+        _walletLoading = false;
+      });
+    } catch (_) {
+      if (mounted) setState(() => _walletLoading = false);
+    }
+  }
+
+  void _subscribeWalletUpdates() {
+    _walletChannel = _db
+        .channel('workshop_wallet_${widget.profile.id}')
+        .onPostgresChanges(
+          event: PostgresChangeEvent.insert,
+          schema: 'public',
+          table: 'wallet_transactions',
+          filter: PostgresChangeFilter(
+            type: PostgresChangeFilterType.eq,
+            column: 'provider_id',
+            value: widget.profile.id,
+          ),
+          callback: (_) => _loadWalletData(silent: true),
+        )
+        .subscribe();
   }
 
   bool _inPeriod(String? createdAt) {
-    final dt = DateTime.tryParse(createdAt ?? '');
+    final dt = DateTime.tryParse(createdAt ?? '')?.toLocal();
     if (dt == null) return true;
     final range = DateRangeFilterBar.resolveRange(_period, _customRange);
     return !dt.isBefore(range.start) && !dt.isAfter(range.end.add(const Duration(days: 1)));
+  }
+
+  bool _inPeriodDate(DateTime dt) {
+    final local = dt.toLocal();
+    final range = DateRangeFilterBar.resolveRange(_period, _customRange);
+    return !local.isBefore(range.start) && !local.isAfter(range.end.add(const Duration(days: 1)));
   }
 
   Future<void> _syncProviderGps() async {
@@ -101,7 +199,8 @@ class _WorkshopEmergencyDashboardState extends State<WorkshopEmergencyDashboard>
     if (_myLat == null || _myLng == null || r.pickupLatitude == null || r.pickupLongitude == null) {
       return null;
     }
-    return Geolocator.distanceBetween(_myLat!, _myLng!, r.pickupLatitude!, r.pickupLongitude!) / 1000.0;
+    return Geolocator.distanceBetween(_myLat!, _myLng!, r.pickupLatitude!, r.pickupLongitude!) /
+        1000.0;
   }
 
   bool _isVisibleToMe(DbMechanicRequest r) {
@@ -121,6 +220,12 @@ class _WorkshopEmergencyDashboardState extends State<WorkshopEmergencyDashboard>
 
   @override
   void dispose() {
+    if (_walletChannel != null) {
+      try {
+        _db.removeChannel(_walletChannel!);
+      } catch (_) {}
+      _walletChannel = null;
+    }
     _tracker.stop();
     super.dispose();
   }
@@ -180,6 +285,7 @@ class _WorkshopEmergencyDashboardState extends State<WorkshopEmergencyDashboard>
                   tooltip: 'تسجيل الخروج',
                   icon: const Icon(Icons.logout, color: Colors.white),
                   onPressed: () async {
+                    await _notifs.stopRealtimeListener();
                     await _db.auth.signOut();
                     if (context.mounted) Navigator.popUntil(context, (r) => r.isFirst);
                     widget.onSignedOut();
@@ -265,12 +371,17 @@ class _WorkshopEmergencyDashboardState extends State<WorkshopEmergencyDashboard>
                 child: Text(
                   widget.profile.fullName ?? 'اسم النشاط',
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
               ),
               IconButton(
                 icon: const Icon(Icons.logout, color: Colors.white, size: 20),
                 onPressed: () async {
+                  await _notifs.stopRealtimeListener();
                   await _db.auth.signOut();
                   if (mounted) Navigator.popUntil(context, (r) => r.isFirst);
                   widget.onSignedOut();
@@ -282,8 +393,10 @@ class _WorkshopEmergencyDashboardState extends State<WorkshopEmergencyDashboard>
           ListTile(
             contentPadding: EdgeInsets.zero,
             leading: const Icon(Icons.grid_view_rounded, color: Colors.white),
-            title: const Text('العودة للرئيسية (الاختصارات)',
-                style: TextStyle(color: Colors.white, fontSize: 13)),
+            title: const Text(
+              'العودة للرئيسية (الاختصارات)',
+              style: TextStyle(color: Colors.white, fontSize: 13),
+            ),
             onTap: () => _goHome(closeDrawerFirst: isDrawer),
           ),
           const Divider(color: Colors.white24),
@@ -295,6 +408,7 @@ class _WorkshopEmergencyDashboardState extends State<WorkshopEmergencyDashboard>
               child: GestureDetector(
                 onTap: () {
                   setState(() => _tab = item.id);
+                  if (item.id == 4) _loadWalletData(silent: true);
                   if (isDrawer) Navigator.pop(context);
                 },
                 child: AnimatedContainer(
@@ -326,11 +440,7 @@ class _WorkshopEmergencyDashboardState extends State<WorkshopEmergencyDashboard>
     final showWinch = EnvConfig.winchEnabled.value;
 
     return StreamBuilder<List<Map<String, dynamic>>>(
-      stream: _db
-          .from('mechanic_requests')
-          .stream(primaryKey: ['id'])
-          .order('created_at', ascending: false)
-          .limit(100),
+      stream: _emergencyStream,
       builder: (context, reqSnap) {
         final rawReqs =
             (reqSnap.data ?? []).where((r) => _inPeriod(r['created_at'] as String?)).toList();
@@ -341,12 +451,7 @@ class _WorkshopEmergencyDashboardState extends State<WorkshopEmergencyDashboard>
         final activeEmergencies = reqs.where((r) => r.status != 'completed').length;
 
         return StreamBuilder<List<Map<String, dynamic>>>(
-          stream: _db
-              .from('workshop_appointments')
-              .stream(primaryKey: ['id'])
-              .eq('workshop_id', widget.profile.id)
-              .order('created_at', ascending: false)
-              .limit(100),
+          stream: _appointmentsStream,
           builder: (context, apptSnap) {
             final appts =
                 (apptSnap.data ?? []).where((a) => _inPeriod(a['created_at'] as String?)).toList();
@@ -360,6 +465,10 @@ class _WorkshopEmergencyDashboardState extends State<WorkshopEmergencyDashboard>
               (label: 'مكتملة', value: completedAppts.toDouble()),
             ];
 
+            final txTotalNet = _walletTxs.fold(0.0, (s, t) => s + t.netAmount);
+            final liveWallet =
+                _accountWalletBalance > 0 ? _accountWalletBalance : txTotalNet;
+
             return SingleChildScrollView(
               padding: const EdgeInsets.all(16),
               child: Column(
@@ -368,7 +477,10 @@ class _WorkshopEmergencyDashboardState extends State<WorkshopEmergencyDashboard>
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      const Text('نظرة عامة', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+                      const Text(
+                        'نظرة عامة',
+                        style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                      ),
                       ElevatedButton.icon(
                         style: ElevatedButton.styleFrom(
                           backgroundColor: AppColors.orange,
@@ -403,8 +515,11 @@ class _WorkshopEmergencyDashboardState extends State<WorkshopEmergencyDashboard>
                       _kpiCard('حجوزات الورشة', appts.length, Icons.event_available),
                       _kpiCard('سعة الورشة القصوى', widget.profile.maxCarCapacity, Icons.garage),
                       if (showPayments)
-                        _kpiCard('رصيد المحفظة (د.أ)', widget.profile.walletBalance.toInt(),
-                            Icons.account_balance_wallet),
+                        _kpiCard(
+                          'رصيد المحفظة (د.أ)',
+                          liveWallet.round(),
+                          Icons.account_balance_wallet,
+                        ),
                     ],
                   ),
                   const SizedBox(height: 16),
@@ -509,11 +624,7 @@ class _WorkshopEmergencyDashboardState extends State<WorkshopEmergencyDashboard>
     final showPayments = EnvConfig.paymentsEnabled.value;
     final showWinch = EnvConfig.winchEnabled.value;
     return StreamBuilder<List<Map<String, dynamic>>>(
-      stream: _db
-          .from('mechanic_requests')
-          .stream(primaryKey: ['id'])
-          .order('created_at', ascending: false)
-          .limit(100),
+      stream: _emergencyStream,
       builder: (context, snap) {
         if (!snap.hasData) return const Center(child: CircularProgressIndicator());
         final reqs = snap.data!
@@ -538,6 +649,10 @@ class _WorkshopEmergencyDashboardState extends State<WorkshopEmergencyDashboard>
             final distKm = _distanceToRequest(r);
             final hasCoords = r.pickupLatitude != null && r.pickupLongitude != null;
             final statusText = StatusLabels.emergency(r.status, progressStep: r.progressStep);
+            final isAwaitingCustomerPay = showPayments &&
+                r.mechanicId == widget.profile.id &&
+                r.status == 'completed' &&
+                r.paymentStatus != 'paid';
 
             return Card(
               margin: const EdgeInsets.only(bottom: 14),
@@ -570,27 +685,49 @@ class _WorkshopEmergencyDashboardState extends State<WorkshopEmergencyDashboard>
                       ],
                     ),
                     const SizedBox(height: 4),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                      decoration: BoxDecoration(
-                        color: AppColors.navy.withValues(alpha: 0.08),
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: Text(
-                        statusText,
-                        style: const TextStyle(
-                          color: AppColors.navy,
-                          fontWeight: FontWeight.bold,
-                          fontSize: 12,
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 6,
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: AppColors.navy.withValues(alpha: 0.08),
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: Text(
+                            statusText,
+                            style: const TextStyle(
+                              color: AppColors.navy,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 12,
+                            ),
+                          ),
                         ),
-                      ),
+                        if (showPayments && r.paymentStatus == 'paid')
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: AppColors.success.withValues(alpha: 0.14),
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: const Text(
+                              'تم الدفع ✓',
+                              style: TextStyle(
+                                color: AppColors.success,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 12,
+                              ),
+                            ),
+                          ),
+                      ],
                     ),
                     const SizedBox(height: 6),
                     Text('المشكلة: ${r.description ?? "-"} · الهاتف: ${r.phone ?? "-"}'),
                     Text('العنوان: ${r.dropoffAddress ?? "موقع العميل"}'),
                     if (showPayments && r.totalAmount > 0)
                       Text(
-                        'الأجرة: ${r.totalAmount.toStringAsFixed(2)} د.أ',
+                        'قيمة الفاتورة: ${r.totalAmount.toStringAsFixed(2)} د.أ',
                         style: const TextStyle(fontWeight: FontWeight.bold, color: AppColors.orange),
                       ),
                     const SizedBox(height: 10),
@@ -614,7 +751,11 @@ class _WorkshopEmergencyDashboardState extends State<WorkshopEmergencyDashboard>
                                   point: LatLng(r.pickupLatitude!, r.pickupLongitude!),
                                   width: 44,
                                   height: 44,
-                                  child: const Icon(Icons.location_on, color: AppColors.orange, size: 38),
+                                  child: const Icon(
+                                    Icons.location_on,
+                                    color: AppColors.orange,
+                                    size: 38,
+                                  ),
                                 ),
                               ]),
                             ],
@@ -625,8 +766,11 @@ class _WorkshopEmergencyDashboardState extends State<WorkshopEmergencyDashboard>
                       SizedBox(
                         width: double.infinity,
                         child: OutlinedButton.icon(
-                          style: OutlinedButton.styleFrom(side: const BorderSide(color: AppColors.navy)),
-                          onPressed: () => _openGpsNavigation(r.pickupLatitude!, r.pickupLongitude!),
+                          style: OutlinedButton.styleFrom(
+                            side: const BorderSide(color: AppColors.navy),
+                          ),
+                          onPressed: () =>
+                              _openGpsNavigation(r.pickupLatitude!, r.pickupLongitude!),
                           icon: const Icon(Icons.navigation, color: AppColors.navy),
                           label: const Text(
                             'توجيه GPS لموقع العميل',
@@ -675,17 +819,36 @@ class _WorkshopEmergencyDashboardState extends State<WorkshopEmergencyDashboard>
                               backgroundColor: AppColors.success,
                               foregroundColor: Colors.white,
                             ),
-                            onPressed: () async {
-                              await _db
-                                  .from('mechanic_requests')
-                                  .update({'status': 'completed', 'progress_step': 'completed'})
-                                  .eq('id', r.id);
-                              _tracker.stop();
-                            },
-                            child: const Text('إنهاء الطلب'),
+                            onPressed: () => _finishEmergencyAndBill(r),
+                            child: Text(
+                              showPayments ? 'إنهاء الطلب وإصدار الفاتورة' : 'إنهاء الطلب',
+                            ),
                           ),
                         ],
                       ),
+                    if (isAwaitingCustomerPay) ...[
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              r.totalAmount > 0
+                                  ? 'بانتظار دفع الزبون (${r.totalAmount.toStringAsFixed(2)} د.أ)'
+                                  : 'لم يتم إدخال قيمة الفاتورة بعد',
+                              style: const TextStyle(
+                                color: AppColors.orange,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 12.5,
+                              ),
+                            ),
+                          ),
+                          OutlinedButton(
+                            onPressed: () => _finishEmergencyAndBill(r),
+                            child: Text(r.totalAmount > 0 ? 'تعديل المبلغ' : 'إصدار الفاتورة'),
+                          ),
+                        ],
+                      ),
+                    ],
                   ],
                 ),
               ),
@@ -694,6 +857,115 @@ class _WorkshopEmergencyDashboardState extends State<WorkshopEmergencyDashboard>
         );
       },
     );
+  }
+
+  /// إنهاء طلب الطوارئ: الميكانيكي فقط يدخل/يؤكد المبلغ النهائي ليظهر للزبون للدفع
+  Future<void> _finishEmergencyAndBill(DbMechanicRequest r) async {
+    if (!EnvConfig.paymentsEnabled.value) {
+      await _db
+          .from('mechanic_requests')
+          .update({'status': 'completed', 'progress_step': 'completed'})
+          .eq('id', r.id);
+      _tracker.stop();
+      if (r.userId != null) {
+        await _notifs.sendNotification(
+          targetUserId: r.userId!,
+          title: 'تم إنهاء طلب الطوارئ',
+          body: 'شكراً لاستخدامك تطبيق غيارك.',
+          type: 'order_completed',
+          referenceId: r.id,
+        );
+      }
+      return;
+    }
+
+    final amountCtrl = TextEditingController(
+      text: r.totalAmount > 0 ? r.totalAmount.toStringAsFixed(2) : '',
+    );
+    await showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('إنهاء طلب الطوارئ وإصدار الفاتورة'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'أدخل قيمة الفاتورة النهائية المتفق عليها ليتم إرسالها للزبون وإتمام الدفع:',
+              style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: amountCtrl,
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              textInputAction: TextInputAction.done,
+              decoration: const InputDecoration(
+                labelText: 'قيمة الفاتورة (د.أ)',
+                prefixIcon: Icon(Icons.payments_outlined),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('إلغاء')),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.orange,
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () async {
+              final amt = double.tryParse(amountCtrl.text.trim()) ?? 0.0;
+              if (amt <= 0) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('يرجى إدخال مبلغ صحيح أكبر من صفر'),
+                    backgroundColor: Colors.red,
+                  ),
+                );
+                return;
+              }
+              try {
+                await _db.from('mechanic_requests').update({
+                  'total_amount': amt,
+                  'status': 'completed',
+                  'progress_step': 'awaiting_payment',
+                  'payment_status': 'unpaid',
+                }).eq('id', r.id);
+                _tracker.stop();
+                if (r.userId != null) {
+                  await _notifs.sendNotification(
+                    targetUserId: r.userId!,
+                    title: 'تم إنهاء الخدمة — الفاتورة جاهزة للدفع',
+                    body: 'قيمة فاتورة طلب الطوارئ ${amt.toStringAsFixed(2)} د.أ.',
+                    type: 'invoice_ready',
+                    referenceId: r.id,
+                  );
+                }
+                if (ctx.mounted) Navigator.pop(ctx);
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text(
+                        'تم إصدار الفاتورة بقيمة ${amt.toStringAsFixed(2)} د.أ وإرسالها للزبون ✓',
+                      ),
+                      backgroundColor: AppColors.success,
+                    ),
+                  );
+                }
+              } catch (e) {
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('تعذر إصدار الفاتورة: $e'), backgroundColor: Colors.red),
+                  );
+                }
+              }
+            },
+            child: const Text('إرسال الفاتورة للزبون'),
+          ),
+        ],
+      ),
+    );
+    amountCtrl.dispose();
   }
 
   Future<void> _acceptEmergency(DbMechanicRequest r) async {
@@ -734,12 +1006,7 @@ class _WorkshopEmergencyDashboardState extends State<WorkshopEmergencyDashboard>
   Widget _buildAppointmentsTab() {
     final showPayments = EnvConfig.paymentsEnabled.value;
     return StreamBuilder<List<Map<String, dynamic>>>(
-      stream: _db
-          .from('workshop_appointments')
-          .stream(primaryKey: ['id'])
-          .eq('workshop_id', widget.profile.id)
-          .order('created_at', ascending: false)
-          .limit(100),
+      stream: _appointmentsStream,
       builder: (context, snap) {
         if (!snap.hasData) return const Center(child: CircularProgressIndicator());
         final list = snap.data!;
@@ -791,6 +1058,17 @@ class _WorkshopEmergencyDashboardState extends State<WorkshopEmergencyDashboard>
                     ),
                     const SizedBox(height: 6),
                     Text((a['service_description'] as String?) ?? ''),
+                    if (showPayments && ((a['total_amount'] as num?)?.toDouble() ?? 0) > 0) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        'قيمة الفاتورة: ${((a['total_amount'] as num).toDouble()).toStringAsFixed(2)} د.أ',
+                        style: const TextStyle(
+                          color: AppColors.orange,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 13,
+                        ),
+                      ),
+                    ],
                     const SizedBox(height: 10),
                     if (a['status'] == 'pending')
                       Wrap(
@@ -974,7 +1252,10 @@ class _WorkshopEmergencyDashboardState extends State<WorkshopEmergencyDashboard>
       return;
     }
 
-    final amountCtrl = TextEditingController();
+    final existingAmt = ((a['total_amount'] as num?) ?? 0).toDouble();
+    final amountCtrl = TextEditingController(
+      text: existingAmt > 0 ? existingAmt.toStringAsFixed(2) : '',
+    );
     await showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -994,15 +1275,24 @@ class _WorkshopEmergencyDashboardState extends State<WorkshopEmergencyDashboard>
             ),
             onPressed: () async {
               final amt = double.tryParse(amountCtrl.text.trim()) ?? 0.0;
-              if (amt <= 0) return;
-              await _db
-                  .from('workshop_appointments')
-                  .update({'total_amount': amt, 'progress_step': 'awaiting_payment'})
-                  .eq('id', a['id']);
+              if (amt <= 0) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('يرجى إدخال مبلغ صحيح أكبر من صفر'),
+                    backgroundColor: Colors.red,
+                  ),
+                );
+                return;
+              }
+              await _db.from('workshop_appointments').update({
+                'total_amount': amt,
+                'progress_step': 'awaiting_payment',
+                'payment_status': 'unpaid',
+              }).eq('id', a['id']);
               await _notifs.sendNotification(
                 targetUserId: a['user_id'] as String,
                 title: 'سيارتك جاهزة للتسليم!',
-                body: 'انتهى تصليح السيارة، قيمة الفاتورة $amt د.أ.',
+                body: 'انتهى تصليح السيارة، قيمة الفاتورة ${amt.toStringAsFixed(2)} د.أ.',
                 type: 'car_ready',
                 referenceId: a['id'] as String,
               );
@@ -1017,72 +1307,131 @@ class _WorkshopEmergencyDashboardState extends State<WorkshopEmergencyDashboard>
   }
 
   Widget _buildWalletTab() {
-    return StreamBuilder<List<Map<String, dynamic>>>(
-      stream: _db
-          .from('wallet_transactions')
-          .stream(primaryKey: ['id'])
-          .eq('provider_id', widget.profile.id)
-          .order('created_at', ascending: false)
-          .limit(50),
-      builder: (context, snap) {
-        final txs = (snap.data ?? [])
-            .where((t) => _inPeriod(t['created_at'] as String?))
-            .map(DbWalletTransaction.fromMap)
-            .toList();
-        final gross = txs.fold(0.0, (s, t) => s + t.grossAmount);
-        final comm = txs.fold(0.0, (s, t) => s + t.commissionAmount);
-        final net = txs.fold(0.0, (s, t) => s + t.netAmount);
-        return ListView(
-          padding: const EdgeInsets.all(16),
-          children: [
-            DateRangeFilterBar(
-              period: _period,
-              customRange: _customRange,
-              onChanged: (p, r) => setState(() {
-                _period = p;
-                _customRange = r;
-              }),
-            ),
-            const SizedBox(height: 12),
-            Card(
-              color: AppColors.navy,
-              child: Padding(
-                padding: const EdgeInsets.all(18),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text('صافي الرصيد في المحفظة (بعد العمولة)',
-                        style: TextStyle(color: Colors.white70)),
-                    const SizedBox(height: 6),
-                    Text('${net.toStringAsFixed(2)} د.أ',
-                        style: const TextStyle(
-                            color: Colors.white, fontSize: 26, fontWeight: FontWeight.bold)),
-                    const SizedBox(height: 10),
-                    Text(
-                      'قبل العمولة: ${gross.toStringAsFixed(2)} د.أ  |  العمولات: ${comm.toStringAsFixed(2)} د.أ',
-                      style: const TextStyle(color: Colors.white70, fontSize: 12),
-                    ),
-                  ],
+    final txs = _walletTxs.where((t) => _inPeriodDate(t.createdAt)).toList();
+    final periodGross = txs.fold(0.0, (s, t) => s + t.grossAmount);
+    final periodComm = txs.fold(0.0, (s, t) => s + t.commissionAmount);
+    final periodNet = txs.fold(0.0, (s, t) => s + t.netAmount);
+    final allTimeNet = _walletTxs.fold(0.0, (s, t) => s + t.netAmount);
+    final effectiveAccountBalance =
+        _accountWalletBalance > 0 ? _accountWalletBalance : allTimeNet;
+
+    return RefreshIndicator(
+      color: AppColors.orange,
+      onRefresh: () => _loadWalletData(silent: true),
+      child: ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.all(16),
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: DateRangeFilterBar(
+                  period: _period,
+                  customRange: _customRange,
+                  onChanged: (p, r) => setState(() {
+                    _period = p;
+                    _customRange = r;
+                  }),
                 ),
               ),
+              IconButton(
+                tooltip: 'تحديث المحفظة',
+                onPressed: () => _loadWalletData(silent: false),
+                icon: const Icon(Icons.refresh, color: AppColors.navy),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Card(
+            color: AppColors.navy,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+            child: Padding(
+              padding: const EdgeInsets.all(18),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'صافي الرصيد في المحفظة (بعد العمولة)',
+                    style: TextStyle(color: Colors.white70, fontSize: 13),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    '${effectiveAccountBalance.toStringAsFixed(2)} د.أ',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 28,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  Text(
+                    'خلال الفترة المختارة — الصافي: ${periodNet.toStringAsFixed(2)} د.أ',
+                    style: const TextStyle(
+                      color: AppColors.orange,
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'قبل العمولة: ${periodGross.toStringAsFixed(2)} د.أ  |  العمولات: ${periodComm.toStringAsFixed(2)} د.أ',
+                    style: const TextStyle(color: Colors.white70, fontSize: 12),
+                  ),
+                  if (_accountPendingDebt > 0) ...[
+                    const Divider(color: Colors.white24, height: 18),
+                    Text(
+                      'عمولات الدفع النقدي (كاش) المستحقة للمنصة: ${_accountPendingDebt.toStringAsFixed(2)} د.أ',
+                      style: const TextStyle(
+                        color: Colors.amberAccent,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
             ),
-            const SizedBox(height: 16),
+          ),
+          const SizedBox(height: 16),
+          if (_walletLoading && _walletTxs.isEmpty)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 32),
+              child: Center(child: CircularProgressIndicator()),
+            )
+          else if (txs.isEmpty)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 32),
+              child: Center(
+                child: Text(
+                  'لا توجد حركات مالية ضمن الفترة المختارة',
+                  style: TextStyle(color: AppColors.textSecondary),
+                ),
+              ),
+            )
+          else
             ...txs.map((t) => Card(
+                  margin: const EdgeInsets.only(bottom: 10),
                   child: ListTile(
-                    title: Text('${_txArabicType(t.transactionType)} · ${t.paymentMethod}'),
+                    title: Text(
+                      '${_txArabicType(t.transactionType)} · ${_paymentMethodArabic(t.paymentMethod)}',
+                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                    ),
                     subtitle: Text(
-                      'قبل العمولة: ${t.grossAmount.toStringAsFixed(2)} | العمولة: -${t.commissionAmount.toStringAsFixed(2)}',
+                      'قبل العمولة: ${t.grossAmount.toStringAsFixed(2)} د.أ | العمولة: -${t.commissionAmount.toStringAsFixed(2)} د.أ',
+                      style: const TextStyle(fontSize: 12),
                     ),
                     trailing: Text(
                       '+${t.netAmount.toStringAsFixed(2)} د.أ',
                       style: const TextStyle(
-                          color: AppColors.success, fontWeight: FontWeight.bold, fontSize: 15),
+                        color: AppColors.success,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 15,
+                      ),
                     ),
                   ),
                 )),
-          ],
-        );
-      },
+        ],
+      ),
     );
   }
 
@@ -1090,6 +1439,14 @@ class _WorkshopEmergencyDashboardState extends State<WorkshopEmergencyDashboard>
         'order' || 'part_order' => 'بيع قطعة غيار',
         'workshop' || 'appointment' => 'خدمة ورشة',
         'winch_towing' || 'winch' || 'emergency' => 'طلب طوارئ / ونش',
+        _ => raw,
+      };
+
+  String _paymentMethodArabic(String raw) => switch (raw.toLowerCase()) {
+        'cash' => 'نقداً (كاش)',
+        'apple_pay' => 'Apple Pay',
+        'google_pay' => 'Google Pay',
+        'visa' || 'card' || 'meps' => 'فيزا / ماستركارد',
         _ => raw,
       };
 }

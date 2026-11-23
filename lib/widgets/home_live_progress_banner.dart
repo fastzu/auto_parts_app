@@ -8,7 +8,6 @@ import '../services/live_progress_tracker.dart';
 import '../theme/app_theme.dart';
 import 'animations.dart';
 
-
 class HomeLiveProgressBanner extends StatefulWidget {
   final CustomerProfile? viewerProfile;
 
@@ -121,6 +120,7 @@ class _HomeLiveProgressBannerState extends State<HomeLiveProgressBanner> {
       'pending' => 0.20,
       'on_the_way' => 0.55,
       'arrived_at_pickup' => 0.85,
+      'awaiting_payment' => 0.95,
       'completed' => 1.0,
       _ => 0.20,
     };
@@ -138,6 +138,7 @@ class _HomeLiveProgressBannerState extends State<HomeLiveProgressBanner> {
       'arrived_at_pickup' => isWinch
           ? 'وصل الونش إلى موقعك ✓'
           : 'وصل الميكانيكي إلى موقعك ✓',
+      'awaiting_payment' => 'تمت الخدمة — بانتظار دفع الفاتورة',
       'completed' => 'تم إنهاء المساعدة الطارئة ✓',
       _ => 'قيد المتابعة',
     };
@@ -172,10 +173,7 @@ class _HomeLiveProgressBannerState extends State<HomeLiveProgressBanner> {
               if (status == 'accepted' || status == 'reschedule_proposed') {
                 return true;
               }
-              // إبقاء الكرت ظاهراً إذا اكتمل العمل وبقي الدفع غير مكتمل
-              if (status == 'completed' &&
-                  amount > 0 &&
-                  payStatus != 'paid') {
+              if (status == 'completed' && amount > 0 && payStatus != 'paid') {
                 return true;
               }
               return false;
@@ -188,9 +186,7 @@ class _HomeLiveProgressBannerState extends State<HomeLiveProgressBanner> {
               if (status != 'completed' && status != 'cancelled') {
                 return true;
               }
-              if (status == 'completed' &&
-                  amount > 0 &&
-                  payStatus != 'paid') {
+              if (status == 'completed' && amount > 0 && payStatus != 'paid') {
                 return true;
               }
               return false;
@@ -226,10 +222,9 @@ class _HomeLiveProgressBannerState extends State<HomeLiveProgressBanner> {
                       etaOrDistance: '${a['appointment_time'] ?? ""}',
                     );
 
+                    // زر دفع الفاتورة يظهر فقط بعد أن يُصدر الميكانيكي الفاتورة (amount > 0)
                     final bool canPayWorkshop =
-                        payStatus != 'paid' &&
-                        payStatus != 'pending_verification' &&
-                        (amount > 0 || a['workshop_id'] != null);
+                        payStatus != 'paid' && amount > 0;
 
                     return ValueListenableBuilder<double?>(
                       valueListenable: _tracker.workshopDistanceKm,
@@ -244,9 +239,7 @@ class _HomeLiveProgressBannerState extends State<HomeLiveProgressBanner> {
                           progress: progress,
                           paymentStatus: payStatus,
                           payLabel: canPayWorkshop
-                              ? (amount > 0
-                                  ? 'دفع الفاتورة (${amount.toStringAsFixed(2)} د.أ)'
-                                  : 'دفع فاتورة الورشة')
+                              ? 'دفع الفاتورة (${amount.toStringAsFixed(2)} د.أ)'
                               : null,
                           onPayInvoice: canPayWorkshop
                               ? () => Navigator.push(
@@ -307,10 +300,9 @@ class _HomeLiveProgressBannerState extends State<HomeLiveProgressBanner> {
                       etaOrDistance: (e['estimated_time'] as String?) ?? '',
                     );
 
+                    // زر دفع فاتورة الطوارئ يظهر فقط عند وجود مبلغ محدد من مقدم الخدمة > 0
                     final bool canPayEmergency =
-                        payStatus != 'paid' &&
-                        payStatus != 'pending_verification' &&
-                        (amount > 0 || hasProvider);
+                        payStatus != 'paid' && hasProvider && amount > 0;
 
                     return _progressCard(
                       headerIcon: serviceType == 'winch'
@@ -325,9 +317,7 @@ class _HomeLiveProgressBannerState extends State<HomeLiveProgressBanner> {
                       progress: progress,
                       paymentStatus: payStatus,
                       payLabel: canPayEmergency
-                          ? (amount > 0
-                              ? 'دفع الفاتورة (${amount.toStringAsFixed(2)} د.أ)'
-                              : 'دفع فاتورة الطوارئ')
+                          ? 'دفع الفاتورة (${amount.toStringAsFixed(2)} د.أ)'
                           : null,
                       onPayInvoice: canPayEmergency
                           ? () => Navigator.push(
@@ -433,28 +423,10 @@ class _HomeLiveProgressBannerState extends State<HomeLiveProgressBanner> {
                       fontWeight: FontWeight.bold,
                     ),
                   ),
-                )
-              else if (paymentStatus == 'pending_verification')
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                  decoration: BoxDecoration(
-                    color: Colors.amber.shade700,
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: const Text(
-                    'CliQ قيد المراجعة',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 10.5,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
                 ),
             ],
           ),
           const SizedBox(height: 10),
-          // شريط التقدم + أيقونة المفتاح/الونش يتحركان معاً بنفس الاتجاه (RTL متطابق 100%)
           TweenAnimationBuilder<double>(
             tween: Tween(begin: 0, end: progress.clamp(0.0, 1.0)),
             duration: const Duration(milliseconds: 500),
@@ -472,7 +444,6 @@ class _HomeLiveProgressBannerState extends State<HomeLiveProgressBanner> {
                     child: Stack(
                       alignment: AlignmentDirectional.centerStart,
                       children: [
-                        // الخلفية
                         Container(
                           height: 7,
                           width: trackWidth,
@@ -481,7 +452,6 @@ class _HomeLiveProgressBannerState extends State<HomeLiveProgressBanner> {
                             borderRadius: BorderRadius.circular(8),
                           ),
                         ),
-                        // التعبئة البرتقالية من نفس جهة الانطلاق (start)
                         PositionedDirectional(
                           start: 0,
                           child: Container(
@@ -493,7 +463,6 @@ class _HomeLiveProgressBannerState extends State<HomeLiveProgressBanner> {
                             ),
                           ),
                         ),
-                        // أيقونة المفتاح/الونش على رأس التعبئة البرتقالية تماماً
                         PositionedDirectional(
                           start: thumbStart,
                           child: Container(

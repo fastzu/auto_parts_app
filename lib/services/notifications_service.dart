@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import '../config/env_config.dart';
 import '../theme/app_theme.dart';
 
 class NotificationsService {
@@ -14,11 +15,20 @@ class NotificationsService {
   final FlutterLocalNotificationsPlugin _local =
       FlutterLocalNotificationsPlugin();
 
+  /// عدادات فورية موحدة لجميع الشاشات (الجرس + أيقونة الدردشة)
+  final ValueNotifier<int> unreadNotificationsCount = ValueNotifier<int>(0);
+  final ValueNotifier<int> unreadMessagesCount = ValueNotifier<int>(0);
+
+  /// معرّف الطرف الآخر في المحادثة المفتوحة حالياً (حتى لا يظهر إشعار مكرر أثناء فتح نفس الدردشة)
+  String? activeChatOtherUserId;
+
   bool _initialized = false;
   RealtimeChannel? _notifChannel;
   RealtimeChannel? _msgChannel;
+  Timer? _fallbackPollTimer;
   String? _listeningUserId;
   final Set<String> _shownIds = {};
+  final Map<String, String> _senderNameCache = {};
 
   static const AndroidNotificationChannel _androidChannel =
       AndroidNotificationChannel(
@@ -80,7 +90,22 @@ class NotificationsService {
     } catch (_) {}
   }
 
-  /// إظهار إشعار حقيقي في شريط الهاتف (Banner + صوت + اهتزاز)
+  /// حفظ Device Push Token (جاهز للربط المباشر مع APNs/FCM عند تفعيل حساب المطور)
+  Future<void> registerPushToken(String token) async {
+    final uid = _db.auth.currentUser?.id;
+    if (uid == null || token.trim().isEmpty) return;
+    final platform = kIsWeb
+        ? 'web'
+        : (defaultTargetPlatform == TargetPlatform.iOS ? 'ios' : 'android');
+    try {
+      await _db.from('customers').update({
+        'device_push_token': token.trim(),
+        'device_platform': platform,
+      }).eq('id', uid);
+    } catch (_) {}
+  }
+
+  /// إظهار إشعار حقيقي على الهاتف (Banner + صوت + اهتزاز + مركز الإشعارات)
   Future<void> showLocalPhoneNotification({
     required String title,
     required String body,
@@ -90,7 +115,7 @@ class NotificationsService {
     if (dedupeKey != null) {
       if (_shownIds.contains(dedupeKey)) return;
       _shownIds.add(dedupeKey);
-      if (_shownIds.length > 200) {
+      if (_shownIds.length > 300) {
         _shownIds.remove(_shownIds.first);
       }
     }
@@ -131,15 +156,45 @@ class NotificationsService {
     } catch (_) {}
   }
 
-  /// تشغيل مستمع Supabase Realtime العام للإشعارات والرسائل الواردة للمستخدم
+  Future<String> _resolveSenderName(String? senderId) async {
+    if (senderId == null || senderId.isEmpty) return 'مستخدم غيارك';
+    if (_senderNameCache.containsKey(senderId)) {
+      return _senderNameCache[senderId]!;
+    }
+    try {
+      final row = await _db
+          .from('customers')
+          .select('full_name, username')
+          .eq('id', senderId)
+          .maybeSingle();
+      final name = (row?['full_name'] as String?)?.trim().isNotEmpty == true
+          ? (row!['full_name'] as String).trim()
+          : ((row?['username'] as String?)?.trim().isNotEmpty == true
+              ? (row!['username'] as String).trim()
+              : 'مستخدم غيارك');
+      _senderNameCache[senderId] = name;
+      return name;
+    } catch (_) {
+      return 'مستخدم غيارك';
+    }
+  }
+
+  /// تشغيل المستمع العام (Realtime + فحص احتياطي كل 8 ثوانٍ) للإشعارات والرسائل
   Future<void> startRealtimeListener([String? explicitUserId]) async {
     final uid = explicitUserId ?? _db.auth.currentUser?.id;
     if (uid == null || uid.isEmpty) return;
-    if (_listeningUserId == uid && _notifChannel != null) return;
+    if (_listeningUserId == uid && _notifChannel != null && _msgChannel != null) {
+      await refreshUnreadCounts();
+      return;
+    }
 
     await stopRealtimeListener();
     await init();
     _listeningUserId = uid;
+
+    // تسجيل المعرفات الموجودة مسبقاً حتى لا تتكرر الإشعارات القديمة عند فتح التطبيق
+    await _seedExistingIds(uid);
+    await refreshUnreadCounts();
 
     _notifChannel = _db
         .channel('user_notifs_$uid')
@@ -162,7 +217,19 @@ class NotificationsService {
               body: body,
               dedupeKey: id.isNotEmpty ? 'notif_$id' : null,
             );
+            refreshUnreadCounts();
           },
+        )
+        .onPostgresChanges(
+          event: PostgresChangeEvent.update,
+          schema: 'public',
+          table: 'notifications',
+          filter: PostgresChangeFilter(
+            type: PostgresChangeFilterType.eq,
+            column: 'user_id',
+            value: uid,
+          ),
+          callback: (_) => refreshUnreadCounts(),
         )
         .subscribe();
 
@@ -177,22 +244,174 @@ class NotificationsService {
             column: 'receiver_id',
             value: uid,
           ),
-          callback: (payload) {
+          callback: (payload) async {
             final row = payload.newRecord;
             final id = (row['id'] ?? '').toString();
+            final senderId = row['sender_id'] as String?;
             final msg = (row['message'] as String?) ?? 'لديك رسالة جديدة';
-            showLocalPhoneNotification(
-              title: 'رسالة جديدة في غيارك 💬',
-              body: msg,
-              dedupeKey: id.isNotEmpty ? 'msg_$id' : null,
-            );
+
+            // إظهار إشعار على الهاتف دائماً ما لم يكن المستخدم داخل نفس المحادثة حالياً
+            if (senderId == null || senderId != activeChatOtherUserId) {
+              final senderName = await _resolveSenderName(senderId);
+              await showLocalPhoneNotification(
+                title: 'رسالة جديدة من $senderName 💬',
+                body: msg,
+                dedupeKey: id.isNotEmpty ? 'msg_$id' : null,
+              );
+            }
+            await refreshUnreadCounts();
           },
         )
+        .onPostgresChanges(
+          event: PostgresChangeEvent.update,
+          schema: 'public',
+          table: 'messages',
+          filter: PostgresChangeFilter(
+            type: PostgresChangeFilterType.eq,
+            column: 'receiver_id',
+            value: uid,
+          ),
+          callback: (_) => refreshUnreadCounts(),
+        )
         .subscribe();
+
+    // فحص احتياطي كل 8 ثوانٍ يضمن وصول كل الإشعارات والرسائل على الهاتف حتى لو انقطع Realtime
+    _fallbackPollTimer = Timer.periodic(
+      const Duration(seconds: 8),
+      (_) => _pollUnseenUpdates(uid),
+    );
+  }
+
+  Future<void> _seedExistingIds(String uid) async {
+    try {
+      final results = await Future.wait([
+        _db
+            .from('notifications')
+            .select('id')
+            .eq('user_id', uid)
+            .order('created_at', ascending: false)
+            .limit(40),
+        _db
+            .from('messages')
+            .select('id')
+            .eq('receiver_id', uid)
+            .order('created_at', ascending: false)
+            .limit(40),
+      ]);
+      for (final n in (results[0] as List)) {
+        final id = (n['id'] ?? '').toString();
+        if (id.isNotEmpty) _shownIds.add('notif_$id');
+      }
+      for (final m in (results[1] as List)) {
+        final id = (m['id'] ?? '').toString();
+        if (id.isNotEmpty) _shownIds.add('msg_$id');
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _pollUnseenUpdates(String uid) async {
+    if (_listeningUserId != uid) return;
+    try {
+      final notifs = await _db
+          .from('notifications')
+          .select('id, title, body, is_read')
+          .eq('user_id', uid)
+          .order('created_at', ascending: false)
+          .limit(15);
+
+      for (final raw in notifs) {
+        final id = (raw['id'] ?? '').toString();
+        if (id.isEmpty) continue;
+        final key = 'notif_$id';
+        if (!_shownIds.contains(key) && raw['is_read'] != true) {
+          await showLocalPhoneNotification(
+            title: (raw['title'] as String?) ?? 'إشعار جديد — غيارك',
+            body: (raw['body'] as String?) ?? '',
+            dedupeKey: key,
+          );
+        }
+      }
+
+      final msgs = await _db
+          .from('messages')
+          .select('id, sender_id, message, is_read')
+          .eq('receiver_id', uid)
+          .order('created_at', ascending: false)
+          .limit(15);
+
+      for (final raw in msgs) {
+        final id = (raw['id'] ?? '').toString();
+        if (id.isEmpty) continue;
+        final key = 'msg_$id';
+        final senderId = raw['sender_id'] as String?;
+        if (!_shownIds.contains(key) && raw['is_read'] != true) {
+          if (senderId == null || senderId != activeChatOtherUserId) {
+            final senderName = await _resolveSenderName(senderId);
+            await showLocalPhoneNotification(
+              title: 'رسالة جديدة من $senderName 💬',
+              body: (raw['message'] as String?) ?? 'لديك رسالة جديدة',
+              dedupeKey: key,
+            );
+          } else {
+            _shownIds.add(key);
+          }
+        }
+      }
+
+      await refreshUnreadCounts();
+    } catch (_) {}
+  }
+
+  /// تحديث عدّادات غير المقروءة (الجرس + أيقونة الدردشة)
+  Future<void> refreshUnreadCounts() async {
+    final uid = _listeningUserId ?? _db.auth.currentUser?.id;
+    if (uid == null || uid.isEmpty) {
+      unreadNotificationsCount.value = 0;
+      unreadMessagesCount.value = 0;
+      return;
+    }
+
+    try {
+      final unreadNotifs = await _db
+          .from('notifications')
+          .select('id')
+          .eq('user_id', uid)
+          .eq('is_read', false);
+      unreadNotificationsCount.value = (unreadNotifs as List).length;
+    } catch (_) {}
+
+    try {
+      final unreadMsgs = await _db
+          .from('messages')
+          .select('id')
+          .eq('receiver_id', uid)
+          .eq('is_read', false);
+      unreadMessagesCount.value = (unreadMsgs as List).length;
+    } catch (_) {}
+  }
+
+  /// تعليم جميع رسائل مرسل معيّن كمقروءة فور فتح المحادثة
+  Future<void> markConversationAsRead(String otherUserId) async {
+    final uid = _db.auth.currentUser?.id;
+    if (uid == null || uid.isEmpty) return;
+    try {
+      await _db
+          .from('messages')
+          .update({'is_read': true})
+          .eq('receiver_id', uid)
+          .eq('sender_id', otherUserId)
+          .eq('is_read', false);
+      await refreshUnreadCounts();
+    } catch (_) {}
   }
 
   Future<void> stopRealtimeListener() async {
     _listeningUserId = null;
+    activeChatOtherUserId = null;
+    unreadNotificationsCount.value = 0;
+    unreadMessagesCount.value = 0;
+    _fallbackPollTimer?.cancel();
+    _fallbackPollTimer = null;
     if (_notifChannel != null) {
       try {
         await _db.removeChannel(_notifChannel!);
@@ -221,6 +440,22 @@ class NotificationsService {
       'type': type,
       'reference_id': referenceId,
     });
+
+    // إرسال Push خارجي (APNs / FCM) عند تفعيل remotePushEnabled بعد اشتراك حساب المطور
+    if (EnvConfig.remotePushEnabled) {
+      try {
+        await _db.functions.invoke(
+          'send-push-notification',
+          body: {
+            'target_user_id': targetUserId,
+            'title': title,
+            'body': body,
+            'type': type,
+            'reference_id': referenceId,
+          },
+        );
+      } catch (_) {}
+    }
   }
 
   /// إرسال إشعار جماعي حسب الدور أو لمستخدم محدد عبر targetUserId
@@ -232,19 +467,17 @@ class NotificationsService {
     String type = 'broadcast',
     String? referenceId,
   }) async {
-    // 1) إذا تم تحديد مستخدم معيّن نرسل له مباشرة
     if (targetUserId != null && targetUserId.trim().isNotEmpty) {
-      await _db.from('notifications').insert({
-        'user_id': targetUserId.trim(),
-        'title': title,
-        'body': body,
-        'type': type,
-        'reference_id': referenceId,
-      });
+      await sendNotification(
+        targetUserId: targetUserId.trim(),
+        title: title,
+        body: body,
+        type: type,
+        referenceId: referenceId,
+      );
       return 1;
     }
 
-    // 2) إرسال جماعي للكل أو لفئة محددة (merchant / mechanic / towing / user)
     var query = _db.from('customers').select('id');
     if (targetRole != 'all' && targetRole.trim().isNotEmpty) {
       query = query.eq('role', targetRole.trim());
@@ -265,7 +498,6 @@ class NotificationsService {
         )
         .toList();
 
-    // إدراج على دفعات لتجنب حدود الحجم
     const chunkSize = 100;
     for (var i = 0; i < inserts.length; i += chunkSize) {
       final end = (i + chunkSize < inserts.length)
@@ -291,7 +523,22 @@ class NotificationsService {
   Future<void> markAsRead(String notifId) async {
     await _db
         .from('notifications')
-        .update({'is_read': true}).eq('id', notifId);
+        .update({'is_read': true})
+        .eq('id', notifId);
+    await refreshUnreadCounts();
+  }
+
+  Future<void> markAllNotificationsAsRead() async {
+    final uid = _db.auth.currentUser?.id;
+    if (uid == null) return;
+    try {
+      await _db
+          .from('notifications')
+          .update({'is_read': true})
+          .eq('user_id', uid)
+          .eq('is_read', false);
+      unreadNotificationsCount.value = 0;
+    } catch (_) {}
   }
 
   void openNotificationsSheet(BuildContext context) {
@@ -304,15 +551,34 @@ class NotificationsService {
         stream: streamMyNotifications(),
         builder: (ctx, snap) {
           final list = snap.data ?? [];
+          final hasUnread = list.any((n) => n['is_read'] != true);
           return Padding(
             padding: const EdgeInsets.all(16),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text(
-                  'الإشعارات',
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Text(
+                      'الإشعارات',
+                      style:
+                          TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                    ),
+                    if (hasUnread)
+                      TextButton(
+                        onPressed: markAllNotificationsAsRead,
+                        child: const Text(
+                          'تحديد الكل كمقروء',
+                          style: TextStyle(
+                            color: AppColors.orange,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 12.5,
+                          ),
+                        ),
+                      ),
+                  ],
                 ),
                 const SizedBox(height: 10),
                 if (list.isEmpty)
@@ -338,14 +604,14 @@ class NotificationsService {
                                 : AppColors.orange,
                           ),
                           title: Text(
-                            n['title'] ?? '',
+                            (n['title'] as String?) ?? '',
                             style: TextStyle(
                               fontWeight:
                                   read ? FontWeight.normal : FontWeight.bold,
                             ),
                           ),
-                          subtitle: Text(n['body'] ?? ''),
-                          onTap: () => markAsRead(n['id']),
+                          subtitle: Text((n['body'] as String?) ?? ''),
+                          onTap: () => markAsRead(n['id'] as String),
                         );
                       },
                     ),
@@ -359,6 +625,7 @@ class NotificationsService {
   }
 }
 
+/// زر جرس الإشعارات مع الشارة الحمراء وتنبيه الهاتف الفوري
 class NotificationBellButton extends StatefulWidget {
   final Color iconColor;
   const NotificationBellButton({super.key, this.iconColor = Colors.white});
@@ -369,12 +636,20 @@ class NotificationBellButton extends StatefulWidget {
 
 class _NotificationBellButtonState extends State<NotificationBellButton> {
   final _service = NotificationsService.instance;
+  late final Stream<List<Map<String, dynamic>>> _stream;
   String? _lastAlertId;
+
+  @override
+  void initState() {
+    super.initState();
+    _stream = _service.streamMyNotifications();
+    _service.refreshUnreadCounts();
+  }
 
   @override
   Widget build(BuildContext context) {
     return StreamBuilder<List<Map<String, dynamic>>>(
-      stream: _service.streamMyNotifications(),
+      stream: _stream,
       builder: (context, snap) {
         final list = snap.data ?? [];
         final unreadList = list.where((n) => n['is_read'] != true).toList();
@@ -405,12 +680,70 @@ class _NotificationBellButtonState extends State<NotificationBellButton> {
           }
         }
 
+        return ValueListenableBuilder<int>(
+          valueListenable: _service.unreadNotificationsCount,
+          builder: (_, notifierCount, __) {
+            final count = snap.hasData ? unreadList.length : notifierCount;
+            return IconButton(
+              tooltip: 'الإشعارات',
+              onPressed: () => _service.openNotificationsSheet(context),
+              icon: Badge(
+                isLabelVisible: count > 0,
+                backgroundColor: Colors.red,
+                label: Text('$count'),
+                child: Icon(Icons.notifications_none, color: widget.iconColor),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+}
+
+/// زر أيقونة الدردشة مع الشارة الحمراء بعدد الرسائل غير المقروءة (مثل الجرس تماماً)
+class ChatBadgeButton extends StatefulWidget {
+  final Color iconColor;
+  final VoidCallback onPressed;
+  final double iconSize;
+
+  const ChatBadgeButton({
+    super.key,
+    this.iconColor = AppColors.navy,
+    required this.onPressed,
+    this.iconSize = 23,
+  });
+
+  @override
+  State<ChatBadgeButton> createState() => _ChatBadgeButtonState();
+}
+
+class _ChatBadgeButtonState extends State<ChatBadgeButton> {
+  final _service = NotificationsService.instance;
+
+  @override
+  void initState() {
+    super.initState();
+    _service.refreshUnreadCounts();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<int>(
+      valueListenable: _service.unreadMessagesCount,
+      builder: (_, count, __) {
         return IconButton(
-          onPressed: () => _service.openNotificationsSheet(context),
+          tooltip: 'الدردشات',
+          onPressed: widget.onPressed,
           icon: Badge(
-            isLabelVisible: unreadList.isNotEmpty,
-            label: Text('${unreadList.length}'),
-            child: Icon(Icons.notifications_none, color: widget.iconColor),
+            isLabelVisible: count > 0,
+            backgroundColor: Colors.red,
+            label: Text(count > 99 ? '99+' : '$count'),
+            child: Icon(
+              Icons.chat_bubble_outline,
+              color: widget.iconColor,
+              size: widget.iconSize,
+            ),
           ),
         );
       },

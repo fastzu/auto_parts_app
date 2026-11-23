@@ -41,12 +41,35 @@ class LiveMobileShell extends StatefulWidget {
 
 class _LiveMobileShellState extends State<LiveMobileShell> {
   final _scaffoldKey = GlobalKey<ScaffoldState>();
-  final _notifs = NotificationsService();
+  final _notifs = NotificationsService.instance;
   final _db = Supabase.instance.client;
 
   // 0 = الرئيسية (الاختصارات) | 1 = المتجر | 2 = طوارئ | 3 = المواعيد | 4 = حسابي
   int _index = 0;
   bool _checkingQuota = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final uid = widget.profile?.id ?? _db.auth.currentUser?.id;
+    if (uid != null && uid.isNotEmpty) {
+      _notifs.startRealtimeListener(uid);
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant LiveMobileShell oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final oldId = oldWidget.profile?.id;
+    final newId = widget.profile?.id;
+    if (oldId != newId) {
+      if (newId != null && newId.isNotEmpty) {
+        _notifs.startRealtimeListener(newId);
+      } else {
+        _notifs.stopRealtimeListener();
+      }
+    }
+  }
 
   void _openDashboardForRole(CustomerProfile p) {
     final isAdmin = p.isAdmin || p.role == 'admin';
@@ -117,12 +140,13 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
         final plan = AppSubscriptionCatalog.getProviderPlan(planCode);
         final dbLimit = cust?['max_posts_limit'] as int?;
         final int effectiveLimit = dbLimit ?? plan.maxPostsLimit;
-        final isUnlimited =
-            planCode == 'provider_12m' || effectiveLimit < 0 || effectiveLimit >= 9999;
+        final isUnlimited = planCode == 'provider_12m' ||
+            effectiveLimit < 0 ||
+            effectiveLimit >= 9999;
 
         if (!isUnlimited) {
           final rows =
-              await _db.from('products').select('id').eq('seller_id', p.id);
+              await _db.from('products').select('id').eq('user_id', p.id);
           final used = rows.length;
           if (used >= effectiveLimit) {
             if (!mounted) return;
@@ -620,45 +644,44 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
           ],
         ),
         actions: [
-          IconButton(
-            tooltip: 'الدردشات',
-            icon: const Icon(Icons.chat_bubble_outline,
-                color: AppColors.navy, size: 23),
-            onPressed: () {
-              if (!isLoggedIn) {
-                Navigator.push(
-                  context,
-                  animatedRoute(
-                      LoginScreen(onAuthenticated: widget.onRefreshProfile)),
-                );
-                return;
-              }
-              Navigator.push(context, animatedRoute(const ChatsListScreen()));
-            },
-          ),
-          IconButton(
-            tooltip: 'الإشعارات',
-            icon: const Icon(Icons.notifications_none,
-                color: AppColors.navy, size: 25),
-            onPressed: () {
-              if (!isLoggedIn) {
-                Navigator.push(
-                  context,
-                  animatedRoute(
-                      LoginScreen(onAuthenticated: widget.onRefreshProfile)),
-                );
-                return;
-              }
-              _notifs.openNotificationsSheet(context);
-            },
-          ),
+          if (isLoggedIn)
+            ChatBadgeButton(
+              iconColor: AppColors.navy,
+              onPressed: () =>
+                  Navigator.push(context, animatedRoute(const ChatsListScreen())),
+            )
+          else
+            IconButton(
+              tooltip: 'الدردشات',
+              icon: const Icon(Icons.chat_bubble_outline,
+                  color: AppColors.navy, size: 23),
+              onPressed: () => Navigator.push(
+                context,
+                animatedRoute(
+                    LoginScreen(onAuthenticated: widget.onRefreshProfile)),
+              ),
+            ),
+          if (isLoggedIn)
+            const NotificationBellButton(iconColor: AppColors.navy)
+          else
+            IconButton(
+              tooltip: 'الإشعارات',
+              icon: const Icon(Icons.notifications_none,
+                  color: AppColors.navy, size: 25),
+              onPressed: () => Navigator.push(
+                context,
+                animatedRoute(
+                    LoginScreen(onAuthenticated: widget.onRefreshProfile)),
+              ),
+            ),
           const SizedBox(width: 4),
         ],
       ),
       body: RefreshIndicator(
         onRefresh: () async {
           widget.onRefreshProfile();
-          setState(() {});
+          await _notifs.refreshUnreadCounts();
+          if (mounted) setState(() {});
         },
         child: ListView(
           padding: const EdgeInsets.fromLTRB(16, 14, 16, 110),
@@ -830,18 +853,48 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Container(
-                          width: 46,
-                          height: 46,
-                          decoration: BoxDecoration(
-                            color: item.iconBg,
-                            borderRadius: BorderRadius.circular(14),
-                          ),
-                          child: Icon(
-                            item.icon,
-                            color: item.iconColor,
-                            size: 24,
-                          ),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Container(
+                              width: 46,
+                              height: 46,
+                              decoration: BoxDecoration(
+                                color: item.iconBg,
+                                borderRadius: BorderRadius.circular(14),
+                              ),
+                              child: Icon(
+                                item.icon,
+                                color: item.iconColor,
+                                size: 24,
+                              ),
+                            ),
+                            if (item.showChatBadge)
+                              ValueListenableBuilder<int>(
+                                valueListenable: _notifs.unreadMessagesCount,
+                                builder: (_, count, __) {
+                                  if (count <= 0) return const SizedBox.shrink();
+                                  return Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 8,
+                                      vertical: 3,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: Colors.red,
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                    child: Text(
+                                      count > 99 ? '99+' : '$count',
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                  );
+                                },
+                              ),
+                          ],
                         ),
                         const Spacer(),
                         Text(
@@ -958,6 +1011,7 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
           icon: Icons.chat_bubble_outline,
           iconColor: const Color(0xFF0284C7),
           iconBg: const Color(0xFFE0F2FE),
+          showChatBadge: true,
           onTap: openChats,
         ),
       ];
@@ -1019,6 +1073,7 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
           icon: Icons.chat_bubble_outline,
           iconColor: const Color(0xFF0284C7),
           iconBg: const Color(0xFFE0F2FE),
+          showChatBadge: true,
           onTap: openChats,
         ),
       ];
@@ -1067,7 +1122,7 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
                     animatedRoute(
                       Scaffold(
                         appBar: AppBar(title: const Text('محفظة التاجر')),
-                        body: _merchantWalletTab(),
+                        body: _MerchantWalletView(profile: p),
                       ),
                     ),
                   )
@@ -1093,6 +1148,7 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
           icon: Icons.chat_bubble_outline,
           iconColor: const Color(0xFF0284C7),
           iconBg: const Color(0xFFE0F2FE),
+          showChatBadge: true,
           onTap: openChats,
         ),
       ];
@@ -1143,6 +1199,7 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
           icon: Icons.chat_bubble_outline,
           iconColor: const Color(0xFF0284C7),
           iconBg: const Color(0xFFE0F2FE),
+          showChatBadge: true,
           onTap: openChats,
         ),
         _ShortcutItem(
@@ -1232,6 +1289,7 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
         icon: Icons.chat_bubble_outline,
         iconColor: const Color(0xFF0284C7),
         iconBg: const Color(0xFFE0F2FE),
+        showChatBadge: true,
         onTap: openChats,
       ),
     ];
@@ -1367,7 +1425,7 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
               setState(() => _index = 3);
             },
           ),
-          if (role == 'merchant') ...[
+          if (role == 'merchant' && p != null) ...[
             const Divider(),
             if (showPayments)
               ListTile(
@@ -1381,7 +1439,7 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
                     animatedRoute(
                       Scaffold(
                         appBar: AppBar(title: const Text('محفظة التاجر')),
-                        body: _merchantWalletTab(),
+                        body: _MerchantWalletView(profile: p),
                       ),
                     ),
                   );
@@ -1403,6 +1461,27 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
               leading:
                   const Icon(Icons.chat_bubble_outline, color: AppColors.navy),
               title: const Text('الدردشات'),
+              trailing: ValueListenableBuilder<int>(
+                valueListenable: _notifs.unreadMessagesCount,
+                builder: (_, count, __) {
+                  if (count <= 0) return const SizedBox.shrink();
+                  return Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: Colors.red,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Text(
+                      count > 99 ? '99+' : '$count',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 11,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  );
+                },
+              ),
               onTap: () {
                 Navigator.pop(context);
                 Navigator.push(context, animatedRoute(const ChatsListScreen()));
@@ -1411,6 +1490,27 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
             ListTile(
               leading: const Icon(Icons.notifications_none),
               title: const Text('الإشعارات'),
+              trailing: ValueListenableBuilder<int>(
+                valueListenable: _notifs.unreadNotificationsCount,
+                builder: (_, count, __) {
+                  if (count <= 0) return const SizedBox.shrink();
+                  return Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: Colors.red,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Text(
+                      count > 99 ? '99+' : '$count',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 11,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  );
+                },
+              ),
               onTap: () {
                 Navigator.pop(context);
                 _notifs.openNotificationsSheet(context);
@@ -1459,6 +1559,7 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
               title: const Text('تسجيل الخروج'),
               onTap: () async {
                 Navigator.pop(context);
+                await _notifs.stopRealtimeListener();
                 await _db.auth.signOut();
                 widget.onSignedOut();
               },
@@ -1564,71 +1665,6 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
           ],
         ),
       ),
-    );
-  }
-
-  Widget _merchantWalletTab() {
-    return StreamBuilder<List<Map<String, dynamic>>>(
-      stream: _db
-          .from('wallet_transactions')
-          .stream(primaryKey: ['id'])
-          .eq('provider_id', widget.profile!.id)
-          .order('created_at', ascending: false),
-      builder: (_, snap) {
-        final txs = (snap.data ?? []).map(DbWalletTransaction.fromMap).toList();
-        final gross = txs.fold(0.0, (s, t) => s + t.grossAmount);
-        final comm = txs.fold(0.0, (s, t) => s + t.commissionAmount);
-        final net = txs.fold(0.0, (s, t) => s + t.netAmount);
-        return ListView(
-          padding: const EdgeInsets.all(16),
-          children: [
-            Container(
-              padding: const EdgeInsets.all(18),
-              decoration: BoxDecoration(
-                color: AppColors.navy,
-                borderRadius: BorderRadius.circular(16),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text('صافي محفظة التاجر (بعد العمولة)',
-                      style: TextStyle(color: Colors.white70)),
-                  Text(
-                    '${net.toStringAsFixed(2)} د.أ',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 26,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    'قبل العمولة: ${gross.toStringAsFixed(2)} | العمولة: ${comm.toStringAsFixed(2)} د.أ',
-                    style: const TextStyle(color: Colors.white70, fontSize: 12),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 14),
-            ...txs.map(
-              (t) => Card(
-                child: ListTile(
-                  title: Text(t.transactionType),
-                  subtitle: Text(
-                      'قبل العمولة: ${t.grossAmount} · عمولة: -${t.commissionAmount}'),
-                  trailing: Text(
-                    '+${t.netAmount.toStringAsFixed(2)} د.أ',
-                    style: const TextStyle(
-                      color: AppColors.success,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ],
-        );
-      },
     );
   }
 
@@ -1742,11 +1778,253 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
               leading: const Icon(Icons.logout, color: Colors.red),
               title: const Text('تسجيل الخروج'),
               onTap: () async {
+                await _notifs.stopRealtimeListener();
                 await _db.auth.signOut();
                 widget.onSignedOut();
               },
             ),
           ),
+        ],
+      ),
+    );
+  }
+}
+
+/// شاشة محفظة التاجر المستقرة (لا يختفي الرصيد ولا يرجع إلى 0.00 عند التحديث)
+class _MerchantWalletView extends StatefulWidget {
+  final CustomerProfile profile;
+  const _MerchantWalletView({required this.profile});
+
+  @override
+  State<_MerchantWalletView> createState() => _MerchantWalletViewState();
+}
+
+class _MerchantWalletViewState extends State<_MerchantWalletView> {
+  final _db = Supabase.instance.client;
+  DashboardPeriod _period = DashboardPeriod.month1;
+  DateTimeRange? _customRange;
+  List<DbWalletTransaction> _txs = [];
+  late double _accountBalance = widget.profile.walletBalance;
+  late double _pendingDebt = widget.profile.pendingCommissionDebt;
+  bool _loading = true;
+  RealtimeChannel? _channel;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadWallet();
+    _channel = _db
+        .channel('merchant_wallet_${widget.profile.id}')
+        .onPostgresChanges(
+          event: PostgresChangeEvent.insert,
+          schema: 'public',
+          table: 'wallet_transactions',
+          filter: PostgresChangeFilter(
+            type: PostgresChangeFilterType.eq,
+            column: 'provider_id',
+            value: widget.profile.id,
+          ),
+          callback: (_) => _loadWallet(silent: true),
+        )
+        .subscribe();
+  }
+
+  @override
+  void dispose() {
+    if (_channel != null) {
+      try {
+        _db.removeChannel(_channel!);
+      } catch (_) {}
+      _channel = null;
+    }
+    super.dispose();
+  }
+
+  Future<void> _loadWallet({bool silent = false}) async {
+    if (!silent && mounted && _txs.isEmpty) {
+      setState(() => _loading = true);
+    }
+    try {
+      final results = await Future.wait([
+        _db
+            .from('customers')
+            .select('wallet_balance, pending_commission_debt')
+            .eq('id', widget.profile.id)
+            .maybeSingle(),
+        _db
+            .from('wallet_transactions')
+            .select()
+            .eq('provider_id', widget.profile.id)
+            .order('created_at', ascending: false)
+            .limit(200),
+      ]);
+      final row = results[0] as Map<String, dynamic>?;
+      final txRows = List<Map<String, dynamic>>.from(results[1] as List);
+      final parsed = txRows.map(DbWalletTransaction.fromMap).toList();
+      if (!mounted) return;
+      setState(() {
+        if (row != null) {
+          _accountBalance =
+              ((row['wallet_balance'] as num?) ?? _accountBalance).toDouble();
+          _pendingDebt =
+              ((row['pending_commission_debt'] as num?) ?? _pendingDebt).toDouble();
+        }
+        _txs = parsed;
+        _loading = false;
+      });
+    } catch (_) {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  bool _inPeriodDate(DateTime dt) {
+    final local = dt.toLocal();
+    final range = DateRangeFilterBar.resolveRange(_period, _customRange);
+    return !local.isBefore(range.start) &&
+        !local.isAfter(range.end.add(const Duration(days: 1)));
+  }
+
+  String _txArabicType(String raw) => switch (raw.toLowerCase()) {
+        'order' || 'part_order' => 'بيع قطعة غيار',
+        'workshop' || 'appointment' => 'خدمة ورشة',
+        'winch_towing' || 'winch' || 'emergency' => 'طلب طوارئ / ونش',
+        _ => raw,
+      };
+
+  String _paymentMethodArabic(String raw) => switch (raw.toLowerCase()) {
+        'cash' => 'نقداً (كاش)',
+        'apple_pay' => 'Apple Pay',
+        'google_pay' => 'Google Pay',
+        'visa' || 'card' || 'meps' => 'فيزا / ماستركارد',
+        _ => raw,
+      };
+
+  @override
+  Widget build(BuildContext context) {
+    final filtered = _txs.where((t) => _inPeriodDate(t.createdAt)).toList();
+    final periodGross = filtered.fold(0.0, (s, t) => s + t.grossAmount);
+    final periodComm = filtered.fold(0.0, (s, t) => s + t.commissionAmount);
+    final periodNet = filtered.fold(0.0, (s, t) => s + t.netAmount);
+    final allTimeNet = _txs.fold(0.0, (s, t) => s + t.netAmount);
+    final effectiveBalance = _accountBalance > 0 ? _accountBalance : allTimeNet;
+
+    return RefreshIndicator(
+      color: AppColors.orange,
+      onRefresh: () => _loadWallet(silent: true),
+      child: ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.all(16),
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: DateRangeFilterBar(
+                  period: _period,
+                  customRange: _customRange,
+                  onChanged: (p, r) => setState(() {
+                    _period = p;
+                    _customRange = r;
+                  }),
+                ),
+              ),
+              IconButton(
+                tooltip: 'تحديث المحفظة',
+                onPressed: () => _loadWallet(silent: false),
+                icon: const Icon(Icons.refresh, color: AppColors.navy),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.all(18),
+            decoration: BoxDecoration(
+              color: AppColors.navy,
+              borderRadius: BorderRadius.circular(18),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'صافي محفظة التاجر (بعد العمولة)',
+                  style: TextStyle(color: Colors.white70, fontSize: 13),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  '${effectiveBalance.toStringAsFixed(2)} د.أ',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 28,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'خلال الفترة المختارة — الصافي: ${periodNet.toStringAsFixed(2)} د.أ',
+                  style: const TextStyle(
+                    color: AppColors.orange,
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'قبل العمولة: ${periodGross.toStringAsFixed(2)} د.أ | العمولة: ${periodComm.toStringAsFixed(2)} د.أ',
+                  style: const TextStyle(color: Colors.white70, fontSize: 12),
+                ),
+                if (_pendingDebt > 0) ...[
+                  const Divider(color: Colors.white24, height: 18),
+                  Text(
+                    'عمولات الدفع النقدي (كاش) المستحقة للمنصة: ${_pendingDebt.toStringAsFixed(2)} د.أ',
+                    style: const TextStyle(
+                      color: Colors.amberAccent,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          const SizedBox(height: 14),
+          if (_loading && _txs.isEmpty)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 32),
+              child: Center(child: CircularProgressIndicator()),
+            )
+          else if (filtered.isEmpty)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 32),
+              child: Center(
+                child: Text(
+                  'لا توجد حركات مالية ضمن الفترة المختارة',
+                  style: TextStyle(color: AppColors.textSecondary),
+                ),
+              ),
+            )
+          else
+            ...filtered.map(
+              (t) => Card(
+                margin: const EdgeInsets.only(bottom: 10),
+                child: ListTile(
+                  title: Text(
+                    '${_txArabicType(t.transactionType)} · ${_paymentMethodArabic(t.paymentMethod)}',
+                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                  ),
+                  subtitle: Text(
+                    'قبل العمولة: ${t.grossAmount.toStringAsFixed(2)} د.أ · عمولة: -${t.commissionAmount.toStringAsFixed(2)} د.أ',
+                    style: const TextStyle(fontSize: 12),
+                  ),
+                  trailing: Text(
+                    '+${t.netAmount.toStringAsFixed(2)} د.أ',
+                    style: const TextStyle(
+                      color: AppColors.success,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 15,
+                    ),
+                  ),
+                ),
+              ),
+            ),
         ],
       ),
     );
@@ -1760,6 +2038,7 @@ class _ShortcutItem {
   final Color iconColor;
   final Color iconBg;
   final bool highlighted;
+  final bool showChatBadge;
   final VoidCallback onTap;
 
   const _ShortcutItem({
@@ -1769,6 +2048,7 @@ class _ShortcutItem {
     required this.iconColor,
     required this.iconBg,
     this.highlighted = false,
+    this.showChatBadge = false,
     required this.onTap,
   });
 }
