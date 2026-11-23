@@ -97,6 +97,37 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
     Navigator.push(context, animatedRoute(target));
   }
 
+  void _openProviderWallet(CustomerProfile p) {
+    final title = switch (p.role) {
+      'mechanic' => 'محفظة الورشة والميكانيكي',
+      'towing' => 'محفظة الونش',
+      _ => 'محفظة التاجر',
+    };
+    Navigator.push(
+      context,
+      animatedRoute(
+        Scaffold(
+          appBar: AppBar(title: Text(title)),
+          body: _ProviderWalletView(profile: p, headerLabel: 'صافي $title (بعد العمولة)'),
+        ),
+      ),
+    );
+  }
+
+  void _openCustomerPaymentsHistory(CustomerProfile? p) {
+    if (p == null) {
+      Navigator.push(
+        context,
+        animatedRoute(LoginScreen(onAuthenticated: widget.onRefreshProfile)),
+      );
+      return;
+    }
+    Navigator.push(
+      context,
+      animatedRoute(CustomerPaymentsHistoryScreen(profile: p)),
+    );
+  }
+
   void _openSupportScreen() =>
       Navigator.push(context, animatedRoute(const SupportScreen()));
 
@@ -814,7 +845,7 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
             ),
             const SizedBox(height: 14),
 
-            // شبكة بطاقات الاختصارات (2 × 3)
+            // شبكة بطاقات الاختصارات
             GridView.builder(
               shrinkWrap: true,
               physics: const NeverScrollableScrollPhysics(),
@@ -1037,6 +1068,15 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
           onTap: () => Navigator.push(
               context, animatedRoute(const MerchantProductsDashboard())),
         ),
+        if (showPayments)
+          _ShortcutItem(
+            title: 'المحفظة المالية',
+            subtitle: 'متابعة أرباح الورشة والعمولات',
+            icon: Icons.account_balance_wallet_outlined,
+            iconColor: const Color(0xFF0F766E),
+            iconBg: const Color(0xFFCCFBF1),
+            onTap: () => _openProviderWallet(p),
+          ),
         _ShortcutItem(
           title: 'إضافة قطعة غيار',
           subtitle: 'نشر قطعة من مخزون الورشة',
@@ -1076,6 +1116,15 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
           showChatBadge: true,
           onTap: openChats,
         ),
+        if (showPayments)
+          _ShortcutItem(
+            title: 'الدعم الفني',
+            subtitle: 'المساعدة والدعم المباشر',
+            icon: Icons.support_agent,
+            iconColor: const Color(0xFF7C3AED),
+            iconBg: const Color(0xFFEDE9FE),
+            onTap: _openSupportScreen,
+          ),
       ];
     }
 
@@ -1114,18 +1163,10 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
           icon: showPayments
               ? Icons.account_balance_wallet_outlined
               : Icons.support_agent,
-          iconColor: const Color(0xFF334155),
-          iconBg: const Color(0xFFE2E8F0),
+          iconColor: const Color(0xFF0F766E),
+          iconBg: const Color(0xFFCCFBF1),
           onTap: showPayments
-              ? () => Navigator.push(
-                    context,
-                    animatedRoute(
-                      Scaffold(
-                        appBar: AppBar(title: const Text('محفظة التاجر')),
-                        body: _MerchantWalletView(profile: p),
-                      ),
-                    ),
-                  )
+              ? () => _openProviderWallet(p)
               : _openSupportScreen,
         ),
         _ShortcutItem(
@@ -1165,6 +1206,15 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
           highlighted: true,
           onTap: () => _openDashboardForRole(p),
         ),
+        if (showPayments)
+          _ShortcutItem(
+            title: 'محفظة الونش',
+            subtitle: 'متابعة الأرباح والعمولات',
+            icon: Icons.account_balance_wallet_outlined,
+            iconColor: const Color(0xFF0F766E),
+            iconBg: const Color(0xFFCCFBF1),
+            onTap: () => _openProviderWallet(p),
+          ),
         _ShortcutItem(
           title: 'إضافة قطعة غيار',
           subtitle: 'نشر قطعة للبيع في المتجر',
@@ -1202,14 +1252,6 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
           showChatBadge: true,
           onTap: openChats,
         ),
-        _ShortcutItem(
-          title: 'مواعيد الورش',
-          subtitle: 'متابعة حجوزات الصيانة',
-          icon: Icons.event_note_outlined,
-          iconColor: const Color(0xFF334155),
-          iconBg: const Color(0xFFE2E8F0),
-          onTap: () => setState(() => _index = 3),
-        ),
       ];
     }
 
@@ -1241,6 +1283,14 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
         onTap: () => setState(() => _index = 3),
       ),
       _ShortcutItem(
+        title: 'المدفوعات وسجل الدفعات',
+        subtitle: 'راجع جميع فواتيرك ودفعاتك السابقة',
+        icon: Icons.receipt_long_outlined,
+        iconColor: const Color(0xFF0F766E),
+        iconBg: const Color(0xFFCCFBF1),
+        onTap: () => _openCustomerPaymentsHistory(p),
+      ),
+      _ShortcutItem(
         title: 'فحص الأعطال بالـ AI',
         subtitle: 'شخّص عطل سيارتك فوراً',
         icon: Icons.auto_awesome,
@@ -1248,40 +1298,6 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
         iconBg: const Color(0xFFE0E7FF),
         onTap: () =>
             showAiDiagnosticSheet(context, viewerProfile: widget.profile),
-      ),
-      _ShortcutItem(
-        title: showPayments ? 'الباقات والاشتراكات' : 'الدعم الفني',
-        subtitle: showPayments
-            ? 'مزايا وخصومات حصرية'
-            : 'فريق الدعم جاهز لمساعدتك',
-        icon: showPayments
-            ? Icons.workspace_premium_outlined
-            : Icons.support_agent,
-        iconColor: const Color(0xFFD97706),
-        iconBg: const Color(0xFFFEF3C7),
-        onTap: () {
-          if (!showPayments) {
-            _openSupportScreen();
-            return;
-          }
-          if (p == null) {
-            Navigator.push(
-              context,
-              animatedRoute(
-                  LoginScreen(onAuthenticated: widget.onRefreshProfile)),
-            );
-            return;
-          }
-          Navigator.push(
-            context,
-            animatedRoute(
-              CustomerSubscriptionsScreen(
-                currentPlanCode: p.subscriptionPlan,
-                onSubscribed: widget.onRefreshProfile,
-              ),
-            ),
-          );
-        },
       ),
       _ShortcutItem(
         title: 'الدردشات',
@@ -1292,6 +1308,42 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
         showChatBadge: true,
         onTap: openChats,
       ),
+      if (showPayments)
+        _ShortcutItem(
+          title: 'الباقات والاشتراكات',
+          subtitle: 'مزايا وخصومات حصرية',
+          icon: Icons.workspace_premium_outlined,
+          iconColor: const Color(0xFFD97706),
+          iconBg: const Color(0xFFFEF3C7),
+          onTap: () {
+            if (p == null) {
+              Navigator.push(
+                context,
+                animatedRoute(
+                    LoginScreen(onAuthenticated: widget.onRefreshProfile)),
+              );
+              return;
+            }
+            Navigator.push(
+              context,
+              animatedRoute(
+                CustomerSubscriptionsScreen(
+                  currentPlanCode: p.subscriptionPlan,
+                  onSubscribed: widget.onRefreshProfile,
+                ),
+              ),
+            );
+          },
+        ),
+      if (showPayments)
+        _ShortcutItem(
+          title: 'الدعم الفني',
+          subtitle: 'فريق الدعم جاهز لمساعدتك',
+          icon: Icons.support_agent,
+          iconColor: const Color(0xFF7C3AED),
+          iconBg: const Color(0xFFEDE9FE),
+          onTap: _openSupportScreen,
+        ),
     ];
   }
 
@@ -1300,6 +1352,8 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
     final isLoggedIn = p != null;
     final role = p?.role ?? 'guest';
     final isAdmin = p != null && (p.isAdmin || role == 'admin');
+    final isProvider =
+        role == 'merchant' || role == 'mechanic' || role == 'towing';
     final showPayments = EnvConfig.paymentsEnabled.value;
     final showWinch = EnvConfig.winchEnabled.value;
     final hasDashboard = isLoggedIn &&
@@ -1425,24 +1479,25 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
               setState(() => _index = 3);
             },
           ),
-          if (role == 'merchant' && p != null) ...[
+
+          // زر المحفظة المالية للتاجر والميكانيكي والونش في الـ Drawer
+          if (isLoggedIn && isProvider) ...[
             const Divider(),
             if (showPayments)
               ListTile(
                 leading: const Icon(Icons.account_balance_wallet_outlined,
-                    color: AppColors.navy),
-                title: const Text('محفظة التاجر والأرباح'),
+                    color: Color(0xFF0F766E)),
+                title: Text(
+                  role == 'mechanic'
+                      ? 'المحفظة المالية والأرباح'
+                      : (role == 'towing'
+                          ? 'محفظة الونش والأرباح'
+                          : 'محفظة التاجر والأرباح'),
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                ),
                 onTap: () {
                   Navigator.pop(context);
-                  Navigator.push(
-                    context,
-                    animatedRoute(
-                      Scaffold(
-                        appBar: AppBar(title: const Text('محفظة التاجر')),
-                        body: _MerchantWalletView(profile: p),
-                      ),
-                    ),
-                  );
+                  _openProviderWallet(p);
                 },
               ),
             ListTile(
@@ -1455,6 +1510,26 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
               },
             ),
           ],
+
+          // زر المدفوعات وسجل الدفعات للمستخدم العادي في الـ Drawer
+          if (isLoggedIn && !isProvider && !isAdmin) ...[
+            const Divider(),
+            ListTile(
+              leading: const Icon(Icons.receipt_long_outlined,
+                  color: Color(0xFF0F766E)),
+              title: const Text(
+                'المدفوعات وسجل الدفعات',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+              subtitle: const Text('مراجعة جميع فواتيرك السابقة',
+                  style: TextStyle(fontSize: 11)),
+              onTap: () {
+                Navigator.pop(context);
+                _openCustomerPaymentsHistory(p);
+              },
+            ),
+          ],
+
           if (isLoggedIn) ...[
             const Divider(),
             ListTile(
@@ -1690,6 +1765,8 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
       );
     }
     final showPayments = EnvConfig.paymentsEnabled.value;
+    final p = widget.profile!;
+    final isAdmin = p.isAdmin || p.role == 'admin';
 
     return SafeArea(
       child: ListView(
@@ -1702,11 +1779,10 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
                 child: Icon(Icons.person, color: Colors.white),
               ),
               title: Text(
-                widget.profile!.fullName ?? 'المستخدم',
+                p.fullName ?? 'المستخدم',
                 style: const TextStyle(fontWeight: FontWeight.bold),
               ),
-              subtitle: Text(
-                  '@${widget.profile!.username ?? ""} · ${widget.profile!.phone ?? ""}'),
+              subtitle: Text('@${p.username ?? ""} · ${p.phone ?? ""}'),
             ),
           ),
           const SizedBox(height: 12),
@@ -1720,13 +1796,39 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
                 context,
                 animatedRoute(
                   UserProfileScreen(
-                    profile: widget.profile!,
+                    profile: p,
                     onSaved: widget.onRefreshProfile,
                   ),
                 ),
               ),
             ),
           ),
+          if (showPayments && isProvider) ...[
+            const SizedBox(height: 12),
+            Card(
+              child: ListTile(
+                leading: const Icon(Icons.account_balance_wallet_outlined,
+                    color: Color(0xFF0F766E)),
+                title: const Text('المحفظة المالية والأرباح'),
+                subtitle: const Text('مراجعة صافي الرصيد والعمولات والحركات'),
+                trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+                onTap: () => _openProviderWallet(p),
+              ),
+            ),
+          ],
+          if (!isProvider && !isAdmin) ...[
+            const SizedBox(height: 12),
+            Card(
+              child: ListTile(
+                leading: const Icon(Icons.receipt_long_outlined,
+                    color: Color(0xFF0F766E)),
+                title: const Text('المدفوعات وسجل الدفعات'),
+                subtitle: const Text('مراجعة جميع الفواتير والمبالغ التي دفعتها'),
+                trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+                onTap: () => _openCustomerPaymentsHistory(p),
+              ),
+            ),
+          ],
           if (showPayments) ...[
             const SizedBox(height: 12),
             Card(
@@ -1742,11 +1844,11 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
                   animatedRoute(
                     isProvider
                         ? ProviderSubscriptionsScreen(
-                            currentPlanCode: widget.profile!.subscriptionPlan,
+                            currentPlanCode: p.subscriptionPlan,
                             onSubscribed: widget.onRefreshProfile,
                           )
                         : CustomerSubscriptionsScreen(
-                            currentPlanCode: widget.profile!.subscriptionPlan,
+                            currentPlanCode: p.subscriptionPlan,
                             onSubscribed: widget.onRefreshProfile,
                           ),
                   ),
@@ -1790,16 +1892,454 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
   }
 }
 
-/// شاشة محفظة التاجر المستقرة (لا يختفي الرصيد ولا يرجع إلى 0.00 عند التحديث)
-class _MerchantWalletView extends StatefulWidget {
+/// شاشة المدفوعات وسجل الدفعات للمستخدم العادي (لمراجعة كل ما تم دفعه)
+class CustomerPaymentsHistoryScreen extends StatefulWidget {
   final CustomerProfile profile;
-  const _MerchantWalletView({required this.profile});
+  const CustomerPaymentsHistoryScreen({super.key, required this.profile});
 
   @override
-  State<_MerchantWalletView> createState() => _MerchantWalletViewState();
+  State<CustomerPaymentsHistoryScreen> createState() =>
+      _CustomerPaymentsHistoryScreenState();
 }
 
-class _MerchantWalletViewState extends State<_MerchantWalletView> {
+class _CustomerPaymentsHistoryScreenState
+    extends State<CustomerPaymentsHistoryScreen> {
+  final _db = Supabase.instance.client;
+  DashboardPeriod _period = DashboardPeriod.month1;
+  DateTimeRange? _customRange;
+  bool _loading = true;
+  List<_CustomerPaymentEntry> _entries = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadPayments();
+  }
+
+  Future<void> _loadPayments({bool silent = false}) async {
+    if (!silent && mounted && _entries.isEmpty) {
+      setState(() => _loading = true);
+    }
+    try {
+      final uid = widget.profile.id;
+      final List<_CustomerPaymentEntry> collected = [];
+      final Set<String> seenRefIds = {};
+      final Set<String> providerIds = {};
+
+      // 1) سجل wallet_transactions المباشر للمستخدم
+      try {
+        final txRows = await _db
+            .from('wallet_transactions')
+            .select()
+            .eq('customer_id', uid)
+            .order('created_at', ascending: false)
+            .limit(200);
+        for (final raw in txRows) {
+          final m = Map<String, dynamic>.from(raw);
+          final refId = (m['reference_id'] as String?) ?? (m['id'] as String);
+          final provId = m['provider_id'] as String?;
+          if (provId != null && provId.isNotEmpty) providerIds.add(provId);
+          seenRefIds.add(refId);
+          collected.add(
+            _CustomerPaymentEntry(
+              id: (m['id'] ?? refId).toString(),
+              referenceId: refId,
+              providerId: provId,
+              type: (m['transaction_type'] as String?) ?? 'order',
+              paymentMethod: (m['payment_method'] as String?) ?? 'visa',
+              amount: ((m['gross_amount'] as num?) ?? 0).toDouble(),
+              status: (m['status'] as String?) ?? 'completed',
+              createdAt:
+                  DateTime.tryParse((m['created_at'] as String?) ?? '') ??
+                      DateTime.now(),
+            ),
+          );
+        }
+      } catch (_) {}
+
+      // 2) مواعيد الورش المدفوعة (احتياط لضمان عدم فقدان أي فاتورة)
+      try {
+        final apptRows = await _db
+            .from('workshop_appointments')
+            .select()
+            .eq('user_id', uid)
+            .eq('payment_status', 'paid')
+            .order('created_at', ascending: false)
+            .limit(100);
+        for (final raw in apptRows) {
+          final m = Map<String, dynamic>.from(raw);
+          final id = (m['id'] ?? '').toString();
+          if (id.isEmpty || seenRefIds.contains(id)) continue;
+          final amt = ((m['total_amount'] as num?) ?? 0).toDouble();
+          if (amt <= 0) continue;
+          final provId = m['workshop_id'] as String?;
+          if (provId != null && provId.isNotEmpty) providerIds.add(provId);
+          seenRefIds.add(id);
+          collected.add(
+            _CustomerPaymentEntry(
+              id: 'appt_$id',
+              referenceId: id,
+              providerId: provId,
+              type: 'workshop',
+              paymentMethod: (m['payment_method'] as String?) ?? 'cash',
+              amount: amt,
+              subtitleNote: (m['service_description'] as String?)?.trim(),
+              status: 'completed',
+              createdAt:
+                  DateTime.tryParse((m['created_at'] as String?) ?? '') ??
+                      DateTime.now(),
+            ),
+          );
+        }
+      } catch (_) {}
+
+      // 3) طلبات الطوارئ والونش المدفوعة
+      try {
+        final reqRows = await _db
+            .from('mechanic_requests')
+            .select()
+            .eq('user_id', uid)
+            .eq('payment_status', 'paid')
+            .order('created_at', ascending: false)
+            .limit(100);
+        for (final raw in reqRows) {
+          final m = Map<String, dynamic>.from(raw);
+          final id = (m['id'] ?? '').toString();
+          if (id.isEmpty || seenRefIds.contains(id)) continue;
+          final amt = ((m['total_amount'] as num?) ?? 0).toDouble();
+          if (amt <= 0) continue;
+          final provId = m['mechanic_id'] as String?;
+          if (provId != null && provId.isNotEmpty) providerIds.add(provId);
+          seenRefIds.add(id);
+          final svcType = (m['service_type'] as String?) == 'winch'
+              ? 'winch_towing'
+              : 'emergency';
+          collected.add(
+            _CustomerPaymentEntry(
+              id: 'req_$id',
+              referenceId: id,
+              providerId: provId,
+              type: svcType,
+              paymentMethod: (m['payment_method'] as String?) ?? 'cash',
+              amount: amt,
+              subtitleNote: (m['car_details'] as String?)?.trim(),
+              status: 'completed',
+              createdAt:
+                  DateTime.tryParse((m['created_at'] as String?) ?? '') ??
+                      DateTime.now(),
+            ),
+          );
+        }
+      } catch (_) {}
+
+      // جلب أسماء الورش / التجار / السائقين لعرضها على كل فاتورة
+      final Map<String, String> providerNames = {};
+      if (providerIds.isNotEmpty) {
+        try {
+          final provRows = await _db
+              .from('customers')
+              .select('id, full_name, username')
+              .inFilter('id', providerIds.toList());
+          for (final p in provRows) {
+            final pid = p['id'] as String?;
+            if (pid == null) continue;
+            final name = (p['full_name'] as String?)?.trim().isNotEmpty == true
+                ? (p['full_name'] as String).trim()
+                : ((p['username'] as String?) ?? 'مزود خدمة');
+            providerNames[pid] = name;
+          }
+        } catch (_) {}
+      }
+
+      final resolved = collected
+          .map(
+            (e) => e.copyWith(
+              providerName:
+                  e.providerId != null ? providerNames[e.providerId!] : null,
+            ),
+          )
+          .toList()
+        ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+
+      if (!mounted) return;
+      setState(() {
+        _entries = resolved;
+        _loading = false;
+      });
+    } catch (_) {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  bool _inPeriod(DateTime dt) {
+    final local = dt.toLocal();
+    final range = DateRangeFilterBar.resolveRange(_period, _customRange);
+    return !local.isBefore(range.start) &&
+        !local.isAfter(range.end.add(const Duration(days: 1)));
+  }
+
+  String _typeArabic(String raw) => switch (raw.toLowerCase()) {
+        'order' || 'part_order' => 'شراء قطعة غيار',
+        'workshop' || 'appointment' => 'فاتورة صيانة ورشة',
+        'winch_towing' || 'winch' => 'فاتورة ونش طوارئ',
+        'emergency' => 'فاتورة ميكانيكي طوارئ',
+        'subscription' => 'اشتراك باقة',
+        _ => raw,
+      };
+
+  String _methodArabic(String raw) => switch (raw.toLowerCase()) {
+        'cash' => 'نقداً (كاش)',
+        'apple_pay' => 'Apple Pay',
+        'google_pay' => 'Google Pay',
+        'visa' || 'card' || 'meps' => 'فيزا / ماستركارد',
+        _ => raw,
+      };
+
+  IconData _methodIcon(String raw) => switch (raw.toLowerCase()) {
+        'cash' => Icons.payments_outlined,
+        'apple_pay' => Icons.apple,
+        'google_pay' => Icons.account_balance_wallet_outlined,
+        _ => Icons.credit_card,
+      };
+
+  String _formatDateTime(DateTime dt) {
+    final local = dt.toLocal();
+    final y = local.year.toString();
+    final m = local.month.toString().padLeft(2, '0');
+    final d = local.day.toString().padLeft(2, '0');
+    final h = local.hour.toString().padLeft(2, '0');
+    final min = local.minute.toString().padLeft(2, '0');
+    return '$y-$m-$d · $h:$min';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final filtered = _entries.where((e) => _inPeriod(e.createdAt)).toList();
+    final periodTotal = filtered.fold(0.0, (s, e) => s + e.amount);
+    final allTimeTotal = _entries.fold(0.0, (s, e) => s + e.amount);
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('المدفوعات وسجل الدفعات'),
+        actions: [
+          IconButton(
+            tooltip: 'تحديث السجل',
+            onPressed: () => _loadPayments(silent: false),
+            icon: const Icon(Icons.refresh),
+          ),
+        ],
+      ),
+      body: RefreshIndicator(
+        color: AppColors.orange,
+        onRefresh: () => _loadPayments(silent: true),
+        child: ListView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          padding: const EdgeInsets.all(16),
+          children: [
+            DateRangeFilterBar(
+              period: _period,
+              customRange: _customRange,
+              onChanged: (p, r) => setState(() {
+                _period = p;
+                _customRange = r;
+              }),
+            ),
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.all(18),
+              decoration: BoxDecoration(
+                color: AppColors.navy,
+                borderRadius: BorderRadius.circular(18),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'إجمالي مدفوعاتك خلال الفترة المختارة',
+                    style: TextStyle(color: Colors.white70, fontSize: 13),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    '${periodTotal.toStringAsFixed(2)} د.أ',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 28,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'عدد الدفعات في الفترة: ${filtered.length}  |  إجمالي الكل: ${allTimeTotal.toStringAsFixed(2)} د.أ',
+                    style: const TextStyle(
+                      color: AppColors.orange,
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+            if (_loading && _entries.isEmpty)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 40),
+                child: Center(child: CircularProgressIndicator()),
+              )
+            else if (filtered.isEmpty)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 40),
+                child: Column(
+                  children: [
+                    Icon(Icons.receipt_long_outlined,
+                        size: 54, color: Colors.grey.shade400),
+                    const SizedBox(height: 10),
+                    const Text(
+                      'لا توجد دفعات مسجلة خلال هذه الفترة',
+                      style: TextStyle(
+                          color: AppColors.textSecondary, fontSize: 14),
+                    ),
+                  ],
+                ),
+              )
+            else
+              ...filtered.map(
+                (e) => Card(
+                  margin: const EdgeInsets.only(bottom: 10),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  child: ListTile(
+                    contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 14, vertical: 8),
+                    leading: CircleAvatar(
+                      backgroundColor: AppColors.orangeLight,
+                      child: Icon(
+                        _methodIcon(e.paymentMethod),
+                        color: AppColors.orange,
+                        size: 20,
+                      ),
+                    ),
+                    title: Text(
+                      _typeArabic(e.type),
+                      style: const TextStyle(
+                          fontWeight: FontWeight.bold, fontSize: 14.5),
+                    ),
+                    subtitle: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        if (e.providerName != null &&
+                            e.providerName!.isNotEmpty)
+                          Text(
+                            'الجهة: ${e.providerName}',
+                            style: const TextStyle(
+                              fontSize: 12,
+                              color: AppColors.navy,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        if (e.subtitleNote != null &&
+                            e.subtitleNote!.isNotEmpty)
+                          Text(
+                            e.subtitleNote!,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(fontSize: 11.5),
+                          ),
+                        const SizedBox(height: 2),
+                        Text(
+                          '${_methodArabic(e.paymentMethod)} · ${_formatDateTime(e.createdAt)}',
+                          style: const TextStyle(
+                              fontSize: 11.5, color: AppColors.textSecondary),
+                        ),
+                      ],
+                    ),
+                    trailing: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Text(
+                          '${e.amount.toStringAsFixed(2)} د.أ',
+                          style: const TextStyle(
+                            color: AppColors.navy,
+                            fontWeight: FontWeight.w800,
+                            fontSize: 15,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        const Text(
+                          'مدفوع ✓',
+                          style: TextStyle(
+                            color: AppColors.success,
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _CustomerPaymentEntry {
+  final String id;
+  final String referenceId;
+  final String? providerId;
+  final String? providerName;
+  final String type;
+  final String paymentMethod;
+  final double amount;
+  final String? subtitleNote;
+  final String status;
+  final DateTime createdAt;
+
+  const _CustomerPaymentEntry({
+    required this.id,
+    required this.referenceId,
+    this.providerId,
+    this.providerName,
+    required this.type,
+    required this.paymentMethod,
+    required this.amount,
+    this.subtitleNote,
+    required this.status,
+    required this.createdAt,
+  });
+
+  _CustomerPaymentEntry copyWith({String? providerName}) =>
+      _CustomerPaymentEntry(
+        id: id,
+        referenceId: referenceId,
+        providerId: providerId,
+        providerName: providerName ?? this.providerName,
+        type: type,
+        paymentMethod: paymentMethod,
+        amount: amount,
+        subtitleNote: subtitleNote,
+        status: status,
+        createdAt: createdAt,
+      );
+}
+
+/// شاشة المحفظة المالية المستقرة للتاجر والميكانيكي والونش (لا يختفي الرصيد ولا يرجع إلى 0.00)
+class _ProviderWalletView extends StatefulWidget {
+  final CustomerProfile profile;
+  final String headerLabel;
+  const _ProviderWalletView({
+    required this.profile,
+    this.headerLabel = 'صافي المحفظة المالية (بعد العمولة)',
+  });
+
+  @override
+  State<_ProviderWalletView> createState() => _ProviderWalletViewState();
+}
+
+class _ProviderWalletViewState extends State<_ProviderWalletView> {
   final _db = Supabase.instance.client;
   DashboardPeriod _period = DashboardPeriod.month1;
   DateTimeRange? _customRange;
@@ -1814,7 +2354,7 @@ class _MerchantWalletViewState extends State<_MerchantWalletView> {
     super.initState();
     _loadWallet();
     _channel = _db
-        .channel('merchant_wallet_${widget.profile.id}')
+        .channel('provider_wallet_${widget.profile.id}')
         .onPostgresChanges(
           event: PostgresChangeEvent.insert,
           schema: 'public',
@@ -1944,9 +2484,9 @@ class _MerchantWalletViewState extends State<_MerchantWalletView> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text(
-                  'صافي محفظة التاجر (بعد العمولة)',
-                  style: TextStyle(color: Colors.white70, fontSize: 13),
+                Text(
+                  widget.headerLabel,
+                  style: const TextStyle(color: Colors.white70, fontSize: 13),
                 ),
                 const SizedBox(height: 6),
                 Text(
