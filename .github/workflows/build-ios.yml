@@ -19,14 +19,14 @@ jobs:
         with:
           channel: 'stable'
 
+      - name: Use CocoaPods instead of SwiftPM
+        run: flutter config --no-enable-swift-package-manager
+
       - name: Install Flutter packages
         run: flutter pub get
 
       - name: Prepare iOS config
         run: flutter build ios --config-only --no-codesign
-
-      - name: Use CocoaPods instead of SwiftPM
-        run: flutter config --no-enable-swift-package-manager
 
       - name: Setup Live Activity Widget Extension
         run: |
