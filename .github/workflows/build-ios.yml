@@ -75,12 +75,25 @@ jobs:
           fi
 
       - name: Build iOS App (No Codesign)
-        run: flutter build ios --release --no-codesign
+        run: |
+          cd ios
+          xcodebuild -workspace Runner.xcworkspace \
+            -scheme Runner \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath ../build/ios_derived \
+            build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            EXPANDED_CODE_SIGN_IDENTITY="" \
+            DEVELOPMENT_TEAM="" \
+            PROVISIONING_PROFILE_SPECIFIER=""
 
       - name: Package IPA
         run: |
           mkdir -p build/ios/ipa/Payload
-          cp -R build/ios/iphoneos/Runner.app build/ios/ipa/Payload/
+          cp -R build/ios_derived/Build/Products/Release-iphoneos/Runner.app build/ios/ipa/Payload/
           cd build/ios/ipa
           zip -ry AutoPartsApp-unsigned.ipa Payload
 
