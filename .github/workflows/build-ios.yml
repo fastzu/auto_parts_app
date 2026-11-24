@@ -25,6 +25,9 @@ jobs:
       - name: Prepare iOS config
         run: flutter build ios --config-only --no-codesign
 
+      - name: Use CocoaPods instead of SwiftPM
+        run: flutter config --no-enable-swift-package-manager
+
       - name: Setup Live Activity Widget Extension
         run: |
           gem install xcodeproj --no-document || true
