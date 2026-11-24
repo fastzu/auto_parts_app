@@ -239,6 +239,15 @@ FETCHCONTENT_UPDATES_DISCONNECTED:BOOL=OFF
 //Enables UPDATE_DISCONNECTED behavior just for population of nuget
 FETCHCONTENT_UPDATES_DISCONNECTED_NUGET:BOOL=OFF
 
+//Value Computed by CMake
+FirebasePrebuilt_BINARY_DIR:STATIC=D:/auto_parts_app/auto_parts_app/windows/out/build/x64-debug/plugins/firebase_core/bin
+
+//Value Computed by CMake
+FirebasePrebuilt_IS_TOP_LEVEL:STATIC=OFF
+
+//Value Computed by CMake
+FirebasePrebuilt_SOURCE_DIR:STATIC=D:/auto_parts_app/auto_parts_app/windows/out/build/x64-debug/extracted/firebase_cpp_sdk_windows
+
 JAVA_INCLUDE_PATH:PATH=D:/auto_parts_app/auto_parts_app/windows/flutter/ephemeral/.plugin_symlinks/jni/src/../third_party
 
 JAVA_INCLUDE_PATH2:PATH=D:/auto_parts_app/auto_parts_app/windows/flutter/ephemeral/.plugin_symlinks/jni/src/../third_party
@@ -248,6 +257,12 @@ JAVA_JVM_LIBRARY:FILEPATH=D:/java/jdk-26/lib/jvm.lib
 
 //Path to a program.
 NUGET:FILEPATH=NUGET-NOTFOUND
+
+//Arguments to supply to pkg-config
+PKG_CONFIG_ARGN:STRING=
+
+//pkg-config executable
+PKG_CONFIG_EXECUTABLE:FILEPATH=PKG_CONFIG_EXECUTABLE-NOTFOUND
 
 //Value Computed by CMake
 app_links_BINARY_DIR:STATIC=D:/auto_parts_app/auto_parts_app/windows/out/build/x64-debug/plugins/app_links
@@ -275,6 +290,15 @@ file_selector_windows_IS_TOP_LEVEL:STATIC=OFF
 
 //Value Computed by CMake
 file_selector_windows_SOURCE_DIR:STATIC=D:/auto_parts_app/auto_parts_app/windows/flutter/ephemeral/.plugin_symlinks/file_selector_windows/windows
+
+//Value Computed by CMake
+firebase_core_BINARY_DIR:STATIC=D:/auto_parts_app/auto_parts_app/windows/out/build/x64-debug/plugins/firebase_core
+
+//Value Computed by CMake
+firebase_core_IS_TOP_LEVEL:STATIC=OFF
+
+//Value Computed by CMake
+firebase_core_SOURCE_DIR:STATIC=D:/auto_parts_app/auto_parts_app/windows/flutter/ephemeral/.plugin_symlinks/firebase_core/windows
 
 //Value Computed by CMake
 flutter_local_notifications_windows_BINARY_DIR:STATIC=D:/auto_parts_app/auto_parts_app/windows/out/build/x64-debug/plugins/flutter_local_notifications_windows
@@ -455,7 +479,7 @@ CMAKE_MODULE_LINKER_FLAGS_RELWITHDEBINFO-ADVANCED:INTERNAL=1
 //ADVANCED property for variable: CMAKE_MT
 CMAKE_MT-ADVANCED:INTERNAL=1
 //number of local generators
-CMAKE_NUMBER_OF_MAKEFILES:INTERNAL=13
+CMAKE_NUMBER_OF_MAKEFILES:INTERNAL=15
 //Platform information initialized
 CMAKE_PLATFORM_INFO_INITIALIZED:INTERNAL=1
 //noop for ranlib
@@ -511,4 +535,8 @@ JAVA_INCLUDE_PATH2-ADVANCED:INTERNAL=1
 JAVA_JVM_LIBRARY-ADVANCED:INTERNAL=1
 //Test JNI_INCLUDE_PATH2_OPTIONAL
 JNI_INCLUDE_PATH2_OPTIONAL:INTERNAL=1
+//ADVANCED property for variable: PKG_CONFIG_ARGN
+PKG_CONFIG_ARGN-ADVANCED:INTERNAL=1
+//ADVANCED property for variable: PKG_CONFIG_EXECUTABLE
+PKG_CONFIG_EXECUTABLE-ADVANCED:INTERNAL=1
 

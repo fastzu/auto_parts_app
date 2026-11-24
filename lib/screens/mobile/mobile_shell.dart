@@ -1,13 +1,14 @@
+import 'dart:async';
 import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:url_launcher/url_launcher.dart';
 import '../../config/env_config.dart';
 import '../../models/db_models.dart';
 import '../../models/subscription_plans.dart';
 import '../../services/notifications_service.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/animations.dart';
+import '../../widgets/home_ad_banner.dart';
 import '../../widgets/home_live_progress_banner.dart';
 import '../auth/auth_screens.dart';
 import '../dashboard/merchant_products_dashboard.dart';
@@ -22,6 +23,9 @@ import 'customer_appointments_screen.dart';
 import 'customer_subscriptions_screen.dart';
 import 'emergency_screen.dart';
 import 'live_store_home_screen.dart';
+import 'wallet_and_payments_screens.dart';
+
+export 'wallet_and_payments_screens.dart';
 
 class LiveMobileShell extends StatefulWidget {
   final CustomerProfile? profile;
@@ -48,27 +52,105 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
   int _index = 0;
   bool _checkingQuota = false;
 
+  StreamSubscription<List<Map<String, dynamic>>>? _unreadMsgSub;
+  StreamSubscription<List<Map<String, dynamic>>>? _unreadNotifSub;
+  int _unreadMessagesCount = 0;
+  int _unreadNotifsCount = 0;
+  String? _boundUserId;
+
   @override
   void initState() {
     super.initState();
-    final uid = widget.profile?.id ?? _db.auth.currentUser?.id;
-    if (uid != null && uid.isNotEmpty) {
-      _notifs.startRealtimeListener(uid);
-    }
+    _syncUserStreams();
   }
 
   @override
   void didUpdateWidget(covariant LiveMobileShell oldWidget) {
     super.didUpdateWidget(oldWidget);
-    final oldId = oldWidget.profile?.id;
-    final newId = widget.profile?.id;
-    if (oldId != newId) {
-      if (newId != null && newId.isNotEmpty) {
-        _notifs.startRealtimeListener(newId);
-      } else {
-        _notifs.stopRealtimeListener();
-      }
+    if (oldWidget.profile?.id != widget.profile?.id) {
+      _syncUserStreams();
     }
+  }
+
+  @override
+  void dispose() {
+    _unreadMsgSub?.cancel();
+    _unreadNotifSub?.cancel();
+    super.dispose();
+  }
+
+  void _syncUserStreams() {
+    final uid = widget.profile?.id;
+    if (_boundUserId == uid) return;
+    _boundUserId = uid;
+
+    _unreadMsgSub?.cancel();
+    _unreadNotifSub?.cancel();
+    _unreadMsgSub = null;
+    _unreadNotifSub = null;
+
+    if (uid == null || uid.isEmpty) {
+      _notifs.stopRealtimeListener();
+      if (mounted) {
+        setState(() {
+          _unreadMessagesCount = 0;
+          _unreadNotifsCount = 0;
+        });
+      }
+      return;
+    }
+
+    _notifs.startRealtimeListener(uid);
+
+    _unreadMsgSub = _db
+        .from('messages')
+        .stream(primaryKey: ['id'])
+        .eq('receiver_id', uid)
+        .listen(
+          (rows) {
+            final unread = rows.where((m) => m['is_read'] != true).length;
+            if (mounted && unread != _unreadMessagesCount) {
+              setState(() => _unreadMessagesCount = unread);
+            }
+          },
+          onError: (_) {},
+        );
+
+    _unreadNotifSub = _db
+        .from('notifications')
+        .stream(primaryKey: ['id'])
+        .eq('user_id', uid)
+        .listen(
+          (rows) {
+            final unread = rows.where((n) => n['is_read'] != true).length;
+            if (mounted && unread != _unreadNotifsCount) {
+              setState(() => _unreadNotifsCount = unread);
+            }
+          },
+          onError: (_) {},
+        );
+  }
+
+  void _showTopStatusBanner({
+    required String title,
+    required String message,
+    bool isError = false,
+  }) {
+    if (!mounted) return;
+    final overlay = Overlay.maybeOf(context);
+    if (overlay == null) return;
+    late OverlayEntry entry;
+    entry = OverlayEntry(
+      builder: (ctx) => _ShellTopToast(
+        title: title,
+        message: message,
+        isError: isError,
+        onDismissed: () {
+          if (entry.mounted) entry.remove();
+        },
+      ),
+    );
+    overlay.insert(entry);
   }
 
   void _openDashboardForRole(CustomerProfile p) {
@@ -99,22 +181,25 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
 
   void _openProviderWallet(CustomerProfile p) {
     final title = switch (p.role) {
-      'mechanic' => 'محفظة الورشة والميكانيكي',
-      'towing' => 'محفظة الونش',
-      _ => 'محفظة التاجر',
+      'mechanic' => 'محفظة الورشة والعمولات',
+      'towing' => 'محفظة الونش والعمولات',
+      _ => 'محفظة التاجر والعمولات',
     };
     Navigator.push(
       context,
       animatedRoute(
         Scaffold(
           appBar: AppBar(title: Text(title)),
-          body: _ProviderWalletView(profile: p, headerLabel: 'صافي $title (بعد العمولة)'),
+          body: ProviderWalletView(
+            profile: p,
+            onRefreshProfile: widget.onRefreshProfile,
+          ),
         ),
       ),
     );
   }
 
-  void _openCustomerPaymentsHistory(CustomerProfile? p) {
+  void _openCustomerPayments(CustomerProfile? p) {
     if (p == null) {
       Navigator.push(
         context,
@@ -128,8 +213,33 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
     );
   }
 
+  void _openUserProfile(CustomerProfile? p) {
+    if (p == null) {
+      Navigator.push(
+        context,
+        animatedRoute(LoginScreen(onAuthenticated: widget.onRefreshProfile)),
+      );
+      return;
+    }
+    Navigator.push(
+      context,
+      animatedRoute(
+        UserProfileScreen(
+          profile: p,
+          onSaved: widget.onRefreshProfile,
+        ),
+      ),
+    );
+  }
+
   void _openSupportScreen() =>
       Navigator.push(context, animatedRoute(const SupportScreen()));
+
+  Future<void> _signOut() async {
+    await _notifs.stopRealtimeListener();
+    await _db.auth.signOut();
+    widget.onSignedOut();
+  }
 
   Future<void> _handleAddProductTap() async {
     final p = widget.profile;
@@ -230,7 +340,7 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
             Container(
               width: 64,
               height: 64,
-              decoration: BoxDecoration(
+              decoration: const BoxDecoration(
                 color: AppColors.orangeLight,
                 shape: BoxShape.circle,
               ),
@@ -281,11 +391,14 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
                   Text('• باقة 6 شهور: 45 منشور + تصدر بحث',
                       style: TextStyle(fontSize: 12.5)),
                   SizedBox(height: 4),
-                  Text('• الباقة السنوية: منشورات لا نهائية + 0% عمولة',
-                      style: TextStyle(
-                          fontSize: 12.5,
-                          fontWeight: FontWeight.bold,
-                          color: AppColors.orange)),
+                  Text(
+                    '• الباقة السنوية: منشورات لا نهائية + 0% عمولة',
+                    style: TextStyle(
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.bold,
+                      color: AppColors.orange,
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -428,11 +541,9 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
                         );
                         if (ctx.mounted) Navigator.pop(ctx);
                         if (mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text('تم تحديث كلمة المرور بنجاح!'),
-                              backgroundColor: AppColors.success,
-                            ),
+                          _showTopStatusBanner(
+                            title: 'تم تحديث كلمة المرور',
+                            message: 'تم حفظ كلمة المرور الجديدة بنجاح.',
                           );
                         }
                       } catch (_) {
@@ -448,7 +559,9 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
                       width: 18,
                       height: 18,
                       child: CircularProgressIndicator(
-                          color: Colors.white, strokeWidth: 2),
+                        color: Colors.white,
+                        strokeWidth: 2,
+                      ),
                     )
                   : const Text('حفظ كلمة المرور'),
             ),
@@ -486,7 +599,7 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
               onRefreshProfile: widget.onRefreshProfile,
             )
           : _loginRequiredView('لعرض وحجز مواعيد الورشة يرجى تسجيل الدخول'),
-      _profileTab(isProvider),
+      _profileTab(isProvider, isAdmin),
     ];
 
     final safeIndex = _index.clamp(0, pages.length - 1);
@@ -598,7 +711,6 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
                       ],
                     ),
                   ),
-                  // فراغ مركزي دقيق لزر (+) يمنع أي تداخل مع طوارئ أو المتجر
                   const SizedBox(width: 68),
                   Expanded(
                     child: Row(
@@ -626,12 +738,14 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
     );
   }
 
-  /// شاشة الرئيسية (اختصارات الوصول السريع)
+  /// شاشة الرئيسية (الإعلانات + التتبع المباشر + اختصارات الوصول السريع)
   Widget _shortcutsHomeTab() {
     final p = widget.profile;
     final isLoggedIn = p != null;
     final role = p?.role ?? 'user';
     final isAdmin = p != null && (p.isAdmin || role == 'admin');
+    final isProvider =
+        role == 'merchant' || role == 'mechanic' || role == 'towing';
     final showPayments = EnvConfig.paymentsEnabled.value;
     final showWinch = EnvConfig.winchEnabled.value;
 
@@ -675,23 +789,44 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
           ],
         ),
         actions: [
-          if (isLoggedIn)
-            ChatBadgeButton(
-              iconColor: AppColors.navy,
-              onPressed: () =>
-                  Navigator.push(context, animatedRoute(const ChatsListScreen())),
-            )
-          else
-            IconButton(
-              tooltip: 'الدردشات',
-              icon: const Icon(Icons.chat_bubble_outline,
-                  color: AppColors.navy, size: 23),
-              onPressed: () => Navigator.push(
-                context,
-                animatedRoute(
-                    LoginScreen(onAuthenticated: widget.onRefreshProfile)),
+          // زر البروفايل السريع في الأعلى
+          IconButton(
+            tooltip: 'البروفايل',
+            icon: const Icon(Icons.account_circle_outlined,
+                color: AppColors.navy, size: 25),
+            onPressed: () => _openUserProfile(p),
+          ),
+          // زر الدردشات مع شارة عدد الرسائل غير المقروءة
+          IconButton(
+            tooltip: 'الدردشات',
+            icon: Badge(
+              isLabelVisible: isLoggedIn && _unreadMessagesCount > 0,
+              backgroundColor: Colors.red,
+              label: Text(
+                _unreadMessagesCount > 99 ? '99+' : '$_unreadMessagesCount',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 10,
+                  fontWeight: FontWeight.bold,
+                ),
               ),
+              child: const Icon(Icons.chat_bubble_outline,
+                  color: AppColors.navy, size: 23),
             ),
+            onPressed: () {
+              if (!isLoggedIn) {
+                Navigator.push(
+                  context,
+                  animatedRoute(
+                    LoginScreen(onAuthenticated: widget.onRefreshProfile),
+                  ),
+                );
+                return;
+              }
+              Navigator.push(context, animatedRoute(const ChatsListScreen()));
+            },
+          ),
+          // زر الإشعارات مع شارة العداد المباشر
           if (isLoggedIn)
             const NotificationBellButton(iconColor: AppColors.navy)
           else
@@ -699,11 +834,14 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
               tooltip: 'الإشعارات',
               icon: const Icon(Icons.notifications_none,
                   color: AppColors.navy, size: 25),
-              onPressed: () => Navigator.push(
-                context,
-                animatedRoute(
-                    LoginScreen(onAuthenticated: widget.onRefreshProfile)),
-              ),
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  animatedRoute(
+                    LoginScreen(onAuthenticated: widget.onRefreshProfile),
+                  ),
+                );
+              },
             ),
           const SizedBox(width: 4),
         ],
@@ -711,115 +849,157 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
       body: RefreshIndicator(
         onRefresh: () async {
           widget.onRefreshProfile();
-          await _notifs.refreshUnreadCounts();
-          if (mounted) setState(() {});
+          setState(() {});
         },
         child: ListView(
           padding: const EdgeInsets.fromLTRB(16, 14, 16, 110),
           children: [
-            // بطاقة الترحيب العلوية الداكنة
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 18),
-              decoration: BoxDecoration(
-                color: AppColors.navy,
-                borderRadius: BorderRadius.circular(22),
-                boxShadow: [
-                  BoxShadow(
-                    color: AppColors.navy.withValues(alpha: 0.22),
-                    blurRadius: 16,
-                    offset: const Offset(0, 6),
-                  ),
-                ],
-              ),
-              child: Row(
-                children: [
-                  Container(
-                    width: 54,
-                    height: 54,
-                    decoration: const BoxDecoration(
-                      color: AppColors.orange,
-                      shape: BoxShape.circle,
+            // بطاقة الترحيب العلوية الداكنة (قابلة للنقر لفتح البروفايل + تعرض التقييم)
+            BounceTap(
+              onTap: () => _openUserProfile(p),
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 18, vertical: 18),
+                decoration: BoxDecoration(
+                  color: AppColors.navy,
+                  borderRadius: BorderRadius.circular(22),
+                  boxShadow: [
+                    BoxShadow(
+                      color: AppColors.navy.withValues(alpha: 0.22),
+                      blurRadius: 16,
+                      offset: const Offset(0, 6),
                     ),
-                    child: const Icon(
-                      Icons.person,
-                      color: Colors.white,
-                      size: 30,
+                  ],
+                ),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 54,
+                      height: 54,
+                      decoration: const BoxDecoration(
+                        color: AppColors.orange,
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(
+                        Icons.person,
+                        color: Colors.white,
+                        size: 30,
+                      ),
                     ),
-                  ),
-                  const SizedBox(width: 14),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'أهلاً بك، $displayName',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 18,
-                            fontWeight: FontWeight.w800,
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        Wrap(
-                          spacing: 8,
-                          runSpacing: 6,
-                          children: [
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 12, vertical: 4),
-                              decoration: BoxDecoration(
-                                color: AppColors.orange,
-                                borderRadius: BorderRadius.circular(20),
-                              ),
-                              child: Text(
-                                _roleArabicName(isAdmin
-                                    ? 'admin'
-                                    : (isLoggedIn ? role : 'guest')),
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 11.5,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
+                    const SizedBox(width: 14),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'أهلاً بك، $displayName',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 18,
+                              fontWeight: FontWeight.w800,
                             ),
-                            if (isLoggedIn &&
-                                (p.isTrustedMerchant || isAdmin))
+                          ),
+                          const SizedBox(height: 8),
+                          Wrap(
+                            spacing: 8,
+                            runSpacing: 6,
+                            children: [
                               Container(
                                 padding: const EdgeInsets.symmetric(
-                                    horizontal: 10, vertical: 4),
+                                    horizontal: 12, vertical: 4),
                                 decoration: BoxDecoration(
-                                  color: const Color(0xFF1F3B5C),
+                                  color: AppColors.orange,
                                   borderRadius: BorderRadius.circular(20),
                                 ),
-                                child: const Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    Icon(Icons.verified,
-                                        color: Color(0xFF38BDF8), size: 14),
-                                    SizedBox(width: 4),
-                                    Text(
-                                      'حساب موثق',
-                                      style: TextStyle(
-                                        color: Colors.white,
-                                        fontSize: 11.5,
-                                        fontWeight: FontWeight.bold,
-                                      ),
-                                    ),
-                                  ],
+                                child: Text(
+                                  _roleArabicName(isAdmin
+                                      ? 'admin'
+                                      : (isLoggedIn ? role : 'guest')),
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 11.5,
+                                    fontWeight: FontWeight.bold,
+                                  ),
                                 ),
                               ),
-                          ],
-                        ),
-                      ],
+                              if (isLoggedIn &&
+                                  (p.isTrustedMerchant || isAdmin))
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 10, vertical: 4),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFF1F3B5C),
+                                    borderRadius: BorderRadius.circular(20),
+                                  ),
+                                  child: const Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Icon(Icons.verified,
+                                          color: Color(0xFF38BDF8), size: 14),
+                                      SizedBox(width: 4),
+                                      Text(
+                                        'حساب موثق',
+                                        style: TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 11.5,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              if (isLoggedIn && isProvider)
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 10, vertical: 4),
+                                  decoration: BoxDecoration(
+                                    color: Colors.amber.withValues(alpha: 0.2),
+                                    borderRadius: BorderRadius.circular(20),
+                                    border: Border.all(
+                                      color: Colors.amber.withValues(alpha: 0.5),
+                                    ),
+                                  ),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      const Icon(Icons.star_rounded,
+                                          color: Colors.amber, size: 14),
+                                      const SizedBox(width: 3),
+                                      Text(
+                                        p.ratingCount > 0
+                                            ? '${p.ratingAvg.toStringAsFixed(1)} (${p.ratingCount})'
+                                            : 'تقييم جديد',
+                                        style: const TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 11,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ],
+                      ),
                     ),
-                  ),
-                ],
+                    const Icon(
+                      Icons.arrow_forward_ios,
+                      color: Colors.white54,
+                      size: 16,
+                    ),
+                  ],
+                ),
               ),
             ),
 
-            // بانر التتبع المباشر للورش والطوارئ مع زر دفع الفاتورة
+            // بانر الإعلانات المتعددة القابل للتمرير الأفقي في الصفحة الرئيسية
+            const SizedBox(height: 12),
+            const HomeAdBanner(),
+
+            // بانر التتبع المباشر المتعدد للورش والطوارئ مع التمرير الأفقي
             if (isLoggedIn) ...[
               const SizedBox(height: 12),
               HomeLiveProgressBanner(viewerProfile: p),
@@ -900,30 +1080,24 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
                                 size: 24,
                               ),
                             ),
-                            if (item.showChatBadge)
-                              ValueListenableBuilder<int>(
-                                valueListenable: _notifs.unreadMessagesCount,
-                                builder: (_, count, __) {
-                                  if (count <= 0) return const SizedBox.shrink();
-                                  return Container(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 8,
-                                      vertical: 3,
-                                    ),
-                                    decoration: BoxDecoration(
-                                      color: Colors.red,
-                                      borderRadius: BorderRadius.circular(12),
-                                    ),
-                                    child: Text(
-                                      count > 99 ? '99+' : '$count',
-                                      style: const TextStyle(
-                                        color: Colors.white,
-                                        fontSize: 11,
-                                        fontWeight: FontWeight.bold,
-                                      ),
-                                    ),
-                                  );
-                                },
+                            if (item.badgeCount > 0)
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 8, vertical: 3),
+                                decoration: BoxDecoration(
+                                  color: Colors.red,
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                child: Text(
+                                  item.badgeCount > 99
+                                      ? '99+'
+                                      : '${item.badgeCount}',
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
                               ),
                           ],
                         ),
@@ -996,7 +1170,7 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
       return [
         _ShortcutItem(
           title: 'لوحة السوبر أدمن',
-          subtitle: 'التسعيرات، الحسابات، الخصومات والمالية',
+          subtitle: 'التسعيرات، الحسابات، الإعلانات والمالية',
           icon: Icons.admin_panel_settings_outlined,
           iconColor: AppColors.orange,
           iconBg: AppColors.orange.withValues(alpha: 0.16),
@@ -1042,7 +1216,7 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
           icon: Icons.chat_bubble_outline,
           iconColor: const Color(0xFF0284C7),
           iconBg: const Color(0xFFE0F2FE),
-          showChatBadge: true,
+          badgeCount: _unreadMessagesCount,
           onTap: openChats,
         ),
       ];
@@ -1060,6 +1234,14 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
           onTap: () => _openDashboardForRole(p),
         ),
         _ShortcutItem(
+          title: 'المحفظة والعمولات',
+          subtitle: 'الأرباح المستحقة ودفع عمولة التطبيق',
+          icon: Icons.account_balance_wallet_outlined,
+          iconColor: const Color(0xFF0F766E),
+          iconBg: const Color(0xFFCCFBF1),
+          onTap: () => _openProviderWallet(p),
+        ),
+        _ShortcutItem(
           title: 'قطع الغيار والمخزون',
           subtitle: 'إدارة القطع، الإخفاء والخصومات',
           icon: Icons.inventory_2_outlined,
@@ -1068,15 +1250,6 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
           onTap: () => Navigator.push(
               context, animatedRoute(const MerchantProductsDashboard())),
         ),
-        if (showPayments)
-          _ShortcutItem(
-            title: 'المحفظة المالية',
-            subtitle: 'متابعة أرباح الورشة والعمولات',
-            icon: Icons.account_balance_wallet_outlined,
-            iconColor: const Color(0xFF0F766E),
-            iconBg: const Color(0xFFCCFBF1),
-            onTap: () => _openProviderWallet(p),
-          ),
         _ShortcutItem(
           title: 'إضافة قطعة غيار',
           subtitle: 'نشر قطعة من مخزون الورشة',
@@ -1086,26 +1259,18 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
           onTap: _handleAddProductTap,
         ),
         _ShortcutItem(
-          title: 'متجر قطع الغيار',
-          subtitle: 'شراء قطع لسيارات الزبائن',
-          icon: Icons.storefront_outlined,
-          iconColor: const Color(0xFF4338CA),
-          iconBg: const Color(0xFFE0E7FF),
-          onTap: () => setState(() => _index = 1),
-        ),
-        _ShortcutItem(
-          title: showPayments ? 'الباقات والاشتراكات' : 'مواعيد الورش',
+          title: showPayments ? 'الباقات والاشتراكات' : 'متجر قطع الغيار',
           subtitle: showPayments
               ? 'تصدر نتائج البحث وعمولة أقل'
-              : 'متابعة حجوزات الصيانة',
+              : 'شراء قطع لسيارات الزبائن',
           icon: showPayments
               ? Icons.workspace_premium_outlined
-              : Icons.event_note_outlined,
+              : Icons.storefront_outlined,
           iconColor: const Color(0xFFD97706),
           iconBg: const Color(0xFFFEF3C7),
           onTap: showPayments
               ? openProviderPlans
-              : () => setState(() => _index = 3),
+              : () => setState(() => _index = 1),
         ),
         _ShortcutItem(
           title: 'الدردشات',
@@ -1113,18 +1278,9 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
           icon: Icons.chat_bubble_outline,
           iconColor: const Color(0xFF0284C7),
           iconBg: const Color(0xFFE0F2FE),
-          showChatBadge: true,
+          badgeCount: _unreadMessagesCount,
           onTap: openChats,
         ),
-        if (showPayments)
-          _ShortcutItem(
-            title: 'الدعم الفني',
-            subtitle: 'المساعدة والدعم المباشر',
-            icon: Icons.support_agent,
-            iconColor: const Color(0xFF7C3AED),
-            iconBg: const Color(0xFFEDE9FE),
-            onTap: _openSupportScreen,
-          ),
       ];
     }
 
@@ -1138,6 +1294,14 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
           iconBg: AppColors.orange.withValues(alpha: 0.16),
           highlighted: true,
           onTap: () => _openDashboardForRole(p),
+        ),
+        _ShortcutItem(
+          title: 'محفظة التاجر والعمولات',
+          subtitle: 'الأرباح المستحقة ودفع عمولة التطبيق',
+          icon: Icons.account_balance_wallet_outlined,
+          iconColor: const Color(0xFF0F766E),
+          iconBg: const Color(0xFFCCFBF1),
+          onTap: () => _openProviderWallet(p),
         ),
         _ShortcutItem(
           title: 'إضافة قطعة غيار',
@@ -1154,20 +1318,6 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
           iconColor: const Color(0xFF4338CA),
           iconBg: const Color(0xFFE0E7FF),
           onTap: () => setState(() => _index = 1),
-        ),
-        _ShortcutItem(
-          title: showPayments ? 'محفظة التاجر' : 'الدعم الفني',
-          subtitle: showPayments
-              ? 'متابعة الأرباح والعمولات'
-              : 'المساعدة والدعم المباشر',
-          icon: showPayments
-              ? Icons.account_balance_wallet_outlined
-              : Icons.support_agent,
-          iconColor: const Color(0xFF0F766E),
-          iconBg: const Color(0xFFCCFBF1),
-          onTap: showPayments
-              ? () => _openProviderWallet(p)
-              : _openSupportScreen,
         ),
         _ShortcutItem(
           title: showPayments ? 'الباقات والاشتراكات' : 'مواعيد الورش',
@@ -1189,7 +1339,7 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
           icon: Icons.chat_bubble_outline,
           iconColor: const Color(0xFF0284C7),
           iconBg: const Color(0xFFE0F2FE),
-          showChatBadge: true,
+          badgeCount: _unreadMessagesCount,
           onTap: openChats,
         ),
       ];
@@ -1206,15 +1356,14 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
           highlighted: true,
           onTap: () => _openDashboardForRole(p),
         ),
-        if (showPayments)
-          _ShortcutItem(
-            title: 'محفظة الونش',
-            subtitle: 'متابعة الأرباح والعمولات',
-            icon: Icons.account_balance_wallet_outlined,
-            iconColor: const Color(0xFF0F766E),
-            iconBg: const Color(0xFFCCFBF1),
-            onTap: () => _openProviderWallet(p),
-          ),
+        _ShortcutItem(
+          title: 'المحفظة والعمولات',
+          subtitle: 'الأرباح المستحقة ودفع عمولة التطبيق',
+          icon: Icons.account_balance_wallet_outlined,
+          iconColor: const Color(0xFF0F766E),
+          iconBg: const Color(0xFFCCFBF1),
+          onTap: () => _openProviderWallet(p),
+        ),
         _ShortcutItem(
           title: 'إضافة قطعة غيار',
           subtitle: 'نشر قطعة للبيع في المتجر',
@@ -1249,7 +1398,7 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
           icon: Icons.chat_bubble_outline,
           iconColor: const Color(0xFF0284C7),
           iconBg: const Color(0xFFE0F2FE),
-          showChatBadge: true,
+          badgeCount: _unreadMessagesCount,
           onTap: openChats,
         ),
       ];
@@ -1284,11 +1433,11 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
       ),
       _ShortcutItem(
         title: 'المدفوعات وسجل الدفعات',
-        subtitle: 'راجع جميع فواتيرك ودفعاتك السابقة',
+        subtitle: 'مراجعة فواتيرك وجميع مدفوعاتك',
         icon: Icons.receipt_long_outlined,
         iconColor: const Color(0xFF0F766E),
         iconBg: const Color(0xFFCCFBF1),
-        onTap: () => _openCustomerPaymentsHistory(p),
+        onTap: () => _openCustomerPayments(p),
       ),
       _ShortcutItem(
         title: 'فحص الأعطال بالـ AI',
@@ -1300,50 +1449,49 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
             showAiDiagnosticSheet(context, viewerProfile: widget.profile),
       ),
       _ShortcutItem(
+        title: showPayments ? 'الباقات والاشتراكات' : 'الدعم الفني',
+        subtitle: showPayments
+            ? 'مزايا وخصومات حصرية'
+            : 'فريق الدعم جاهز لمساعدتك',
+        icon: showPayments
+            ? Icons.workspace_premium_outlined
+            : Icons.support_agent,
+        iconColor: const Color(0xFFD97706),
+        iconBg: const Color(0xFFFEF3C7),
+        onTap: () {
+          if (!showPayments) {
+            _openSupportScreen();
+            return;
+          }
+          if (p == null) {
+            Navigator.push(
+              context,
+              animatedRoute(
+                LoginScreen(onAuthenticated: widget.onRefreshProfile),
+              ),
+            );
+            return;
+          }
+          Navigator.push(
+            context,
+            animatedRoute(
+              CustomerSubscriptionsScreen(
+                currentPlanCode: p.subscriptionPlan,
+                onSubscribed: widget.onRefreshProfile,
+              ),
+            ),
+          );
+        },
+      ),
+      _ShortcutItem(
         title: 'الدردشات',
         subtitle: 'محادثاتك مع التجار والورش',
         icon: Icons.chat_bubble_outline,
         iconColor: const Color(0xFF0284C7),
         iconBg: const Color(0xFFE0F2FE),
-        showChatBadge: true,
+        badgeCount: _unreadMessagesCount,
         onTap: openChats,
       ),
-      if (showPayments)
-        _ShortcutItem(
-          title: 'الباقات والاشتراكات',
-          subtitle: 'مزايا وخصومات حصرية',
-          icon: Icons.workspace_premium_outlined,
-          iconColor: const Color(0xFFD97706),
-          iconBg: const Color(0xFFFEF3C7),
-          onTap: () {
-            if (p == null) {
-              Navigator.push(
-                context,
-                animatedRoute(
-                    LoginScreen(onAuthenticated: widget.onRefreshProfile)),
-              );
-              return;
-            }
-            Navigator.push(
-              context,
-              animatedRoute(
-                CustomerSubscriptionsScreen(
-                  currentPlanCode: p.subscriptionPlan,
-                  onSubscribed: widget.onRefreshProfile,
-                ),
-              ),
-            );
-          },
-        ),
-      if (showPayments)
-        _ShortcutItem(
-          title: 'الدعم الفني',
-          subtitle: 'فريق الدعم جاهز لمساعدتك',
-          icon: Icons.support_agent,
-          iconColor: const Color(0xFF7C3AED),
-          iconBg: const Color(0xFFEDE9FE),
-          onTap: _openSupportScreen,
-        ),
     ];
   }
 
@@ -1354,7 +1502,6 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
     final isAdmin = p != null && (p.isAdmin || role == 'admin');
     final isProvider =
         role == 'merchant' || role == 'mechanic' || role == 'towing';
-    final showPayments = EnvConfig.paymentsEnabled.value;
     final showWinch = EnvConfig.winchEnabled.value;
     final hasDashboard = isLoggedIn &&
         (isAdmin ||
@@ -1396,21 +1543,52 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
                 ),
                 if (isLoggedIn) ...[
                   const SizedBox(height: 8),
-                  Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
-                    decoration: BoxDecoration(
-                      color: AppColors.orange,
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Text(
-                      _roleArabicName(isAdmin ? 'admin' : role),
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 11,
-                        fontWeight: FontWeight.bold,
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 6,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 10, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: AppColors.orange,
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Text(
+                          _roleArabicName(isAdmin ? 'admin' : role),
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
                       ),
-                    ),
+                      if (isProvider && p.ratingCount > 0)
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: Colors.amber.withValues(alpha: 0.2),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(Icons.star_rounded,
+                                  color: Colors.amber, size: 13),
+                              const SizedBox(width: 3),
+                              Text(
+                                '${p.ratingAvg.toStringAsFixed(1)} (${p.ratingCount})',
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                    ],
                   ),
                 ],
               ],
@@ -1480,26 +1658,26 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
             },
           ),
 
-          // زر المحفظة المالية للتاجر والميكانيكي والونش في الـ Drawer
+          // زر المحفظة ودفع العمولات للتاجر والميكانيكي وصاحب الونش
           if (isLoggedIn && isProvider) ...[
             const Divider(),
-            if (showPayments)
-              ListTile(
-                leading: const Icon(Icons.account_balance_wallet_outlined,
-                    color: Color(0xFF0F766E)),
-                title: Text(
-                  role == 'mechanic'
-                      ? 'المحفظة المالية والأرباح'
-                      : (role == 'towing'
-                          ? 'محفظة الونش والأرباح'
-                          : 'محفظة التاجر والأرباح'),
-                  style: const TextStyle(fontWeight: FontWeight.bold),
-                ),
-                onTap: () {
-                  Navigator.pop(context);
-                  _openProviderWallet(p);
-                },
+            ListTile(
+              leading: const Icon(Icons.account_balance_wallet_outlined,
+                  color: Color(0xFF0F766E)),
+              title: const Text(
+                'المحفظة المالية ودفع العمولات',
+                style: TextStyle(fontWeight: FontWeight.w700),
               ),
+              subtitle: const Text(
+                'الأرباح، سجل الحركات، وتسوية العمولة',
+                style: TextStyle(fontSize: 11),
+              ),
+              trailing: const Icon(Icons.arrow_forward_ios, size: 14),
+              onTap: () {
+                Navigator.pop(context);
+                _openProviderWallet(p);
+              },
+            ),
             ListTile(
               leading:
                   const Icon(Icons.add_box_outlined, color: AppColors.orange),
@@ -1511,7 +1689,7 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
             ),
           ],
 
-          // زر المدفوعات وسجل الدفعات للمستخدم العادي في الـ Drawer
+          // خيار المدفوعات وسجل الدفعات للمستخدم العادي
           if (isLoggedIn && !isProvider && !isAdmin) ...[
             const Divider(),
             ListTile(
@@ -1519,13 +1697,16 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
                   color: Color(0xFF0F766E)),
               title: const Text(
                 'المدفوعات وسجل الدفعات',
-                style: TextStyle(fontWeight: FontWeight.bold),
+                style: TextStyle(fontWeight: FontWeight.w700),
               ),
-              subtitle: const Text('مراجعة جميع فواتيرك السابقة',
-                  style: TextStyle(fontSize: 11)),
+              subtitle: const Text(
+                'مراجعة جميع الفواتير والمدفوعات السابقة',
+                style: TextStyle(fontSize: 11),
+              ),
+              trailing: const Icon(Icons.arrow_forward_ios, size: 14),
               onTap: () {
                 Navigator.pop(context);
-                _openCustomerPaymentsHistory(p);
+                _openCustomerPayments(p);
               },
             ),
           ],
@@ -1536,27 +1717,26 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
               leading:
                   const Icon(Icons.chat_bubble_outline, color: AppColors.navy),
               title: const Text('الدردشات'),
-              trailing: ValueListenableBuilder<int>(
-                valueListenable: _notifs.unreadMessagesCount,
-                builder: (_, count, __) {
-                  if (count <= 0) return const SizedBox.shrink();
-                  return Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                    decoration: BoxDecoration(
-                      color: Colors.red,
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Text(
-                      count > 99 ? '99+' : '$count',
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 11,
-                        fontWeight: FontWeight.bold,
+              trailing: _unreadMessagesCount > 0
+                  ? Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: Colors.red,
+                        borderRadius: BorderRadius.circular(12),
                       ),
-                    ),
-                  );
-                },
-              ),
+                      child: Text(
+                        _unreadMessagesCount > 99
+                            ? '99+'
+                            : '$_unreadMessagesCount',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    )
+                  : null,
               onTap: () {
                 Navigator.pop(context);
                 Navigator.push(context, animatedRoute(const ChatsListScreen()));
@@ -1565,27 +1745,26 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
             ListTile(
               leading: const Icon(Icons.notifications_none),
               title: const Text('الإشعارات'),
-              trailing: ValueListenableBuilder<int>(
-                valueListenable: _notifs.unreadNotificationsCount,
-                builder: (_, count, __) {
-                  if (count <= 0) return const SizedBox.shrink();
-                  return Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                    decoration: BoxDecoration(
-                      color: Colors.red,
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Text(
-                      count > 99 ? '99+' : '$count',
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 11,
-                        fontWeight: FontWeight.bold,
+              trailing: _unreadNotifsCount > 0
+                  ? Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: AppColors.orange,
+                        borderRadius: BorderRadius.circular(12),
                       ),
-                    ),
-                  );
-                },
-              ),
+                      child: Text(
+                        _unreadNotifsCount > 99
+                            ? '99+'
+                            : '$_unreadNotifsCount',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    )
+                  : null,
               onTap: () {
                 Navigator.pop(context);
                 _notifs.openNotificationsSheet(context);
@@ -1605,14 +1784,17 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
           if (!isLoggedIn) ...[
             ListTile(
               leading: const Icon(Icons.login, color: AppColors.orange),
-              title: const Text('تسجيل الدخول',
-                  style: TextStyle(fontWeight: FontWeight.bold)),
+              title: const Text(
+                'تسجيل الدخول',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
               onTap: () {
                 Navigator.pop(context);
                 Navigator.push(
                   context,
                   animatedRoute(
-                      LoginScreen(onAuthenticated: widget.onRefreshProfile)),
+                    LoginScreen(onAuthenticated: widget.onRefreshProfile),
+                  ),
                 );
               },
             ),
@@ -1624,7 +1806,8 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
                 Navigator.push(
                   context,
                   animatedRoute(
-                      SignUpScreen(onAuthenticated: widget.onRefreshProfile)),
+                    SignUpScreen(onAuthenticated: widget.onRefreshProfile),
+                  ),
                 );
               },
             ),
@@ -1634,9 +1817,7 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
               title: const Text('تسجيل الخروج'),
               onTap: () async {
                 Navigator.pop(context);
-                await _notifs.stopRealtimeListener();
-                await _db.auth.signOut();
-                widget.onSignedOut();
+                await _signOut();
               },
             ),
         ],
@@ -1670,7 +1851,11 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
           children: [
             const Icon(Icons.lock_outline, size: 52, color: AppColors.navy),
             const SizedBox(height: 12),
-            Text(msg, textAlign: TextAlign.center, style: const TextStyle(fontSize: 15)),
+            Text(
+              msg,
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 15),
+            ),
             const SizedBox(height: 16),
             ElevatedButton(
               style: ElevatedButton.styleFrom(
@@ -1682,7 +1867,8 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
               onPressed: () => Navigator.push(
                 context,
                 animatedRoute(
-                    LoginScreen(onAuthenticated: widget.onRefreshProfile)),
+                  LoginScreen(onAuthenticated: widget.onRefreshProfile),
+                ),
               ),
               child: const Text('تسجيل الدخول / إنشاء حساب'),
             ),
@@ -1743,8 +1929,9 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
     );
   }
 
-  Widget _profileTab(bool isProvider) {
-    if (widget.profile == null) {
+  Widget _profileTab(bool isProvider, bool isAdmin) {
+    final p = widget.profile;
+    if (p == null) {
       return SafeArea(
         child: ListView(
           padding: const EdgeInsets.all(16),
@@ -1764,9 +1951,8 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
         ),
       );
     }
+
     final showPayments = EnvConfig.paymentsEnabled.value;
-    final p = widget.profile!;
-    final isAdmin = p.isAdmin || p.role == 'admin';
 
     return SafeArea(
       child: ListView(
@@ -1782,50 +1968,65 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
                 p.fullName ?? 'المستخدم',
                 style: const TextStyle(fontWeight: FontWeight.bold),
               ),
-              subtitle: Text('@${p.username ?? ""} · ${p.phone ?? ""}'),
+              subtitle: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('@${p.username ?? ""} · ${p.phone ?? ""}'),
+                  if (isProvider && p.ratingCount > 0) ...[
+                    const SizedBox(height: 4),
+                    Row(
+                      children: [
+                        const Icon(Icons.star_rounded,
+                            color: Colors.amber, size: 16),
+                        const SizedBox(width: 4),
+                        Text(
+                          'التقييم: ${p.ratingAvg.toStringAsFixed(1)} من 5 (${p.ratingCount} تقييم)',
+                          style: const TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: AppColors.navy,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ],
+              ),
             ),
           ),
           const SizedBox(height: 12),
           Card(
             child: ListTile(
-              leading: const Icon(Icons.badge_outlined, color: AppColors.orange),
+              leading:
+                  const Icon(Icons.badge_outlined, color: AppColors.orange),
               title: const Text('البروفايل (معلوماتي الشخصية)'),
               subtitle: const Text('عرض وتعديل الاسم، الهاتف، ومعلومات النشاط'),
               trailing: const Icon(Icons.arrow_forward_ios, size: 16),
-              onTap: () => Navigator.push(
-                context,
-                animatedRoute(
-                  UserProfileScreen(
-                    profile: p,
-                    onSaved: widget.onRefreshProfile,
-                  ),
-                ),
-              ),
+              onTap: () => _openUserProfile(p),
             ),
           ),
-          if (showPayments && isProvider) ...[
+          if (isProvider) ...[
             const SizedBox(height: 12),
             Card(
               child: ListTile(
                 leading: const Icon(Icons.account_balance_wallet_outlined,
                     color: Color(0xFF0F766E)),
-                title: const Text('المحفظة المالية والأرباح'),
-                subtitle: const Text('مراجعة صافي الرصيد والعمولات والحركات'),
+                title: const Text('المحفظة المالية ودفع العمولات'),
+                subtitle: const Text('عرض الأرباح، الحركات، وتسوية العمولة'),
                 trailing: const Icon(Icons.arrow_forward_ios, size: 16),
                 onTap: () => _openProviderWallet(p),
               ),
             ),
-          ],
-          if (!isProvider && !isAdmin) ...[
+          ] else if (!isAdmin) ...[
             const SizedBox(height: 12),
             Card(
               child: ListTile(
                 leading: const Icon(Icons.receipt_long_outlined,
                     color: Color(0xFF0F766E)),
                 title: const Text('المدفوعات وسجل الدفعات'),
-                subtitle: const Text('مراجعة جميع الفواتير والمبالغ التي دفعتها'),
+                subtitle: const Text('مراجعة جميع الفواتير والدفعات السابقة'),
                 trailing: const Icon(Icons.arrow_forward_ios, size: 16),
-                onTap: () => _openCustomerPaymentsHistory(p),
+                onTap: () => _openCustomerPayments(p),
               ),
             ),
           ],
@@ -1879,692 +2080,9 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
             child: ListTile(
               leading: const Icon(Icons.logout, color: Colors.red),
               title: const Text('تسجيل الخروج'),
-              onTap: () async {
-                await _notifs.stopRealtimeListener();
-                await _db.auth.signOut();
-                widget.onSignedOut();
-              },
+              onTap: _signOut,
             ),
           ),
-        ],
-      ),
-    );
-  }
-}
-
-/// شاشة المدفوعات وسجل الدفعات للمستخدم العادي (لمراجعة كل ما تم دفعه)
-class CustomerPaymentsHistoryScreen extends StatefulWidget {
-  final CustomerProfile profile;
-  const CustomerPaymentsHistoryScreen({super.key, required this.profile});
-
-  @override
-  State<CustomerPaymentsHistoryScreen> createState() =>
-      _CustomerPaymentsHistoryScreenState();
-}
-
-class _CustomerPaymentsHistoryScreenState
-    extends State<CustomerPaymentsHistoryScreen> {
-  final _db = Supabase.instance.client;
-  DashboardPeriod _period = DashboardPeriod.month1;
-  DateTimeRange? _customRange;
-  bool _loading = true;
-  List<_CustomerPaymentEntry> _entries = [];
-
-  @override
-  void initState() {
-    super.initState();
-    _loadPayments();
-  }
-
-  Future<void> _loadPayments({bool silent = false}) async {
-    if (!silent && mounted && _entries.isEmpty) {
-      setState(() => _loading = true);
-    }
-    try {
-      final uid = widget.profile.id;
-      final List<_CustomerPaymentEntry> collected = [];
-      final Set<String> seenRefIds = {};
-      final Set<String> providerIds = {};
-
-      // 1) سجل wallet_transactions المباشر للمستخدم
-      try {
-        final txRows = await _db
-            .from('wallet_transactions')
-            .select()
-            .eq('customer_id', uid)
-            .order('created_at', ascending: false)
-            .limit(200);
-        for (final raw in txRows) {
-          final m = Map<String, dynamic>.from(raw);
-          final refId = (m['reference_id'] as String?) ?? (m['id'] as String);
-          final provId = m['provider_id'] as String?;
-          if (provId != null && provId.isNotEmpty) providerIds.add(provId);
-          seenRefIds.add(refId);
-          collected.add(
-            _CustomerPaymentEntry(
-              id: (m['id'] ?? refId).toString(),
-              referenceId: refId,
-              providerId: provId,
-              type: (m['transaction_type'] as String?) ?? 'order',
-              paymentMethod: (m['payment_method'] as String?) ?? 'visa',
-              amount: ((m['gross_amount'] as num?) ?? 0).toDouble(),
-              status: (m['status'] as String?) ?? 'completed',
-              createdAt:
-                  DateTime.tryParse((m['created_at'] as String?) ?? '') ??
-                      DateTime.now(),
-            ),
-          );
-        }
-      } catch (_) {}
-
-      // 2) مواعيد الورش المدفوعة (احتياط لضمان عدم فقدان أي فاتورة)
-      try {
-        final apptRows = await _db
-            .from('workshop_appointments')
-            .select()
-            .eq('user_id', uid)
-            .eq('payment_status', 'paid')
-            .order('created_at', ascending: false)
-            .limit(100);
-        for (final raw in apptRows) {
-          final m = Map<String, dynamic>.from(raw);
-          final id = (m['id'] ?? '').toString();
-          if (id.isEmpty || seenRefIds.contains(id)) continue;
-          final amt = ((m['total_amount'] as num?) ?? 0).toDouble();
-          if (amt <= 0) continue;
-          final provId = m['workshop_id'] as String?;
-          if (provId != null && provId.isNotEmpty) providerIds.add(provId);
-          seenRefIds.add(id);
-          collected.add(
-            _CustomerPaymentEntry(
-              id: 'appt_$id',
-              referenceId: id,
-              providerId: provId,
-              type: 'workshop',
-              paymentMethod: (m['payment_method'] as String?) ?? 'cash',
-              amount: amt,
-              subtitleNote: (m['service_description'] as String?)?.trim(),
-              status: 'completed',
-              createdAt:
-                  DateTime.tryParse((m['created_at'] as String?) ?? '') ??
-                      DateTime.now(),
-            ),
-          );
-        }
-      } catch (_) {}
-
-      // 3) طلبات الطوارئ والونش المدفوعة
-      try {
-        final reqRows = await _db
-            .from('mechanic_requests')
-            .select()
-            .eq('user_id', uid)
-            .eq('payment_status', 'paid')
-            .order('created_at', ascending: false)
-            .limit(100);
-        for (final raw in reqRows) {
-          final m = Map<String, dynamic>.from(raw);
-          final id = (m['id'] ?? '').toString();
-          if (id.isEmpty || seenRefIds.contains(id)) continue;
-          final amt = ((m['total_amount'] as num?) ?? 0).toDouble();
-          if (amt <= 0) continue;
-          final provId = m['mechanic_id'] as String?;
-          if (provId != null && provId.isNotEmpty) providerIds.add(provId);
-          seenRefIds.add(id);
-          final svcType = (m['service_type'] as String?) == 'winch'
-              ? 'winch_towing'
-              : 'emergency';
-          collected.add(
-            _CustomerPaymentEntry(
-              id: 'req_$id',
-              referenceId: id,
-              providerId: provId,
-              type: svcType,
-              paymentMethod: (m['payment_method'] as String?) ?? 'cash',
-              amount: amt,
-              subtitleNote: (m['car_details'] as String?)?.trim(),
-              status: 'completed',
-              createdAt:
-                  DateTime.tryParse((m['created_at'] as String?) ?? '') ??
-                      DateTime.now(),
-            ),
-          );
-        }
-      } catch (_) {}
-
-      // جلب أسماء الورش / التجار / السائقين لعرضها على كل فاتورة
-      final Map<String, String> providerNames = {};
-      if (providerIds.isNotEmpty) {
-        try {
-          final provRows = await _db
-              .from('customers')
-              .select('id, full_name, username')
-              .inFilter('id', providerIds.toList());
-          for (final p in provRows) {
-            final pid = p['id'] as String?;
-            if (pid == null) continue;
-            final name = (p['full_name'] as String?)?.trim().isNotEmpty == true
-                ? (p['full_name'] as String).trim()
-                : ((p['username'] as String?) ?? 'مزود خدمة');
-            providerNames[pid] = name;
-          }
-        } catch (_) {}
-      }
-
-      final resolved = collected
-          .map(
-            (e) => e.copyWith(
-              providerName:
-                  e.providerId != null ? providerNames[e.providerId!] : null,
-            ),
-          )
-          .toList()
-        ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
-
-      if (!mounted) return;
-      setState(() {
-        _entries = resolved;
-        _loading = false;
-      });
-    } catch (_) {
-      if (mounted) setState(() => _loading = false);
-    }
-  }
-
-  bool _inPeriod(DateTime dt) {
-    final local = dt.toLocal();
-    final range = DateRangeFilterBar.resolveRange(_period, _customRange);
-    return !local.isBefore(range.start) &&
-        !local.isAfter(range.end.add(const Duration(days: 1)));
-  }
-
-  String _typeArabic(String raw) => switch (raw.toLowerCase()) {
-        'order' || 'part_order' => 'شراء قطعة غيار',
-        'workshop' || 'appointment' => 'فاتورة صيانة ورشة',
-        'winch_towing' || 'winch' => 'فاتورة ونش طوارئ',
-        'emergency' => 'فاتورة ميكانيكي طوارئ',
-        'subscription' => 'اشتراك باقة',
-        _ => raw,
-      };
-
-  String _methodArabic(String raw) => switch (raw.toLowerCase()) {
-        'cash' => 'نقداً (كاش)',
-        'apple_pay' => 'Apple Pay',
-        'google_pay' => 'Google Pay',
-        'visa' || 'card' || 'meps' => 'فيزا / ماستركارد',
-        _ => raw,
-      };
-
-  IconData _methodIcon(String raw) => switch (raw.toLowerCase()) {
-        'cash' => Icons.payments_outlined,
-        'apple_pay' => Icons.apple,
-        'google_pay' => Icons.account_balance_wallet_outlined,
-        _ => Icons.credit_card,
-      };
-
-  String _formatDateTime(DateTime dt) {
-    final local = dt.toLocal();
-    final y = local.year.toString();
-    final m = local.month.toString().padLeft(2, '0');
-    final d = local.day.toString().padLeft(2, '0');
-    final h = local.hour.toString().padLeft(2, '0');
-    final min = local.minute.toString().padLeft(2, '0');
-    return '$y-$m-$d · $h:$min';
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final filtered = _entries.where((e) => _inPeriod(e.createdAt)).toList();
-    final periodTotal = filtered.fold(0.0, (s, e) => s + e.amount);
-    final allTimeTotal = _entries.fold(0.0, (s, e) => s + e.amount);
-
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('المدفوعات وسجل الدفعات'),
-        actions: [
-          IconButton(
-            tooltip: 'تحديث السجل',
-            onPressed: () => _loadPayments(silent: false),
-            icon: const Icon(Icons.refresh),
-          ),
-        ],
-      ),
-      body: RefreshIndicator(
-        color: AppColors.orange,
-        onRefresh: () => _loadPayments(silent: true),
-        child: ListView(
-          physics: const AlwaysScrollableScrollPhysics(),
-          padding: const EdgeInsets.all(16),
-          children: [
-            DateRangeFilterBar(
-              period: _period,
-              customRange: _customRange,
-              onChanged: (p, r) => setState(() {
-                _period = p;
-                _customRange = r;
-              }),
-            ),
-            const SizedBox(height: 12),
-            Container(
-              padding: const EdgeInsets.all(18),
-              decoration: BoxDecoration(
-                color: AppColors.navy,
-                borderRadius: BorderRadius.circular(18),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'إجمالي مدفوعاتك خلال الفترة المختارة',
-                    style: TextStyle(color: Colors.white70, fontSize: 13),
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    '${periodTotal.toStringAsFixed(2)} د.أ',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 28,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    'عدد الدفعات في الفترة: ${filtered.length}  |  إجمالي الكل: ${allTimeTotal.toStringAsFixed(2)} د.أ',
-                    style: const TextStyle(
-                      color: AppColors.orange,
-                      fontSize: 12,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 16),
-            if (_loading && _entries.isEmpty)
-              const Padding(
-                padding: EdgeInsets.symmetric(vertical: 40),
-                child: Center(child: CircularProgressIndicator()),
-              )
-            else if (filtered.isEmpty)
-              Padding(
-                padding: const EdgeInsets.symmetric(vertical: 40),
-                child: Column(
-                  children: [
-                    Icon(Icons.receipt_long_outlined,
-                        size: 54, color: Colors.grey.shade400),
-                    const SizedBox(height: 10),
-                    const Text(
-                      'لا توجد دفعات مسجلة خلال هذه الفترة',
-                      style: TextStyle(
-                          color: AppColors.textSecondary, fontSize: 14),
-                    ),
-                  ],
-                ),
-              )
-            else
-              ...filtered.map(
-                (e) => Card(
-                  margin: const EdgeInsets.only(bottom: 10),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(14),
-                  ),
-                  child: ListTile(
-                    contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 14, vertical: 8),
-                    leading: CircleAvatar(
-                      backgroundColor: AppColors.orangeLight,
-                      child: Icon(
-                        _methodIcon(e.paymentMethod),
-                        color: AppColors.orange,
-                        size: 20,
-                      ),
-                    ),
-                    title: Text(
-                      _typeArabic(e.type),
-                      style: const TextStyle(
-                          fontWeight: FontWeight.bold, fontSize: 14.5),
-                    ),
-                    subtitle: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        if (e.providerName != null &&
-                            e.providerName!.isNotEmpty)
-                          Text(
-                            'الجهة: ${e.providerName}',
-                            style: const TextStyle(
-                              fontSize: 12,
-                              color: AppColors.navy,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        if (e.subtitleNote != null &&
-                            e.subtitleNote!.isNotEmpty)
-                          Text(
-                            e.subtitleNote!,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(fontSize: 11.5),
-                          ),
-                        const SizedBox(height: 2),
-                        Text(
-                          '${_methodArabic(e.paymentMethod)} · ${_formatDateTime(e.createdAt)}',
-                          style: const TextStyle(
-                              fontSize: 11.5, color: AppColors.textSecondary),
-                        ),
-                      ],
-                    ),
-                    trailing: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      children: [
-                        Text(
-                          '${e.amount.toStringAsFixed(2)} د.أ',
-                          style: const TextStyle(
-                            color: AppColors.navy,
-                            fontWeight: FontWeight.w800,
-                            fontSize: 15,
-                          ),
-                        ),
-                        const SizedBox(height: 2),
-                        const Text(
-                          'مدفوع ✓',
-                          style: TextStyle(
-                            color: AppColors.success,
-                            fontSize: 11,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _CustomerPaymentEntry {
-  final String id;
-  final String referenceId;
-  final String? providerId;
-  final String? providerName;
-  final String type;
-  final String paymentMethod;
-  final double amount;
-  final String? subtitleNote;
-  final String status;
-  final DateTime createdAt;
-
-  const _CustomerPaymentEntry({
-    required this.id,
-    required this.referenceId,
-    this.providerId,
-    this.providerName,
-    required this.type,
-    required this.paymentMethod,
-    required this.amount,
-    this.subtitleNote,
-    required this.status,
-    required this.createdAt,
-  });
-
-  _CustomerPaymentEntry copyWith({String? providerName}) =>
-      _CustomerPaymentEntry(
-        id: id,
-        referenceId: referenceId,
-        providerId: providerId,
-        providerName: providerName ?? this.providerName,
-        type: type,
-        paymentMethod: paymentMethod,
-        amount: amount,
-        subtitleNote: subtitleNote,
-        status: status,
-        createdAt: createdAt,
-      );
-}
-
-/// شاشة المحفظة المالية المستقرة للتاجر والميكانيكي والونش (لا يختفي الرصيد ولا يرجع إلى 0.00)
-class _ProviderWalletView extends StatefulWidget {
-  final CustomerProfile profile;
-  final String headerLabel;
-  const _ProviderWalletView({
-    required this.profile,
-    this.headerLabel = 'صافي المحفظة المالية (بعد العمولة)',
-  });
-
-  @override
-  State<_ProviderWalletView> createState() => _ProviderWalletViewState();
-}
-
-class _ProviderWalletViewState extends State<_ProviderWalletView> {
-  final _db = Supabase.instance.client;
-  DashboardPeriod _period = DashboardPeriod.month1;
-  DateTimeRange? _customRange;
-  List<DbWalletTransaction> _txs = [];
-  late double _accountBalance = widget.profile.walletBalance;
-  late double _pendingDebt = widget.profile.pendingCommissionDebt;
-  bool _loading = true;
-  RealtimeChannel? _channel;
-
-  @override
-  void initState() {
-    super.initState();
-    _loadWallet();
-    _channel = _db
-        .channel('provider_wallet_${widget.profile.id}')
-        .onPostgresChanges(
-          event: PostgresChangeEvent.insert,
-          schema: 'public',
-          table: 'wallet_transactions',
-          filter: PostgresChangeFilter(
-            type: PostgresChangeFilterType.eq,
-            column: 'provider_id',
-            value: widget.profile.id,
-          ),
-          callback: (_) => _loadWallet(silent: true),
-        )
-        .subscribe();
-  }
-
-  @override
-  void dispose() {
-    if (_channel != null) {
-      try {
-        _db.removeChannel(_channel!);
-      } catch (_) {}
-      _channel = null;
-    }
-    super.dispose();
-  }
-
-  Future<void> _loadWallet({bool silent = false}) async {
-    if (!silent && mounted && _txs.isEmpty) {
-      setState(() => _loading = true);
-    }
-    try {
-      final results = await Future.wait([
-        _db
-            .from('customers')
-            .select('wallet_balance, pending_commission_debt')
-            .eq('id', widget.profile.id)
-            .maybeSingle(),
-        _db
-            .from('wallet_transactions')
-            .select()
-            .eq('provider_id', widget.profile.id)
-            .order('created_at', ascending: false)
-            .limit(200),
-      ]);
-      final row = results[0] as Map<String, dynamic>?;
-      final txRows = List<Map<String, dynamic>>.from(results[1] as List);
-      final parsed = txRows.map(DbWalletTransaction.fromMap).toList();
-      if (!mounted) return;
-      setState(() {
-        if (row != null) {
-          _accountBalance =
-              ((row['wallet_balance'] as num?) ?? _accountBalance).toDouble();
-          _pendingDebt =
-              ((row['pending_commission_debt'] as num?) ?? _pendingDebt).toDouble();
-        }
-        _txs = parsed;
-        _loading = false;
-      });
-    } catch (_) {
-      if (mounted) setState(() => _loading = false);
-    }
-  }
-
-  bool _inPeriodDate(DateTime dt) {
-    final local = dt.toLocal();
-    final range = DateRangeFilterBar.resolveRange(_period, _customRange);
-    return !local.isBefore(range.start) &&
-        !local.isAfter(range.end.add(const Duration(days: 1)));
-  }
-
-  String _txArabicType(String raw) => switch (raw.toLowerCase()) {
-        'order' || 'part_order' => 'بيع قطعة غيار',
-        'workshop' || 'appointment' => 'خدمة ورشة',
-        'winch_towing' || 'winch' || 'emergency' => 'طلب طوارئ / ونش',
-        _ => raw,
-      };
-
-  String _paymentMethodArabic(String raw) => switch (raw.toLowerCase()) {
-        'cash' => 'نقداً (كاش)',
-        'apple_pay' => 'Apple Pay',
-        'google_pay' => 'Google Pay',
-        'visa' || 'card' || 'meps' => 'فيزا / ماستركارد',
-        _ => raw,
-      };
-
-  @override
-  Widget build(BuildContext context) {
-    final filtered = _txs.where((t) => _inPeriodDate(t.createdAt)).toList();
-    final periodGross = filtered.fold(0.0, (s, t) => s + t.grossAmount);
-    final periodComm = filtered.fold(0.0, (s, t) => s + t.commissionAmount);
-    final periodNet = filtered.fold(0.0, (s, t) => s + t.netAmount);
-    final allTimeNet = _txs.fold(0.0, (s, t) => s + t.netAmount);
-    final effectiveBalance = _accountBalance > 0 ? _accountBalance : allTimeNet;
-
-    return RefreshIndicator(
-      color: AppColors.orange,
-      onRefresh: () => _loadWallet(silent: true),
-      child: ListView(
-        physics: const AlwaysScrollableScrollPhysics(),
-        padding: const EdgeInsets.all(16),
-        children: [
-          Row(
-            children: [
-              Expanded(
-                child: DateRangeFilterBar(
-                  period: _period,
-                  customRange: _customRange,
-                  onChanged: (p, r) => setState(() {
-                    _period = p;
-                    _customRange = r;
-                  }),
-                ),
-              ),
-              IconButton(
-                tooltip: 'تحديث المحفظة',
-                onPressed: () => _loadWallet(silent: false),
-                icon: const Icon(Icons.refresh, color: AppColors.navy),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          Container(
-            padding: const EdgeInsets.all(18),
-            decoration: BoxDecoration(
-              color: AppColors.navy,
-              borderRadius: BorderRadius.circular(18),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  widget.headerLabel,
-                  style: const TextStyle(color: Colors.white70, fontSize: 13),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  '${effectiveBalance.toStringAsFixed(2)} د.أ',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 28,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  'خلال الفترة المختارة — الصافي: ${periodNet.toStringAsFixed(2)} د.أ',
-                  style: const TextStyle(
-                    color: AppColors.orange,
-                    fontSize: 12.5,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  'قبل العمولة: ${periodGross.toStringAsFixed(2)} د.أ | العمولة: ${periodComm.toStringAsFixed(2)} د.أ',
-                  style: const TextStyle(color: Colors.white70, fontSize: 12),
-                ),
-                if (_pendingDebt > 0) ...[
-                  const Divider(color: Colors.white24, height: 18),
-                  Text(
-                    'عمولات الدفع النقدي (كاش) المستحقة للمنصة: ${_pendingDebt.toStringAsFixed(2)} د.أ',
-                    style: const TextStyle(
-                      color: Colors.amberAccent,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ],
-              ],
-            ),
-          ),
-          const SizedBox(height: 14),
-          if (_loading && _txs.isEmpty)
-            const Padding(
-              padding: EdgeInsets.symmetric(vertical: 32),
-              child: Center(child: CircularProgressIndicator()),
-            )
-          else if (filtered.isEmpty)
-            const Padding(
-              padding: EdgeInsets.symmetric(vertical: 32),
-              child: Center(
-                child: Text(
-                  'لا توجد حركات مالية ضمن الفترة المختارة',
-                  style: TextStyle(color: AppColors.textSecondary),
-                ),
-              ),
-            )
-          else
-            ...filtered.map(
-              (t) => Card(
-                margin: const EdgeInsets.only(bottom: 10),
-                child: ListTile(
-                  title: Text(
-                    '${_txArabicType(t.transactionType)} · ${_paymentMethodArabic(t.paymentMethod)}',
-                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
-                  ),
-                  subtitle: Text(
-                    'قبل العمولة: ${t.grossAmount.toStringAsFixed(2)} د.أ · عمولة: -${t.commissionAmount.toStringAsFixed(2)} د.أ',
-                    style: const TextStyle(fontSize: 12),
-                  ),
-                  trailing: Text(
-                    '+${t.netAmount.toStringAsFixed(2)} د.أ',
-                    style: const TextStyle(
-                      color: AppColors.success,
-                      fontWeight: FontWeight.bold,
-                      fontSize: 15,
-                    ),
-                  ),
-                ),
-              ),
-            ),
         ],
       ),
     );
@@ -2578,7 +2096,7 @@ class _ShortcutItem {
   final Color iconColor;
   final Color iconBg;
   final bool highlighted;
-  final bool showChatBadge;
+  final int badgeCount;
   final VoidCallback onTap;
 
   const _ShortcutItem({
@@ -2588,285 +2106,138 @@ class _ShortcutItem {
     required this.iconColor,
     required this.iconBg,
     this.highlighted = false,
-    this.showChatBadge = false,
+    this.badgeCount = 0,
     required this.onTap,
   });
 }
 
-class SupportScreen extends StatelessWidget {
-  const SupportScreen({super.key});
+class _ShellTopToast extends StatefulWidget {
+  final String title;
+  final String message;
+  final bool isError;
+  final VoidCallback onDismissed;
 
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('الدعم الفني — غيارك')),
-      body: ListView(
-        padding: const EdgeInsets.all(20),
-        children: [
-          Container(
-            padding: const EdgeInsets.all(20),
-            decoration: BoxDecoration(
-              color: AppColors.navy,
-              borderRadius: BorderRadius.circular(18),
-            ),
-            child: const Column(
-              children: [
-                GhiyarakLogo(size: 62),
-                SizedBox(height: 12),
-                Text(
-                  'فريق دعم غيارك',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 19,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                SizedBox(height: 4),
-                Text(
-                  'نحن هنا لمساعدتك في أي استفسار أو مشكلة تقنية على مدار الساعة',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(color: Colors.white70, fontSize: 12),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 18),
-          Card(
-            child: ListTile(
-              leading: const Icon(Icons.phone, color: AppColors.orange),
-              title: const Text('الاتصال الهاتفي',
-                  style: TextStyle(fontWeight: FontWeight.bold)),
-              subtitle: const Text(EnvConfig.supportPhone),
-              trailing: const Icon(Icons.arrow_forward_ios, size: 15),
-              onTap: () => launchUrl(Uri.parse('tel:${EnvConfig.supportPhone}')),
-            ),
-          ),
-          const SizedBox(height: 10),
-          Card(
-            child: ListTile(
-              leading: const Icon(Icons.chat, color: AppColors.success),
-              title: const Text('واتساب الدعم الفني',
-                  style: TextStyle(fontWeight: FontWeight.bold)),
-              subtitle: const Text('+${EnvConfig.supportWhatsapp}'),
-              trailing: const Icon(Icons.arrow_forward_ios, size: 15),
-              onTap: () => launchUrl(
-                Uri.parse('https://wa.me/${EnvConfig.supportWhatsapp}'),
-                mode: LaunchMode.externalApplication,
-              ),
-            ),
-          ),
-          const SizedBox(height: 10),
-          Card(
-            child: ListTile(
-              leading: const Icon(Icons.email_outlined, color: AppColors.navy),
-              title: const Text('البريد الإلكتروني',
-                  style: TextStyle(fontWeight: FontWeight.bold)),
-              subtitle: const Text(EnvConfig.supportEmail),
-              trailing: const Icon(Icons.arrow_forward_ios, size: 15),
-              onTap: () => launchUrl(
-                Uri.parse(
-                    'mailto:${EnvConfig.supportEmail}?subject=دعم فني تطبيق غيارك'),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class UserProfileScreen extends StatefulWidget {
-  final CustomerProfile profile;
-  final VoidCallback onSaved;
-  const UserProfileScreen({
-    super.key,
-    required this.profile,
-    required this.onSaved,
+  const _ShellTopToast({
+    required this.title,
+    required this.message,
+    required this.isError,
+    required this.onDismissed,
   });
 
   @override
-  State<UserProfileScreen> createState() => _UserProfileScreenState();
+  State<_ShellTopToast> createState() => _ShellTopToastState();
 }
 
-class _UserProfileScreenState extends State<UserProfileScreen> {
-  final _db = Supabase.instance.client;
-  late final TextEditingController _nameCtrl;
-  late final TextEditingController _phoneCtrl;
-  late final TextEditingController _addressCtrl;
-  String? _country;
-  int? _age;
-  bool _saving = false;
+class _ShellTopToastState extends State<_ShellTopToast>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl;
+  late final Animation<Offset> _slide;
+  Timer? _timer;
+  bool _closing = false;
 
   @override
   void initState() {
     super.initState();
-    _nameCtrl = TextEditingController(text: widget.profile.fullName ?? '');
-    _phoneCtrl = TextEditingController(text: widget.profile.phone ?? '');
-    _addressCtrl =
-        TextEditingController(text: widget.profile.workshopAddress ?? '');
-    _loadExtraFields();
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 300),
+    );
+    _slide = Tween<Offset>(
+      begin: const Offset(0, -1.2),
+      end: Offset.zero,
+    ).animate(CurvedAnimation(parent: _ctrl, curve: Curves.easeOutBack));
+    _ctrl.forward();
+    _timer = Timer(const Duration(seconds: 3), _dismiss);
+  }
+
+  Future<void> _dismiss() async {
+    if (_closing || !mounted) return;
+    _closing = true;
+    _timer?.cancel();
+    await _ctrl.reverse();
+    widget.onDismissed();
   }
 
   @override
   void dispose() {
-    _nameCtrl.dispose();
-    _phoneCtrl.dispose();
-    _addressCtrl.dispose();
+    _timer?.cancel();
+    _ctrl.dispose();
     super.dispose();
-  }
-
-  Future<void> _loadExtraFields() async {
-    final row = await _db
-        .from('customers')
-        .select('country, age')
-        .eq('id', widget.profile.id)
-        .maybeSingle();
-    if (row != null && mounted) {
-      setState(() {
-        _country = row['country'] as String?;
-        _age = row['age'] as int?;
-      });
-    }
-  }
-
-  Future<void> _saveProfile() async {
-    setState(() => _saving = true);
-    try {
-      await _db.from('customers').update({
-        'full_name': _nameCtrl.text.trim(),
-        'phone': _phoneCtrl.text.trim(),
-        if (widget.profile.role == 'mechanic')
-          'workshop_address': _addressCtrl.text.trim(),
-      }).eq('id', widget.profile.id);
-      widget.onSaved();
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('تم تحديث معلومات البروفايل بنجاح!'),
-            backgroundColor: AppColors.success,
-          ),
-        );
-        Navigator.pop(context);
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('تعذر التحديث: $e'), backgroundColor: Colors.red),
-        );
-      }
-    } finally {
-      if (mounted) {
-        setState(() => _saving = false);
-      }
-    }
   }
 
   @override
   Widget build(BuildContext context) {
-    final p = widget.profile;
-    return Scaffold(
-      appBar: AppBar(title: const Text('ملفي الشخصي (البروفايل)')),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          Container(
-            padding: const EdgeInsets.all(18),
-            decoration: BoxDecoration(
-              color: AppColors.navy,
-              borderRadius: BorderRadius.circular(16),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  p.fullName ?? 'المستخدم',
-                  style: const TextStyle(
+    final bg = widget.isError ? const Color(0xFFDC2626) : AppColors.success;
+    return Positioned(
+      top: MediaQuery.of(context).padding.top + 10,
+      left: 16,
+      right: 16,
+      child: SlideTransition(
+        position: _slide,
+        child: Material(
+          color: Colors.transparent,
+          child: Dismissible(
+            key: const ValueKey('shell_top_toast'),
+            direction: DismissDirection.up,
+            onDismissed: (_) => widget.onDismissed(),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+              decoration: BoxDecoration(
+                color: bg,
+                borderRadius: BorderRadius.circular(16),
+                boxShadow: [
+                  BoxShadow(
+                    color: bg.withValues(alpha: 0.35),
+                    blurRadius: 16,
+                    offset: const Offset(0, 6),
+                  ),
+                ],
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    widget.isError
+                        ? Icons.error_outline_rounded
+                        : Icons.check_circle_rounded,
                     color: Colors.white,
-                    fontSize: 19,
-                    fontWeight: FontWeight.bold,
+                    size: 24,
                   ),
-                ),
-                const SizedBox(height: 4),
-                Text('اسم المستخدم: @${p.username ?? "-"}',
-                    style:
-                        const TextStyle(color: Colors.white70, fontSize: 13)),
-                Text('البريد الإلكتروني: ${p.email ?? "-"}',
-                    style:
-                        const TextStyle(color: Colors.white70, fontSize: 13)),
-                Text(
-                  'نوع الحساب: ${p.role}',
-                  style: const TextStyle(
-                    color: AppColors.orange,
-                    fontWeight: FontWeight.bold,
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          widget.title,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w800,
+                            fontSize: 13.5,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          widget.message,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-                if (_country != null || _age != null)
-                  Text(
-                    'الدولة: ${_country ?? "-"}  |  العمر: ${_age ?? "-"}',
-                    style:
-                        const TextStyle(color: Colors.white70, fontSize: 12),
+                  IconButton(
+                    icon: const Icon(Icons.close, color: Colors.white, size: 18),
+                    onPressed: _dismiss,
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
                   ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 18),
-          TextField(
-            controller: _nameCtrl,
-            decoration: InputDecoration(
-              labelText: 'الاسم الكامل',
-              filled: true,
-              fillColor: AppColors.surface,
-              border:
-                  OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
-            ),
-          ),
-          const SizedBox(height: 12),
-          TextField(
-            controller: _phoneCtrl,
-            keyboardType: TextInputType.phone,
-            decoration: InputDecoration(
-              labelText: 'رقم الهاتف',
-              filled: true,
-              fillColor: AppColors.surface,
-              border:
-                  OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
-            ),
-          ),
-          if (p.role == 'mechanic') ...[
-            const SizedBox(height: 12),
-            TextField(
-              controller: _addressCtrl,
-              decoration: InputDecoration(
-                labelText: 'عنوان الورشة',
-                filled: true,
-                fillColor: AppColors.surface,
-                border:
-                    OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+                ],
               ),
             ),
-            const SizedBox(height: 8),
-            Text(
-              'ساعات الدوام: ${p.openingHours} · السعة: ${p.maxCarCapacity} سيارة/يوم',
-              style:
-                  const TextStyle(color: AppColors.textSecondary, fontSize: 12),
-            ),
-          ],
-          const SizedBox(height: 22),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.orange,
-              foregroundColor: Colors.white,
-              padding: const EdgeInsets.symmetric(vertical: 15),
-              shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(14)),
-            ),
-            onPressed: _saving ? null : _saveProfile,
-            child: _saving
-                ? const CircularProgressIndicator(color: Colors.white)
-                : const Text('حفظ التعديلات',
-                    style: TextStyle(fontWeight: FontWeight.bold)),
           ),
-        ],
+        ),
       ),
     );
   }

@@ -31,13 +31,101 @@ class _CustomerAppointmentsScreenState
   final _db = Supabase.instance.client;
   final _tracker = LiveProgressTracker.instance;
   final Set<String> _trackingStartedIds = {};
+  final Set<String> _cancellingIds = {};
   final Map<String, ({double? lat, double? lng, String address})>
       _workshopLocs = {};
+
+  Stream<List<Map<String, dynamic>>>? _appointmentsStream;
+  String? _streamUid;
+
+  @override
+  void initState() {
+    super.initState();
+    _initStream();
+  }
+
+  void _initStream() {
+    final uid = _db.auth.currentUser?.id;
+    if (uid == null || uid == _streamUid) return;
+    _streamUid = uid;
+    _appointmentsStream = _db
+        .from('workshop_appointments')
+        .stream(primaryKey: ['id'])
+        .eq('user_id', uid)
+        .order('created_at', ascending: false)
+        .limit(50);
+  }
 
   @override
   void dispose() {
     _tracker.stop();
     super.dispose();
+  }
+
+  void _showTopToast(String title, String message, {bool isError = false}) {
+    if (!mounted) return;
+    final overlay = Overlay.maybeOf(context);
+    if (overlay == null) return;
+    late OverlayEntry entry;
+    entry = OverlayEntry(
+      builder: (_) => Positioned(
+        top: MediaQuery.of(context).padding.top + 10,
+        left: 16,
+        right: 16,
+        child: Material(
+          color: Colors.transparent,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            decoration: BoxDecoration(
+              color: isError ? const Color(0xFFDC2626) : AppColors.success,
+              borderRadius: BorderRadius.circular(16),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.2),
+                  blurRadius: 12,
+                  offset: const Offset(0, 4),
+                ),
+              ],
+            ),
+            child: Row(
+              children: [
+                Icon(
+                  isError ? Icons.error_outline : Icons.check_circle_rounded,
+                  color: Colors.white,
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        title,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      Text(
+                        message,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+    overlay.insert(entry);
+    Future.delayed(const Duration(seconds: 3), () {
+      if (entry.mounted) entry.remove();
+    });
   }
 
   Future<void> _ensureLocationTracking(Map<String, dynamic> appt) async {
@@ -52,12 +140,14 @@ class _CustomerAppointmentsScreenState
       final workshop = await _db
           .from('customers')
           .select(
-              'workshop_latitude, workshop_longitude, street_name, workshop_address')
+              'workshop_latitude, workshop_longitude, latitude, longitude, street_name, workshop_address')
           .eq('id', workshopId)
           .maybeSingle();
 
-      final lat = (workshop?['workshop_latitude'] as num?)?.toDouble();
-      final lng = (workshop?['workshop_longitude'] as num?)?.toDouble();
+      final lat = (workshop?['workshop_latitude'] as num?)?.toDouble() ??
+          (workshop?['latitude'] as num?)?.toDouble();
+      final lng = (workshop?['workshop_longitude'] as num?)?.toDouble() ??
+          (workshop?['longitude'] as num?)?.toDouble();
       final street = (workshop?['street_name'] as String?) ?? '';
       final addr = (workshop?['workshop_address'] as String?) ?? '';
 
@@ -118,35 +208,72 @@ class _CustomerAppointmentsScreenState
           referenceId: appt['id'] as String?,
         );
       }
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('تم قبول الموعد البديل وتفعيله'),
-            backgroundColor: AppColors.success,
-          ),
-        );
-      }
+      _showTopToast('تم التثبيت', 'تم قبول الموعد البديل وتفعيله بنجاح.');
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('تعذر التحديث: $e'), backgroundColor: Colors.red),
-        );
-      }
+      _showTopToast('تعذر التحديث', '$e', isError: true);
     }
   }
 
-  Future<void> _rejectProposedReschedule(Map<String, dynamic> appt) async {
+  Future<void> _cancelAppointment(Map<String, dynamic> appt) async {
+    final id = appt['id'] as String;
+    if (_cancellingIds.contains(id)) return;
+
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text(
+          'إلغاء حجز الورشة',
+          style: TextStyle(fontWeight: FontWeight.bold),
+        ),
+        content: const Text(
+          'هل أنت متأكد من إلغاء هذا الحجز؟ سيتم إشعار الورشة بالإلغاء فوراً.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('تراجع'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('نعم، إلغاء الحجز'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm != true || !mounted) return;
+
+    setState(() => _cancellingIds.add(id));
     try {
       await _db.from('workshop_appointments').update({
         'status': 'cancelled',
         'progress_step': 'cancelled',
-      }).eq('id', appt['id']);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('تم إلغاء الموعد')),
+      }).eq('id', id);
+
+      _tracker.stop();
+
+      final workshopId = appt['workshop_id'] as String?;
+      if (workshopId != null && workshopId.isNotEmpty) {
+        await NotificationsService.instance.sendNotification(
+          targetUserId: workshopId,
+          title: 'تم إلغاء حجز موعد',
+          body:
+              'قام العميل بإلغاء الموعد بتاريخ ${appt['appointment_date'] ?? ''} الساعة ${appt['appointment_time'] ?? ''}.',
+          type: 'order_cancelled',
+          referenceId: id,
         );
       }
-    } catch (_) {}
+
+      _showTopToast('تم إلغاء الحجز', 'تم إلغاء موعد الورشة بنجاح.');
+    } catch (e) {
+      _showTopToast('تعذر إلغاء الحجز', '$e', isError: true);
+    } finally {
+      if (mounted) setState(() => _cancellingIds.remove(id));
+    }
   }
 
   @override
@@ -155,6 +282,7 @@ class _CustomerAppointmentsScreenState
     if (uid == null) {
       return const Center(child: Text('يرجى تسجيل الدخول'));
     }
+    _initStream();
 
     return ValueListenableBuilder<bool>(
       valueListenable: EnvConfig.paymentsEnabled,
@@ -194,12 +322,7 @@ class _CustomerAppointmentsScreenState
               ),
               Expanded(
                 child: StreamBuilder<List<Map<String, dynamic>>>(
-                  stream: _db
-                      .from('workshop_appointments')
-                      .stream(primaryKey: ['id'])
-                      .eq('user_id', uid)
-                      .order('created_at', ascending: false)
-                      .limit(50),
+                  stream: _appointmentsStream,
                   builder: (context, snap) {
                     if (!snap.hasData) {
                       return const Center(child: CircularProgressIndicator());
@@ -216,15 +339,18 @@ class _CustomerAppointmentsScreenState
                     }
 
                     return ListView.builder(
-                      padding: const EdgeInsets.all(16),
+                      padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
                       itemCount: appointments.length,
                       itemBuilder: (context, index) {
                         final appt = appointments[index];
                         _ensureLocationTracking(appt);
 
+                        final id = appt['id'] as String;
                         final status = appt['status'] as String? ?? 'pending';
                         final step =
                             appt['progress_step'] as String? ?? 'pending';
+                        final payStatus =
+                            (appt['payment_status'] as String?) ?? 'unpaid';
                         final totalAmount =
                             (appt['total_amount'] as num?)?.toDouble() ?? 0.0;
                         final discountCode =
@@ -232,6 +358,17 @@ class _CustomerAppointmentsScreenState
                         final discountAmount =
                             (appt['discount_amount'] as num?)?.toDouble() ??
                                 0.0;
+
+                        final canCancel = (status == 'pending' ||
+                                status == 'accepted' ||
+                                status == 'reschedule_proposed') &&
+                            payStatus != 'paid';
+
+                        final canPay = showPayments &&
+                            (step == 'awaiting_payment' ||
+                                status == 'completed') &&
+                            payStatus != 'paid' &&
+                            totalAmount > 0;
 
                         return FadeSlideIn(
                           index: index,
@@ -250,8 +387,9 @@ class _CustomerAppointmentsScreenState
                                         child: Text(
                                           '${appt['appointment_date'] ?? ''} · ${appt['appointment_time'] ?? ''}',
                                           style: const TextStyle(
-                                              fontWeight: FontWeight.bold,
-                                              fontSize: 15),
+                                            fontWeight: FontWeight.bold,
+                                            fontSize: 15,
+                                          ),
                                         ),
                                       ),
                                       _statusBadge(status, step),
@@ -262,8 +400,9 @@ class _CustomerAppointmentsScreenState
                                     (appt['service_description'] as String?) ??
                                         'صيانة مركبة',
                                     style: const TextStyle(
-                                        color: AppColors.textSecondary,
-                                        fontSize: 13),
+                                      color: AppColors.textSecondary,
+                                      fontSize: 13,
+                                    ),
                                   ),
                                   if (discountCode.isNotEmpty &&
                                       discountAmount > 0) ...[
@@ -303,8 +442,9 @@ class _CustomerAppointmentsScreenState
                                           Text(
                                             '${appt['proposed_date']} الساعة ${appt['proposed_time']}',
                                             style: const TextStyle(
-                                                fontWeight: FontWeight.bold,
-                                                fontSize: 14),
+                                              fontWeight: FontWeight.bold,
+                                              fontSize: 14,
+                                            ),
                                           ),
                                           const SizedBox(height: 10),
                                           Row(
@@ -329,9 +469,8 @@ class _CustomerAppointmentsScreenState
                                               Expanded(
                                                 child: OutlinedButton(
                                                   onPressed: () =>
-                                                      _rejectProposedReschedule(
-                                                          appt),
-                                                  child: const Text('رفض'),
+                                                      _cancelAppointment(appt),
+                                                  child: const Text('رفض وإلغاء'),
                                                 ),
                                               ),
                                             ],
@@ -344,16 +483,14 @@ class _CustomerAppointmentsScreenState
                                       status == 'completed') ...[
                                     const Divider(height: 22),
                                     _buildProgressStepper(
-                                      apptId: appt['id'] as String,
+                                      apptId: id,
                                       status: status,
                                       step: step,
                                       workshopId:
                                           appt['workshop_id'] as String?,
                                     ),
                                   ],
-                                  if (showPayments &&
-                                      step == 'awaiting_payment' &&
-                                      totalAmount > 0) ...[
+                                  if (canPay) ...[
                                     const SizedBox(height: 12),
                                     SizedBox(
                                       width: double.infinity,
@@ -398,6 +535,46 @@ class _CustomerAppointmentsScreenState
                                         style: TextStyle(
                                           color: AppColors.success,
                                           fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+
+                                  // زر إلغاء الحجز لأي موعد نشط قبل الاكتمال والدفع
+                                  if (canCancel &&
+                                      status != 'reschedule_proposed') ...[
+                                    const SizedBox(height: 10),
+                                    SizedBox(
+                                      width: double.infinity,
+                                      child: OutlinedButton.icon(
+                                        style: OutlinedButton.styleFrom(
+                                          foregroundColor: Colors.red,
+                                          side: BorderSide(
+                                            color: Colors.red
+                                                .withValues(alpha: 0.55),
+                                          ),
+                                          padding: const EdgeInsets.symmetric(
+                                              vertical: 10),
+                                        ),
+                                        onPressed: _cancellingIds.contains(id)
+                                            ? null
+                                            : () => _cancelAppointment(appt),
+                                        icon: _cancellingIds.contains(id)
+                                            ? const SizedBox(
+                                                width: 15,
+                                                height: 15,
+                                                child:
+                                                    CircularProgressIndicator(
+                                                  strokeWidth: 2,
+                                                  color: Colors.red,
+                                                ),
+                                              )
+                                            : const Icon(Icons.cancel_outlined,
+                                                size: 17),
+                                        label: const Text(
+                                          'إلغاء الحجز',
+                                          style: TextStyle(
+                                              fontWeight: FontWeight.bold),
                                         ),
                                       ),
                                     ),
@@ -449,7 +626,8 @@ class _CustomerAppointmentsScreenState
         // عندما يكون في الطريق: يتحرك الشريط بسلاسة من 8% إلى 44% حسب المسافة الفعلية بالـ GPS
         final double liveProgress = arrived
             ? postArrivalProgress
-            : (0.08 + (_tracker.workshopGpsProgress.value.clamp(0.0, 1.0) * 0.36));
+            : (0.08 +
+                (_tracker.workshopGpsProgress.value.clamp(0.0, 1.0) * 0.36));
 
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -493,35 +671,47 @@ class _CustomerAppointmentsScreenState
                 return LayoutBuilder(
                   builder: (_, constraints) {
                     final barW = constraints.maxWidth;
-                    final carOffset = (barW - 22) * val;
+                    const thumbSize = 24.0;
+                    final carStart = (barW - thumbSize) * val;
                     return SizedBox(
-                      height: 26,
+                      height: 28,
                       child: Stack(
-                        alignment: Alignment.centerLeft,
+                        alignment: AlignmentDirectional.centerStart,
                         children: [
-                          ClipRRect(
-                            borderRadius: BorderRadius.circular(8),
-                            child: LinearProgressIndicator(
-                              value: val,
-                              color: AppColors.orange,
-                              backgroundColor: AppColors.placeholder,
-                              minHeight: 7,
+                          Container(
+                            height: 7,
+                            width: barW,
+                            decoration: BoxDecoration(
+                              color: AppColors.placeholder,
+                              borderRadius: BorderRadius.circular(8),
                             ),
                           ),
-                          Positioned(
-                            left: carOffset.clamp(0.0, barW - 22),
+                          PositionedDirectional(
+                            start: 0,
                             child: Container(
-                              padding: const EdgeInsets.all(2),
+                              height: 7,
+                              width: barW * val,
                               decoration: BoxDecoration(
+                                color: AppColors.orange,
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                            ),
+                          ),
+                          PositionedDirectional(
+                            start: carStart.clamp(0.0, barW - thumbSize),
+                            child: Container(
+                              width: thumbSize,
+                              height: thumbSize,
+                              decoration: const BoxDecoration(
                                 color: AppColors.navy,
-                                borderRadius: BorderRadius.circular(10),
+                                shape: BoxShape.circle,
                               ),
                               child: Icon(
                                 arrived
                                     ? Icons.build_circle
                                     : Icons.directions_car,
                                 color: Colors.white,
-                                size: 15,
+                                size: 14,
                               ),
                             ),
                           ),
@@ -547,9 +737,10 @@ class _CustomerAppointmentsScreenState
                     label: const Text(
                       'موقع الورشة',
                       style: TextStyle(
-                          color: AppColors.navy,
-                          fontWeight: FontWeight.bold,
-                          fontSize: 12),
+                        color: AppColors.navy,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 12,
+                      ),
                     ),
                   ),
                 ),
@@ -567,9 +758,11 @@ class _CustomerAppointmentsScreenState
                         workshopUserId: workshopId,
                       ),
                       icon: const Icon(Icons.check, size: 16),
-                      label: const Text('وصلت للورشة',
-                          style: TextStyle(
-                              fontSize: 12, fontWeight: FontWeight.bold)),
+                      label: const Text(
+                        'وصلت للورشة',
+                        style: TextStyle(
+                            fontSize: 12, fontWeight: FontWeight.bold),
+                      ),
                     ),
                   ),
                 ],

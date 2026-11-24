@@ -1,13 +1,17 @@
-import 'package:material_ui/material_ui.dart';
+import 'dart:async';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../config/env_config.dart';
 import '../../models/db_models.dart';
 import '../../models/subscription_plans.dart';
+import '../../services/live_progress_tracker.dart';
 import '../../services/location_service.dart';
+import '../../services/notifications_service.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/animations.dart';
+import 'workshop_checkout_screen.dart';
 
 class EmergencyScreen extends StatefulWidget {
   final CustomerProfile profile;
@@ -20,6 +24,8 @@ class EmergencyScreen extends StatefulWidget {
 class _EmergencyScreenState extends State<EmergencyScreen> {
   final _db = Supabase.instance.client;
   final _locationService = LocationService();
+  final _tracker = LiveProgressTracker.instance;
+  final _notifs = NotificationsService.instance;
   final _mapController = MapController();
   final _carCtrl = TextEditingController();
 
@@ -38,6 +44,12 @@ class _EmergencyScreenState extends State<EmergencyScreen> {
   double _distanceKm = 6.0;
   double _kmRate = 1.5;
 
+  StreamSubscription<List<Map<String, dynamic>>>? _activeEmgSub;
+  List<Map<String, dynamic>> _activeRequests = [];
+  final Set<String> _cancellingIds = {};
+  final Set<String> _fetchingProvIds = {};
+  final Map<String, ({double? lat, double? lng})> _provCoords = {};
+
   final Map<String, double> _baseFees = const {
     'بطارية': 15.0,
     'إطار': 12.0,
@@ -51,12 +63,192 @@ class _EmergencyScreenState extends State<EmergencyScreen> {
     super.initState();
     _loadKmRate();
     _detectMyLocation();
+    _listenActiveRequests();
   }
 
   @override
   void dispose() {
+    _activeEmgSub?.cancel();
     _carCtrl.dispose();
     super.dispose();
+  }
+
+  void _listenActiveRequests() {
+    _activeEmgSub?.cancel();
+    _activeEmgSub = _db
+        .from('mechanic_requests')
+        .stream(primaryKey: ['id'])
+        .eq('user_id', widget.profile.id)
+        .order('created_at', ascending: false)
+        .listen(
+          (rows) {
+            if (!mounted) return;
+            final active = rows.where((e) {
+              final status = (e['status'] as String?) ?? 'pending';
+              final payStatus = (e['payment_status'] as String?) ?? 'unpaid';
+              final amount = (e['total_amount'] as num?)?.toDouble() ?? 0.0;
+              if (status == 'cancelled' || status == 'rejected') return false;
+              if (status != 'completed') return true;
+              return status == 'completed' && amount > 0 && payStatus != 'paid';
+            }).toList();
+            setState(() => _activeRequests = active);
+            for (final r in active) {
+              final mId = r['mechanic_id'] as String?;
+              if (mId != null && mId.isNotEmpty) {
+                _fetchProviderFallbackCoords(mId);
+              }
+            }
+          },
+          onError: (_) {},
+        );
+  }
+
+  Future<void> _fetchProviderFallbackCoords(String mechId) async {
+    if (_provCoords.containsKey(mechId) || _fetchingProvIds.contains(mechId)) {
+      return;
+    }
+    _fetchingProvIds.add(mechId);
+    try {
+      final row = await _db
+          .from('customers')
+          .select('latitude, longitude, workshop_latitude, workshop_longitude')
+          .eq('id', mechId)
+          .maybeSingle();
+      final lat = (row?['latitude'] as num?)?.toDouble() ??
+          (row?['workshop_latitude'] as num?)?.toDouble();
+      final lng = (row?['longitude'] as num?)?.toDouble() ??
+          (row?['workshop_longitude'] as num?)?.toDouble();
+      if (mounted) {
+        setState(() => _provCoords[mechId] = (lat: lat, lng: lng));
+      }
+    } catch (_) {} finally {
+      _fetchingProvIds.remove(mechId);
+    }
+  }
+
+  void _showTopToast(String title, String message, {bool isError = false}) {
+    if (!mounted) return;
+    final overlay = Overlay.maybeOf(context);
+    if (overlay == null) return;
+    late OverlayEntry entry;
+    entry = OverlayEntry(
+      builder: (_) => Positioned(
+        top: MediaQuery.of(context).padding.top + 10,
+        left: 16,
+        right: 16,
+        child: Material(
+          color: Colors.transparent,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            decoration: BoxDecoration(
+              color: isError ? const Color(0xFFDC2626) : AppColors.success,
+              borderRadius: BorderRadius.circular(16),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.2),
+                  blurRadius: 12,
+                  offset: const Offset(0, 4),
+                ),
+              ],
+            ),
+            child: Row(
+              children: [
+                Icon(
+                  isError ? Icons.error_outline : Icons.check_circle_rounded,
+                  color: Colors.white,
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        title,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      Text(
+                        message,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+    overlay.insert(entry);
+    Future.delayed(const Duration(seconds: 3), () {
+      if (entry.mounted) entry.remove();
+    });
+  }
+
+  Future<void> _cancelEmergencyRequest(Map<String, dynamic> req) async {
+    final id = req['id'] as String;
+    if (_cancellingIds.contains(id)) return;
+
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text(
+          'إلغاء طلب الطوارئ',
+          style: TextStyle(fontWeight: FontWeight.bold),
+        ),
+        content: const Text(
+          'هل أنت متأكد من إلغاء طلب الطوارئ الحالي؟ سيتم إشعار الفني/سائق الونش فوراً.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('تراجع'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('نعم، إلغاء الطلب'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm != true || !mounted) return;
+
+    setState(() => _cancellingIds.add(id));
+    try {
+      await _db.from('mechanic_requests').update({
+        'status': 'cancelled',
+        'progress_step': 'cancelled',
+      }).eq('id', id);
+
+      final mechId = req['mechanic_id'] as String?;
+      if (mechId != null && mechId.isNotEmpty) {
+        await _notifs.sendNotification(
+          targetUserId: mechId,
+          title: 'تم إلغاء طلب الطوارئ',
+          body: 'قام العميل بإلغاء طلب الطوارئ.',
+          type: 'order_cancelled',
+          referenceId: id,
+        );
+      }
+
+      _showTopToast('تم الإلغاء', 'تم إلغاء طلب الطوارئ بنجاح.');
+    } catch (e) {
+      _showTopToast('تعذر الإلغاء', '$e', isError: true);
+    } finally {
+      if (mounted) setState(() => _cancellingIds.remove(id));
+    }
   }
 
   Future<void> _loadKmRate() async {
@@ -123,11 +315,10 @@ class _EmergencyScreenState extends State<EmergencyScreen> {
     FocusScope.of(context).unfocus();
     final carText = _carCtrl.text.trim();
     if (carText.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('يرجى كتابة نوع وموديل السيارة أولاً'),
-          backgroundColor: Colors.red,
-        ),
+      _showTopToast(
+        'بيانات ناقصة',
+        'يرجى كتابة نوع وموديل السيارة أولاً',
+        isError: true,
       );
       return;
     }
@@ -135,8 +326,6 @@ class _EmergencyScreenState extends State<EmergencyScreen> {
     final useWinch = EnvConfig.winchEnabled.value && _serviceType == 'winch';
     setState(() => _submitting = true);
     try {
-      // نرسل latitude/longitude كـ null عند الإنشاء لكي يكتبها الفني/سائق الونش
-      // بموقعه الفعلي ويتحرك شريط التقدم حسب المسافة الحقيقية
       await _db.from('mechanic_requests').insert({
         'user_id': widget.profile.id,
         'service_type': useWinch ? 'winch' : 'mechanic',
@@ -150,40 +339,229 @@ class _EmergencyScreenState extends State<EmergencyScreen> {
         'dropoff_latitude': useWinch ? _dropoffLatLng.latitude : null,
         'dropoff_longitude': useWinch ? _dropoffLatLng.longitude : null,
         'dropoff_address': useWinch ? _dropoffAddress : _pickupAddress,
-        'total_amount': (useWinch || EnvConfig.paymentsEnabled.value)
-            ? finalPrice
-            : 0.0,
+        'total_amount': useWinch ? finalPrice : 0.0,
         'estimated_time': '$etaMinutes دقيقة',
         'status': 'pending',
         'progress_step': 'pending',
       });
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              useWinch
-                  ? 'تم إرسال طلب الونش بنجاح! السعر التقديري ${finalPrice.toStringAsFixed(2)} د.أ'
-                  : 'تم إرسال طلب الطوارئ بنجاح! جاري تعيين أقرب فني',
-            ),
-            backgroundColor: AppColors.success,
-          ),
+        _carCtrl.clear();
+        _showTopToast(
+          'تم إرسال الطلب بنجاح',
+          useWinch
+              ? 'السعر التقديري ${finalPrice.toStringAsFixed(2)} د.أ · جاري تعيين أقرب ونش'
+              : 'جاري البحث عن أقرب ميكانيكي طوارئ لموقعك',
         );
       }
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('تعذر إرسال الطلب: $e'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
+      _showTopToast('تعذر إرسال الطلب', '$e', isError: true);
     } finally {
       if (mounted) {
         setState(() => _submitting = false);
       }
     }
+  }
+
+  Widget _buildActiveRequestCard(Map<String, dynamic> e) {
+    final id = e['id'] as String;
+    final status = (e['status'] as String?) ?? 'pending';
+    final step = (e['progress_step'] as String?) ?? 'pending';
+    final serviceType = (e['service_type'] as String?) ?? 'mechanic';
+    final isWinch = serviceType == 'winch';
+    final mechId = e['mechanic_id'] as String?;
+    final pickLat = (e['pickup_latitude'] as num?)?.toDouble();
+    final pickLng = (e['pickup_longitude'] as num?)?.toDouble();
+    final amount = (e['total_amount'] as num?)?.toDouble() ?? 0.0;
+    final payStatus = (e['payment_status'] as String?) ?? 'unpaid';
+
+    double? distKm;
+    double progress;
+    final isEnRoute = step == 'on_the_way' ||
+        status == 'accepted' ||
+        status == 'in_progress';
+
+    if (step == 'completed' || status == 'completed') {
+      progress = 1.0;
+    } else if (step == 'arrived_at_pickup') {
+      progress = 0.90;
+    } else if (isEnRoute && pickLat != null && pickLng != null) {
+      final liveLat = (e['latitude'] as num?)?.toDouble() ??
+          (mechId != null ? _provCoords[mechId]?.lat : null);
+      final liveLng = (e['longitude'] as num?)?.toDouble() ??
+          (mechId != null ? _provCoords[mechId]?.lng : null);
+      if (liveLat != null && liveLng != null) {
+        distKm = LiveProgressTracker.distanceKmBetween(
+          liveLat,
+          liveLng,
+          pickLat,
+          pickLng,
+        );
+        final ratio = _tracker.computeGpsProgress('emg_scr_$id', distKm);
+        progress = (0.22 + (ratio * 0.64)).clamp(0.22, 0.86);
+      } else {
+        progress = 0.45;
+      }
+    } else {
+      progress = 0.16;
+    }
+
+    String statusText;
+    if (status == 'completed' || step == 'completed') {
+      statusText = 'تم إنهاء المساعدة الطارئة ✓';
+    } else if (step == 'arrived_at_pickup') {
+      statusText =
+          isWinch ? 'وصل الونش إلى موقعك ✓' : 'وصل الميكانيكي إلى موقعك ✓';
+    } else if (isEnRoute) {
+      final base =
+          isWinch ? 'الونش في طريقه إليك' : 'الميكانيكي في طريقه إليك';
+      if (distKm != null) {
+        final eta = (distKm * 2.2).round().clamp(1, 90);
+        final distLabel = distKm < 1.0
+            ? '${(distKm * 1000).round()} م'
+            : '${distKm.toStringAsFixed(1)} كم';
+        statusText = '$base · يبعد $distLabel (~$eta د)';
+      } else {
+        statusText = base;
+      }
+    } else {
+      statusText = isWinch
+          ? 'جاري البحث عن أقرب ونش طوارئ...'
+          : 'جاري البحث عن أقرب ميكانيكي طوارئ...';
+    }
+
+    final canCancel = status != 'completed' &&
+        status != 'cancelled' &&
+        payStatus != 'paid';
+    final canPay = payStatus != 'paid' &&
+        amount > 0 &&
+        mechId != null &&
+        mechId.isNotEmpty;
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: AppColors.navy,
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                isWinch ? Icons.local_shipping : Icons.build_circle,
+                color: AppColors.orange,
+                size: 20,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  '${isWinch ? 'طلب ونش نشط' : 'طلب ميكانيكي نشط'} · ${e['description'] ?? ''}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 13,
+                  ),
+                ),
+              ),
+              Text(
+                '${(progress * 100).round()}%',
+                style: const TextStyle(
+                  color: AppColors.orange,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 13,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            statusText,
+            style: const TextStyle(color: Colors.white70, fontSize: 12),
+          ),
+          const SizedBox(height: 8),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(8),
+            child: LinearProgressIndicator(
+              value: progress,
+              minHeight: 7,
+              backgroundColor: Colors.white24,
+              color: AppColors.orange,
+            ),
+          ),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 8,
+            runSpacing: 6,
+            children: [
+              if (canPay)
+                ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.success,
+                    foregroundColor: Colors.white,
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+                    minimumSize: Size.zero,
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  ),
+                  onPressed: () => Navigator.push(
+                    context,
+                    animatedRoute(
+                      EmergencyCheckoutScreen(
+                        request: DbMechanicRequest.fromMap(e),
+                        customerProfile: widget.profile,
+                        onPaymentCompleted: () {
+                          if (mounted) setState(() {});
+                        },
+                      ),
+                    ),
+                  ),
+                  icon: const Icon(Icons.receipt_long, size: 15),
+                  label: Text(
+                    'دفع الفاتورة (${amount.toStringAsFixed(2)} د.أ)',
+                    style: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+              if (canCancel)
+                TextButton.icon(
+                  style: TextButton.styleFrom(
+                    backgroundColor: Colors.red.withValues(alpha: 0.2),
+                    foregroundColor: const Color(0xFFFFB4B4),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+                    minimumSize: Size.zero,
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  ),
+                  onPressed: _cancellingIds.contains(id)
+                      ? null
+                      : () => _cancelEmergencyRequest(e),
+                  icon: _cancellingIds.contains(id)
+                      ? const SizedBox(
+                          width: 13,
+                          height: 13,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        )
+                      : const Icon(Icons.cancel_outlined, size: 15),
+                  label: const Text(
+                    'إلغاء الطلب',
+                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+                  ),
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -204,8 +582,9 @@ class _EmergencyScreenState extends State<EmergencyScreen> {
 
         final isWinch = showWinch && _serviceType == 'winch';
         final baseFee = _baseFees[_selectedProblem] ?? 15.0;
-        final winchDistanceCost =
-            isWinch ? double.parse((_distanceKm * _kmRate).toStringAsFixed(2)) : 5.0;
+        final winchDistanceCost = isWinch
+            ? double.parse((_distanceKm * _kmRate).toStringAsFixed(2))
+            : 5.0;
         final rawTotal = baseFee + winchDistanceCost;
         final isPro = AppSubscriptionCatalog.customerFeeRate(
                 widget.profile.subscriptionPlan) ==
@@ -234,7 +613,9 @@ class _EmergencyScreenState extends State<EmergencyScreen> {
                                 ? 'طلب مساعدة طارئة'
                                 : 'طلب ميكانيكي طوارئ',
                             style: const TextStyle(
-                                fontSize: 20, fontWeight: FontWeight.bold),
+                              fontSize: 20,
+                              fontWeight: FontWeight.bold,
+                            ),
                           ),
                         ),
                         if (isWinch)
@@ -246,7 +627,13 @@ class _EmergencyScreenState extends State<EmergencyScreen> {
                           ),
                       ],
                     ),
-                    const SizedBox(height: 12),
+                    const SizedBox(height: 10),
+
+                    // طلبات الطوارئ النشطة مع التتبع المباشر وزر الإلغاء
+                    if (_activeRequests.isNotEmpty) ...[
+                      ..._activeRequests.map(_buildActiveRequestCard),
+                      const SizedBox(height: 6),
+                    ],
 
                     if (showWinch) ...[
                       Container(
@@ -328,55 +715,60 @@ class _EmergencyScreenState extends State<EmergencyScreen> {
                         borderRadius: BorderRadius.circular(16),
                         child: Stack(
                           children: [
-                            FlutterMap(
-                              mapController: _mapController,
-                              options: MapOptions(
-                                initialCenter: _pickupLatLng,
-                                initialZoom: 13.5,
-                                onTap: (_, latLng) => _onMapTap(latLng),
-                              ),
-                              children: [
-                                TileLayer(
-                                  urlTemplate:
-                                      'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                                  userAgentPackageName: 'com.autoparts.app',
+                            Directionality(
+                              textDirection: TextDirection.ltr,
+                              child: FlutterMap(
+                                mapController: _mapController,
+                                options: MapOptions(
+                                  initialCenter: _pickupLatLng,
+                                  initialZoom: 13.5,
+                                  minZoom: 3,
+                                  maxZoom: 18,
+                                  onTap: (_, latLng) => _onMapTap(latLng),
                                 ),
-                                if (isWinch)
-                                  PolylineLayer(
-                                    polylines: [
-                                      Polyline(
-                                        points: [
-                                          _pickupLatLng,
-                                          _dropoffLatLng
-                                        ],
-                                        color: AppColors.orange,
-                                        strokeWidth: 4,
+                                children: [
+                                  TileLayer(
+                                    urlTemplate:
+                                        'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                                    userAgentPackageName: 'com.autoparts.app',
+                                  ),
+                                  if (isWinch)
+                                    PolylineLayer(
+                                      polylines: [
+                                        Polyline(
+                                          points: [
+                                            _pickupLatLng,
+                                            _dropoffLatLng
+                                          ],
+                                          color: AppColors.orange,
+                                          strokeWidth: 4,
+                                        ),
+                                      ],
+                                    ),
+                                  MarkerLayer(
+                                    markers: [
+                                      Marker(
+                                        point: _pickupLatLng,
+                                        width: 72,
+                                        height: 72,
+                                        child: const PulsingPin(
+                                            color: AppColors.orange),
                                       ),
+                                      if (isWinch)
+                                        Marker(
+                                          point: _dropoffLatLng,
+                                          width: 44,
+                                          height: 44,
+                                          child: const Icon(
+                                            Icons.flag,
+                                            color: AppColors.navy,
+                                            size: 34,
+                                          ),
+                                        ),
                                     ],
                                   ),
-                                MarkerLayer(
-                                  markers: [
-                                    Marker(
-                                      point: _pickupLatLng,
-                                      width: 72,
-                                      height: 72,
-                                      child: const PulsingPin(
-                                          color: AppColors.orange),
-                                    ),
-                                    if (isWinch)
-                                      Marker(
-                                        point: _dropoffLatLng,
-                                        width: 44,
-                                        height: 44,
-                                        child: const Icon(
-                                          Icons.flag,
-                                          color: AppColors.navy,
-                                          size: 34,
-                                        ),
-                                      ),
-                                  ],
-                                ),
-                              ],
+                                ],
+                              ),
                             ),
                             Positioned(
                               bottom: 10,
@@ -471,7 +863,6 @@ class _EmergencyScreenState extends State<EmergencyScreen> {
                     ),
                     const SizedBox(height: 14),
 
-                    // بطاقة تفاصيل التسعيرة والوقت المتوقع
                     Container(
                       padding: const EdgeInsets.all(14),
                       decoration: BoxDecoration(

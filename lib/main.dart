@@ -1,4 +1,7 @@
 import 'dart:async';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:flutter/foundation.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'config/env_config.dart';
@@ -8,9 +11,18 @@ import 'screens/mobile/mobile_shell.dart';
 import 'services/notifications_service.dart';
 import 'theme/app_theme.dart';
 import 'widgets/animations.dart';
+import 'widgets/app_top_toast.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // تهيئة Firebase لإشعارات الخلفية بشكل آمن (لا يتوقف التطبيق قبل إضافة ملفات Firebase)
+  if (!kIsWeb) {
+    try {
+      await Firebase.initializeApp();
+      FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
+    } catch (_) {}
+  }
 
   await Supabase.initialize(
     url: EnvConfig.supabaseUrl,
@@ -28,15 +40,13 @@ class AutoPartsSupabaseApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      navigatorKey: appNavigatorKey,
       debugShowCheckedModeBanner: false,
       title: 'غيارك',
       theme: AppTheme.lightTheme,
       builder: (context, child) => Directionality(
         textDirection: TextDirection.rtl,
-        child: GestureDetector(
-          onTap: () => FocusManager.instance.primaryFocus?.unfocus(),
-          child: child!,
-        ),
+        child: child!,
       ),
       home: const RoleRouterGate(),
     );
@@ -81,12 +91,14 @@ class _RoleRouterGateState extends State<RoleRouterGate> {
       final rows = await _db
           .from('system_settings')
           .select('key, value')
-          .inFilter('key', ['enable_payments', 'enable_winch']);
+          .inFilter('key', ['enable_payments', 'enable_winch', 'enable_ads']);
       for (final row in rows) {
         if (row['key'] == 'enable_payments') {
           EnvConfig.paymentsEnabled.value = row['value'] == 'true';
         } else if (row['key'] == 'enable_winch') {
           EnvConfig.winchEnabled.value = row['value'] == 'true';
+        } else if (row['key'] == 'enable_ads') {
+          EnvConfig.adsEnabled.value = row['value'] != 'false';
         }
       }
     } catch (_) {}
@@ -102,9 +114,6 @@ class _RoleRouterGateState extends State<RoleRouterGate> {
       } else {
         needsCompletion = true;
       }
-      await NotificationsService.instance.startRealtimeListener();
-    } else {
-      await NotificationsService.instance.stopRealtimeListener();
     }
 
     if (mounted) {
@@ -141,6 +150,7 @@ class _RoleRouterGateState extends State<RoleRouterGate> {
                   listenable: Listenable.merge([
                     EnvConfig.paymentsEnabled,
                     EnvConfig.winchEnabled,
+                    EnvConfig.adsEnabled,
                   ]),
                   builder: (context, _) {
                     return LiveMobileShell(
