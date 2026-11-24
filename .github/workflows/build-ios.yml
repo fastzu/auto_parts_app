@@ -43,6 +43,31 @@ jobs:
           gem install xcodeproj --no-document || true
           ruby ios/setup_live_activity.rb
 
+      - name: Disable Codesigning for All Targets
+        run: |
+          ruby -rxcodeproj -e '
+            proj = Xcodeproj::Project.open("ios/Runner.xcodeproj")
+            proj.targets.each do |t|
+              t.build_configurations.each do |c|
+                c.build_settings["CODE_SIGN_STYLE"] = "Manual"
+                c.build_settings["CODE_SIGNING_ALLOWED"] = "NO"
+                c.build_settings["CODE_SIGNING_REQUIRED"] = "NO"
+                c.build_settings["CODE_SIGN_IDENTITY"] = ""
+                c.build_settings["EXPANDED_CODE_SIGN_IDENTITY"] = ""
+                c.build_settings["DEVELOPMENT_TEAM"] = ""
+                c.build_settings["PROVISIONING_PROFILE_SPECIFIER"] = ""
+              end
+            end
+            if proj.root_object.attributes["TargetAttributes"]
+              proj.root_object.attributes["TargetAttributes"].each_value do |attrs|
+                attrs["ProvisioningStyle"] = "Manual"
+                attrs.delete("DevelopmentTeam")
+              end
+            end
+            proj.save
+            puts "Disabled signing for all targets in Runner.xcodeproj"
+          '
+
       - name: Install CocoaPods
         run: |
           if [ -f "ios/Podfile" ]; then
