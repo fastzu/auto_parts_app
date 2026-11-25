@@ -1,28 +1,17 @@
 import 'dart:async';
-import 'package:firebase_core/firebase_core.dart';
-import 'package:firebase_messaging/firebase_messaging.dart';
-import 'package:flutter/foundation.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'config/env_config.dart';
 import 'models/db_models.dart';
 import 'screens/auth/auth_screens.dart';
 import 'screens/mobile/mobile_shell.dart';
+import 'services/app_locale_service.dart';
 import 'services/notifications_service.dart';
 import 'theme/app_theme.dart';
 import 'widgets/animations.dart';
-import 'widgets/app_top_toast.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-
-  // تهيئة Firebase لإشعارات الخلفية بشكل آمن (لا يتوقف التطبيق قبل إضافة ملفات Firebase)
-  if (!kIsWeb) {
-    try {
-      await Firebase.initializeApp();
-      FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
-    } catch (_) {}
-  }
 
   await Supabase.initialize(
     url: EnvConfig.supabaseUrl,
@@ -39,16 +28,21 @@ class AutoPartsSupabaseApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      navigatorKey: appNavigatorKey,
-      debugShowCheckedModeBanner: false,
-      title: 'غيارك',
-      theme: AppTheme.lightTheme,
-      builder: (context, child) => Directionality(
-        textDirection: TextDirection.rtl,
-        child: child!,
-      ),
-      home: const RoleRouterGate(),
+    final loc = AppLocaleService.instance;
+    return ValueListenableBuilder<String>(
+      valueListenable: loc.langCode,
+      builder: (_, __, ___) {
+        return MaterialApp(
+          debugShowCheckedModeBanner: false,
+          title: loc.tr('غيارك', 'Ghiyarak'),
+          theme: AppTheme.lightTheme,
+          builder: (context, child) => Directionality(
+            textDirection: loc.textDirection,
+            child: child!,
+          ),
+          home: const RoleRouterGate(),
+        );
+      },
     );
   }
 }
@@ -91,14 +85,12 @@ class _RoleRouterGateState extends State<RoleRouterGate> {
       final rows = await _db
           .from('system_settings')
           .select('key, value')
-          .inFilter('key', ['enable_payments', 'enable_winch', 'enable_ads']);
+          .inFilter('key', ['enable_payments', 'enable_winch']);
       for (final row in rows) {
         if (row['key'] == 'enable_payments') {
           EnvConfig.paymentsEnabled.value = row['value'] == 'true';
         } else if (row['key'] == 'enable_winch') {
           EnvConfig.winchEnabled.value = row['value'] == 'true';
-        } else if (row['key'] == 'enable_ads') {
-          EnvConfig.adsEnabled.value = row['value'] != 'false';
         }
       }
     } catch (_) {}
@@ -107,13 +99,19 @@ class _RoleRouterGateState extends State<RoleRouterGate> {
     bool needsCompletion = false;
     final user = _db.auth.currentUser;
     if (user != null) {
-      final data =
-          await _db.from('customers').select().eq('id', user.id).maybeSingle();
+      final data = await _db
+          .from('customers')
+          .select()
+          .eq('id', user.id)
+          .maybeSingle();
       if (data != null) {
         loadedProfile = CustomerProfile.fromMap(data);
+        NotificationsService.instance.startRealtimeListener(loadedProfile.id);
       } else {
         needsCompletion = true;
       }
+    } else {
+      NotificationsService.instance.stopRealtimeListener();
     }
 
     if (mounted) {
@@ -150,7 +148,6 @@ class _RoleRouterGateState extends State<RoleRouterGate> {
                   listenable: Listenable.merge([
                     EnvConfig.paymentsEnabled,
                     EnvConfig.winchEnabled,
-                    EnvConfig.adsEnabled,
                   ]),
                   builder: (context, _) {
                     return LiveMobileShell(

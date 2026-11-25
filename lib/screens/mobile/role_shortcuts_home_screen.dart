@@ -7,7 +7,6 @@ import '../../theme/app_theme.dart';
 import '../../utils/status_labels.dart';
 import '../../widgets/animations.dart';
 import '../../widgets/home_live_progress_banner.dart';
-import '../auth/auth_screens.dart';
 import '../dashboard/merchant_products_dashboard.dart';
 import '../dashboard/provider_subscriptions_screen.dart';
 import '../dashboard/super_admin_dashboard_screen.dart';
@@ -38,6 +37,66 @@ class RoleShortcutsHomeScreen extends StatelessWidget {
     required this.onRefreshProfile,
     required this.onSignedOut,
   });
+
+  void _showTermsAndPrivacySheet(BuildContext context) {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Center(
+                  child: Container(
+                    width: 44,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: AppColors.border,
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                const Text(
+                  'الشروط والأحكام وسياسة الخصوصية',
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w900,
+                    color: AppColors.navy,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                const Text(
+                  '• يلتزم التجار والورش وسائقو الونش بتقديم معلومات دقيقة وأسعار واضحة.\n'
+                  '• تُستخدم بيانات الموقع الجغرافي فقط لتتبع طلبات الطوارئ والورش النشطة وتحديد أقرب مزود خدمة.\n'
+                  '• المدفوعات الإلكترونية والعمولات والسحوبات البنكية تُدار بشفافية وتُسجل في سجل المحفظة.\n'
+                  '• يحق لإدارة غيارك تعليق أي حساب مخالف للشروط أو متأخر عن سداد العمولات المستحقة.\n'
+                  '• لأي استفسار أو طلب حذف بيانات، يمكنك التواصل معنا مباشرة عبر قسم الدعم الفني.',
+                  style: TextStyle(
+                    fontSize: 13.5,
+                    height: 1.65,
+                    color: AppColors.textSecondary,
+                  ),
+                ),
+                const SizedBox(height: 18),
+                ElevatedButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text('فهمت'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 
   List<_ShortcutItem> _buildShortcuts(BuildContext context) {
     final isAdmin = profile.isAdmin || profile.role == 'admin';
@@ -329,7 +388,6 @@ class RoleShortcutsHomeScreen extends StatelessWidget {
       ];
     }
 
-    // المستخدم العادي (user)
     return [
       _ShortcutItem(
         title: 'متجر قطع الغيار',
@@ -441,7 +499,6 @@ class RoleShortcutsHomeScreen extends StatelessWidget {
         child: ListView(
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 92),
           children: [
-            // بطاقة الترحيب وحالة الحساب
             Container(
               padding: const EdgeInsets.all(18),
               decoration: BoxDecoration(
@@ -532,13 +589,10 @@ class RoleShortcutsHomeScreen extends StatelessWidget {
                 ],
               ),
             ),
-
-            // بانر التتبع الحي (إن كان هناك موعد أو طلب طوارئ نشط)
             Padding(
               padding: const EdgeInsets.only(top: 12),
               child: HomeLiveProgressBanner(viewerProfile: profile),
             ),
-
             const SizedBox(height: 16),
             const Row(
               children: [
@@ -551,8 +605,6 @@ class RoleShortcutsHomeScreen extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 12),
-
-            // شبكة الاختصارات حسب الدور
             GridView.builder(
               shrinkWrap: true,
               physics: const NeverScrollableScrollPhysics(),
@@ -637,9 +689,7 @@ class RoleShortcutsHomeScreen extends StatelessWidget {
                 );
               },
             ),
-
             const SizedBox(height: 16),
-            // شريط الدعم الفني والسياسات السريع
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
               decoration: BoxDecoration(
@@ -659,7 +709,7 @@ class RoleShortcutsHomeScreen extends StatelessWidget {
                   Container(width: 1, height: 22, color: AppColors.border),
                   Expanded(
                     child: TextButton.icon(
-                      onPressed: () => showTermsAndPrivacySheet(context),
+                      onPressed: () => _showTermsAndPrivacySheet(context),
                       icon: const Icon(Icons.privacy_tip_outlined, color: AppColors.navy, size: 18),
                       label: const Text('الشروط والخصوصية', style: TextStyle(color: AppColors.navy)),
                     ),

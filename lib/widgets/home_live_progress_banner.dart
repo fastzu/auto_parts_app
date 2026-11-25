@@ -4,6 +4,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../models/db_models.dart';
 import '../screens/mobile/workshop_checkout_screen.dart';
+import '../services/app_locale_service.dart';
 import '../services/dynamic_island_service.dart';
 import '../services/live_progress_tracker.dart';
 import '../services/notifications_service.dart';
@@ -39,6 +40,7 @@ class _HomeLiveProgressBannerState extends State<HomeLiveProgressBanner> {
   final _db = Supabase.instance.client;
   final _tracker = LiveProgressTracker.instance;
   final _notifs = NotificationsService.instance;
+  final _loc = AppLocaleService.instance;
   final PageController _pageController = PageController();
 
   final Set<String> _startedWorkshopTracking = {};
@@ -119,7 +121,6 @@ class _HomeLiveProgressBannerState extends State<HomeLiveProgressBanner> {
     final uid = viewer.id;
     final role = viewer.role;
 
-    // 1) مواعيد الورش التي حجزها المستخدم كزبون
     _custApptSub = _db
         .from('workshop_appointments')
         .stream(primaryKey: ['id'])
@@ -133,7 +134,6 @@ class _HomeLiveProgressBannerState extends State<HomeLiveProgressBanner> {
           onError: (_) {},
         );
 
-    // 2) طلبات الطوارئ/الميكانيكي/الونش التي طلبها المستخدم كزبون
     _custEmgSub = _db
         .from('mechanic_requests')
         .stream(primaryKey: ['id'])
@@ -147,7 +147,6 @@ class _HomeLiveProgressBannerState extends State<HomeLiveProgressBanner> {
           onError: (_) {},
         );
 
-    // 3) إذا كان الحساب ميكانيكي/ورشة: استمع أيضاً للطلبات والمواعيد المسندة له
     if (role == 'mechanic') {
       _provApptSub = _db
           .from('workshop_appointments')
@@ -218,7 +217,6 @@ class _HomeLiveProgressBannerState extends State<HomeLiveProgressBanner> {
       }
     }
 
-    // الزبون فقط يبث موقعه باتجاه الورشة عندما يكون في الطريق
     if (!isProviderSide &&
         !_startedWorkshopTracking.contains(id) &&
         appt['status'] == 'accepted' &&
@@ -245,7 +243,6 @@ class _HomeLiveProgressBannerState extends State<HomeLiveProgressBanner> {
     final step = (emg['progress_step'] as String?) ?? 'pending';
     final status = (emg['status'] as String?) ?? 'pending';
 
-    // جلب إحداثيات المزود الاحتياطية من جدول customers إذا لم تصل إحداثيات حية بعد
     if (mechId != null &&
         mechId.isNotEmpty &&
         !_providerLocations.containsKey(mechId) &&
@@ -273,7 +270,6 @@ class _HomeLiveProgressBannerState extends State<HomeLiveProgressBanner> {
       }
     }
 
-    // إذا كان المستخدم الحالي هو الميكانيكي/سائق الونش والطلب في الطريق: ابدأ بث موقعه تلقائياً
     final pickLat = (emg['pickup_latitude'] as num?)?.toDouble();
     final pickLng = (emg['pickup_longitude'] as num?)?.toDouble();
     final custId = (emg['user_id'] as String?) ?? '';
@@ -320,16 +316,68 @@ class _HomeLiveProgressBannerState extends State<HomeLiveProgressBanner> {
     if (overlay == null) return;
     late OverlayEntry entry;
     entry = OverlayEntry(
-      builder: (_) => _BannerTopToast(
-        title: title,
-        message: msg,
-        isError: isError,
-        onDone: () {
-          if (entry.mounted) entry.remove();
-        },
+      builder: (_) => Positioned(
+        top: MediaQuery.of(context).padding.top + 10,
+        left: 16,
+        right: 16,
+        child: Material(
+          color: Colors.transparent,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            decoration: BoxDecoration(
+              color: isError ? const Color(0xFFDC2626) : AppColors.success,
+              borderRadius: BorderRadius.circular(16),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.2),
+                  blurRadius: 12,
+                  offset: const Offset(0, 4),
+                ),
+              ],
+            ),
+            child: Row(
+              children: [
+                Icon(
+                  isError
+                      ? Icons.error_outline_rounded
+                      : Icons.check_circle_rounded,
+                  color: Colors.white,
+                  size: 22,
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        title,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w800,
+                          fontSize: 13.5,
+                        ),
+                      ),
+                      Text(
+                        msg,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
     overlay.insert(entry);
+    Future.delayed(const Duration(seconds: 3), () {
+      if (entry.mounted) entry.remove();
+    });
   }
 
   Future<void> _confirmAndCancelItem(_ProgressBannerItem item) async {
@@ -340,18 +388,26 @@ class _HomeLiveProgressBannerState extends State<HomeLiveProgressBanner> {
       context: context,
       builder: (ctx) => AlertDialog(
         title: Text(
-          item.isWorkshop ? 'إلغاء حجز الورشة' : 'إلغاء طلب الطوارئ',
+          item.isWorkshop
+              ? _loc.tr('إلغاء حجز الورشة', 'Cancel Workshop Booking')
+              : _loc.tr('إلغاء طلب الطوارئ', 'Cancel Emergency Request'),
           style: const TextStyle(fontWeight: FontWeight.bold),
         ),
         content: Text(
           item.isWorkshop
-              ? 'هل أنت متأكد من إلغاء هذا الحجز؟ سيتم إشعار الطرف الآخر فوراً.'
-              : 'هل أنت متأكد من إلغاء طلب الطوارئ؟ سيتم إيقاف التتبع وإشعار الطرف الآخر.',
+              ? _loc.tr(
+                  'هل أنت متأكد من إلغاء هذا الحجز؟ سيتم إشعار الطرف الآخر فوراً.',
+                  'Are you sure you want to cancel this booking?',
+                )
+              : _loc.tr(
+                  'هل أنت متأكد من إلغاء طلب الطوارئ؟ سيتم إيقاف التتبع وإشعار الطرف الآخر.',
+                  'Are you sure you want to cancel this emergency request?',
+                ),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('تراجع'),
+            child: Text(_loc.tr('تراجع', 'Back')),
           ),
           ElevatedButton(
             style: ElevatedButton.styleFrom(
@@ -359,7 +415,7 @@ class _HomeLiveProgressBannerState extends State<HomeLiveProgressBanner> {
               foregroundColor: Colors.white,
             ),
             onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('نعم، إلغاء الطلب'),
+            child: Text(_loc.tr('نعم، إلغاء الطلب', 'Yes, Cancel')),
           ),
         ],
       ),
@@ -378,7 +434,6 @@ class _HomeLiveProgressBannerState extends State<HomeLiveProgressBanner> {
 
       _tracker.stop();
 
-      // إشعار الطرف الآخر بالإلغاء
       final otherUserId = item.isWorkshop
           ? (item.isProviderSide
               ? item.data['user_id'] as String?
@@ -400,11 +455,14 @@ class _HomeLiveProgressBannerState extends State<HomeLiveProgressBanner> {
       }
 
       _showTopToast(
-        'تم الإلغاء بنجاح',
-        item.isWorkshop ? 'تم إلغاء حجز الورشة.' : 'تم إلغاء طلب الطوارئ.',
+        _loc.tr('تم الإلغاء بنجاح', 'Cancelled'),
+        item.isWorkshop
+            ? _loc.tr('تم إلغاء حجز الورشة.', 'Workshop booking cancelled.')
+            : _loc.tr('تم إلغاء طلب الطوارئ.', 'Emergency request cancelled.'),
       );
     } catch (e) {
-      _showTopToast('تعذر الإلغاء', '$e', isError: true);
+      _showTopToast(_loc.tr('تعذر الإلغاء', 'Cancel Failed'), '$e',
+          isError: true);
     } finally {
       if (mounted) {
         setState(() => _cancellingIds.remove(id));
@@ -416,14 +474,16 @@ class _HomeLiveProgressBannerState extends State<HomeLiveProgressBanner> {
     final etaMins = (km * 2.2).round().clamp(1, 90);
     if (km < 1.0) {
       final meters = (km * 1000).round();
-      return 'يبعد $meters م · ~$etaMins د';
+      return _loc.tr('يبعد $meters م · ~$etaMins د', '${meters}m · ~${etaMins}m');
     }
-    return 'يبعد ${km.toStringAsFixed(1)} كم · ~$etaMins د';
+    return _loc.tr(
+      'يبعد ${km.toStringAsFixed(1)} كم · ~$etaMins د',
+      '${km.toStringAsFixed(1)} km · ~${etaMins}m',
+    );
   }
 
   double _workshopProgressValue(String step, {double? gpsRatio}) {
     if (step == 'on_the_way' && gpsRatio != null) {
-      // يتحرك بسلاسة من 15% إلى 42% حسب القرب الفعلي من الورشة
       return (0.15 + (gpsRatio.clamp(0.0, 1.0) * 0.27)).clamp(0.15, 0.42);
     }
     return switch (step) {
@@ -442,17 +502,21 @@ class _HomeLiveProgressBannerState extends State<HomeLiveProgressBanner> {
   String _workshopStepLabel(String step, {bool isProviderSide = false}) {
     return switch (step) {
       'on_the_way' => isProviderSide
-          ? 'العميل في طريقه إلى الورشة (GPS)'
-          : 'في الطريق إلى الورشة (GPS)',
-      'arrived_at_workshop' => 'تم الوصول للورشة ✓',
-      'diagnosis' => 'فحص السيارة وتشخيص العطل',
-      'repairing' => 'جاري الإصلاح في الورشة',
-      'testing' => 'الفحص والتجربة النهائية',
-      'awaiting_payment' => 'السيارة جاهزة — بانتظار دفع الفاتورة',
-      'completed' => 'مكتمل وتم التسليم ✓',
+          ? _loc.tr('العميل في طريقه إلى الورشة (GPS)', 'Customer heading to workshop')
+          : _loc.tr('في الطريق إلى الورشة (GPS)', 'On the way to workshop'),
+      'arrived_at_workshop' =>
+        _loc.tr('تم الوصول للورشة ✓', 'Arrived at workshop ✓'),
+      'diagnosis' => _loc.tr('فحص السيارة وتشخيص العطل', 'Diagnosing vehicle'),
+      'repairing' => _loc.tr('جاري الإصلاح في الورشة', 'Repairing vehicle'),
+      'testing' => _loc.tr('الفحص والتجربة النهائية', 'Final testing'),
+      'awaiting_payment' => _loc.tr(
+          'السيارة جاهزة — بانتظار دفع الفاتورة',
+          'Car ready — awaiting payment',
+        ),
+      'completed' => _loc.tr('مكتمل وتم التسليم ✓', 'Completed ✓'),
       _ => isProviderSide
-          ? 'حجز جديد بانتظار تأكيدك'
-          : 'بانتظار تأكيد الورشة',
+          ? _loc.tr('حجز جديد بانتظار تأكيدك', 'New booking awaiting confirmation')
+          : _loc.tr('بانتظار تأكيد الورشة', 'Awaiting workshop confirmation'),
     };
   }
 
@@ -465,7 +529,6 @@ class _HomeLiveProgressBannerState extends State<HomeLiveProgressBanner> {
     if (step == 'arrived_at_pickup') return 0.90;
     if ((step == 'on_the_way' || status == 'accepted' || status == 'in_progress') &&
         gpsRatio != null) {
-      // يتحرك بسلاسة من 22% إلى 86% حسب قرب الميكانيكي/الونش من اللوكيشن
       return (0.22 + (gpsRatio.clamp(0.0, 1.0) * 0.64)).clamp(0.22, 0.86);
     }
     if (step == 'on_the_way' || status == 'accepted' || status == 'in_progress') {
@@ -482,54 +545,54 @@ class _HomeLiveProgressBannerState extends State<HomeLiveProgressBanner> {
   }) {
     final isWinch = serviceType == 'winch';
     if (step == 'completed' || status == 'completed') {
-      return 'تم إنهاء المساعدة الطارئة ✓';
+      return _loc.tr('تم إنهاء المساعدة الطارئة ✓', 'Emergency completed ✓');
     }
     if (step == 'arrived_at_pickup') {
       return isWinch
-          ? 'وصل الونش إلى الموقع ✓'
-          : 'وصل الميكانيكي إلى الموقع ✓';
+          ? _loc.tr('وصل الونش إلى الموقع ✓', 'Tow truck arrived ✓')
+          : _loc.tr('وصل الميكانيكي إلى الموقع ✓', 'Mechanic arrived ✓');
     }
     if (step == 'on_the_way' || status == 'accepted' || status == 'in_progress') {
       if (isProviderSide) {
         return isWinch
-            ? 'أنت في طريقك لموقع العميل (ونش)'
-            : 'أنت في طريقك لموقع العميل (طوارئ)';
+            ? _loc.tr('أنت في طريقك لموقع العميل (ونش)', 'Heading to customer (Winch)')
+            : _loc.tr('أنت في طريقك لموقع العميل (طوارئ)', 'Heading to customer (Emergency)');
       }
       return isWinch
-          ? 'ونش الطوارئ في طريقه إلى موقعك'
-          : 'الميكانيكي في طريقه إلى موقعك';
+          ? _loc.tr('ونش الطوارئ في طريقه إلى موقعك', 'Tow truck is on the way')
+          : _loc.tr('الميكانيكي في طريقه إلى موقعك', 'Mechanic is on the way');
     }
     return isWinch
-        ? 'جاري البحث عن أقرب ونش طوارئ...'
-        : 'جاري البحث عن أقرب ميكانيكي طوارئ...';
+        ? _loc.tr('جاري البحث عن أقرب ونش طوارئ...', 'Finding nearest tow truck...')
+        : _loc.tr('جاري البحث عن أقرب ميكانيكي طوارئ...', 'Finding nearest mechanic...');
   }
 
+  /// يختفي تلقائياً فور وصول الطلب لـ 100% (completed) أو إلغائه
   bool _isWorkshopActive(Map<String, dynamic> a) {
     final status = (a['status'] as String?) ?? 'pending';
-    final payStatus = (a['payment_status'] as String?) ?? 'unpaid';
-    final amount = (a['total_amount'] as num?)?.toDouble() ?? 0.0;
-    if (status == 'cancelled' || status == 'rejected') return false;
-    if (status == 'pending' ||
+    final step = (a['progress_step'] as String?) ?? 'pending';
+    if (status == 'completed' ||
+        step == 'completed' ||
+        status == 'cancelled' ||
+        status == 'rejected') {
+      return false;
+    }
+    return status == 'pending' ||
         status == 'accepted' ||
-        status == 'reschedule_proposed') {
-      return true;
-    }
-    if (status == 'completed' && amount > 0 && payStatus != 'paid') {
-      return true;
-    }
-    return false;
+        status == 'reschedule_proposed';
   }
 
+  /// يختفي تلقائياً فور وصول الطلب لـ 100% (completed) أو إلغائه
   bool _isEmergencyActive(Map<String, dynamic> e) {
     final status = (e['status'] as String?) ?? 'pending';
-    final payStatus = (e['payment_status'] as String?) ?? 'unpaid';
-    final amount = (e['total_amount'] as num?)?.toDouble() ?? 0.0;
-    if (status == 'cancelled' || status == 'rejected') return false;
-    if (status != 'completed') return true;
-    if (status == 'completed' && amount > 0 && payStatus != 'paid') {
-      return true;
+    final step = (e['progress_step'] as String?) ?? 'pending';
+    if (status == 'completed' ||
+        step == 'completed' ||
+        status == 'cancelled' ||
+        status == 'rejected') {
+      return false;
     }
-    return false;
+    return true;
   }
 
   List<_ProgressBannerItem> _collectActiveItems() {
@@ -585,122 +648,133 @@ class _HomeLiveProgressBannerState extends State<HomeLiveProgressBanner> {
     final viewer = widget.viewerProfile;
     if (viewer == null) return const SizedBox.shrink();
 
-    final items = _collectActiveItems();
-    if (items.isEmpty) return const SizedBox.shrink();
+    return ValueListenableBuilder<String>(
+      valueListenable: _loc.langCode,
+      builder: (_, __, ___) {
+        final items = _collectActiveItems();
+        if (items.isEmpty) return const SizedBox.shrink();
 
-    final safePage = _currentPage.clamp(0, items.length - 1);
+        final safePage = _currentPage.clamp(0, items.length - 1);
 
-    if (items.length == 1) {
-      return _buildItemCard(items.first, viewer);
-    }
+        if (items.length == 1) {
+          return _buildItemCard(items.first, viewer);
+        }
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Padding(
-          padding: const EdgeInsets.only(bottom: 8),
-          child: Row(
-            children: [
-              const Icon(Icons.radar, color: AppColors.orange, size: 18),
-              const SizedBox(width: 6),
-              Text(
-                'الطلبات النشطة (${items.length})',
-                style: const TextStyle(
-                  fontSize: 13.5,
-                  fontWeight: FontWeight.w800,
-                  color: AppColors.navy,
-                ),
-              ),
-              const Spacer(),
-              Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
-                decoration: BoxDecoration(
-                  color: AppColors.navy,
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Text(
-                  '${safePage + 1} / ${items.length}',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 11,
-                    fontWeight: FontWeight.bold,
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Row(
+                children: [
+                  const Icon(Icons.radar, color: AppColors.orange, size: 18),
+                  const SizedBox(width: 6),
+                  Text(
+                    _loc.tr(
+                      'الطلبات النشطة (${items.length})',
+                      'Active Requests (${items.length})',
+                    ),
+                    style: const TextStyle(
+                      fontSize: 13.5,
+                      fontWeight: FontWeight.w800,
+                      color: AppColors.navy,
+                    ),
                   ),
-                ),
-              ),
-              const SizedBox(width: 4),
-              InkWell(
-                borderRadius: BorderRadius.circular(20),
-                onTap: safePage > 0
-                    ? () => _pageController.previousPage(
-                          duration: const Duration(milliseconds: 280),
-                          curve: Curves.easeOutCubic,
-                        )
-                    : null,
-                child: Padding(
-                  padding: const EdgeInsets.all(4),
-                  child: Icon(
-                    Icons.chevron_right,
-                    size: 20,
-                    color: safePage > 0 ? AppColors.navy : Colors.grey.shade400,
+                  const Spacer(),
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: AppColors.navy,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Text(
+                      '${safePage + 1} / ${items.length}',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 11,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
                   ),
-                ),
-              ),
-              InkWell(
-                borderRadius: BorderRadius.circular(20),
-                onTap: safePage < items.length - 1
-                    ? () => _pageController.nextPage(
-                          duration: const Duration(milliseconds: 280),
-                          curve: Curves.easeOutCubic,
-                        )
-                    : null,
-                child: Padding(
-                  padding: const EdgeInsets.all(4),
-                  child: Icon(
-                    Icons.chevron_left,
-                    size: 20,
-                    color: safePage < items.length - 1
-                        ? AppColors.navy
-                        : Colors.grey.shade400,
+                  const SizedBox(width: 4),
+                  InkWell(
+                    borderRadius: BorderRadius.circular(20),
+                    onTap: safePage > 0
+                        ? () => _pageController.previousPage(
+                              duration: const Duration(milliseconds: 280),
+                              curve: Curves.easeOutCubic,
+                            )
+                        : null,
+                    child: Padding(
+                      padding: const EdgeInsets.all(4),
+                      child: Icon(
+                        Icons.chevron_right,
+                        size: 20,
+                        color:
+                            safePage > 0 ? AppColors.navy : Colors.grey.shade400,
+                      ),
+                    ),
                   ),
-                ),
-              ),
-            ],
-          ),
-        ),
-        SizedBox(
-          height: 215,
-          child: PageView.builder(
-            controller: _pageController,
-            itemCount: items.length,
-            onPageChanged: (idx) => setState(() => _currentPage = idx),
-            itemBuilder: (_, idx) => Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 2),
-              child: SingleChildScrollView(
-                physics: const NeverScrollableScrollPhysics(),
-                child: _buildItemCard(items[idx], viewer, inCarousel: true),
+                  InkWell(
+                    borderRadius: BorderRadius.circular(20),
+                    onTap: safePage < items.length - 1
+                        ? () => _pageController.nextPage(
+                              duration: const Duration(milliseconds: 280),
+                              curve: Curves.easeOutCubic,
+                            )
+                        : null,
+                    child: Padding(
+                      padding: const EdgeInsets.all(4),
+                      child: Icon(
+                        Icons.chevron_left,
+                        size: 20,
+                        color: safePage < items.length - 1
+                            ? AppColors.navy
+                            : Colors.grey.shade400,
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
-          ),
-        ),
-        const SizedBox(height: 6),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: List.generate(
-            items.length,
-            (i) => AnimatedContainer(
-              duration: const Duration(milliseconds: 220),
-              margin: const EdgeInsets.symmetric(horizontal: 3),
-              height: 6,
-              width: i == safePage ? 18 : 6,
-              decoration: BoxDecoration(
-                color: i == safePage ? AppColors.orange : Colors.grey.shade400,
-                borderRadius: BorderRadius.circular(6),
+            SizedBox(
+              height: 215,
+              child: PageView.builder(
+                controller: _pageController,
+                itemCount: items.length,
+                onPageChanged: (idx) => setState(() => _currentPage = idx),
+                itemBuilder: (_, idx) => Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 2),
+                  child: SingleChildScrollView(
+                    physics: const NeverScrollableScrollPhysics(),
+                    child:
+                        _buildItemCard(items[idx], viewer, inCarousel: true),
+                  ),
+                ),
               ),
             ),
-          ),
-        ),
-      ],
+            const SizedBox(height: 6),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: List.generate(
+                items.length,
+                (i) => AnimatedContainer(
+                  duration: const Duration(milliseconds: 220),
+                  margin: const EdgeInsets.symmetric(horizontal: 3),
+                  height: 6,
+                  width: i == safePage ? 18 : 6,
+                  decoration: BoxDecoration(
+                    color:
+                        i == safePage ? AppColors.orange : Colors.grey.shade400,
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        );
+      },
     );
   }
 
@@ -772,8 +846,10 @@ class _HomeLiveProgressBannerState extends State<HomeLiveProgressBanner> {
         }
 
         final progress = _workshopProgressValue(step, gpsRatio: gpsRatio);
+        if (progress >= 1.0) return const SizedBox.shrink();
+
         final baseLabel = status == 'reschedule_proposed'
-            ? 'اقترحت الورشة موعداً بديلاً'
+            ? _loc.tr('اقترحت الورشة موعداً بديلاً', 'Workshop proposed new time')
             : _workshopStepLabel(step, isProviderSide: item.isProviderSide);
         final fullStatus = (step == 'on_the_way' && distKm != null)
             ? '$baseLabel · ${_formatDistanceEta(distKm)}'
@@ -781,11 +857,11 @@ class _HomeLiveProgressBannerState extends State<HomeLiveProgressBanner> {
 
         DynamicIslandService.instance.syncProgress(
           keyId: 'appt_$id',
-          title: 'صيانة الورشة',
+          title: _loc.tr('صيانة الورشة', 'Workshop Service'),
           statusText: fullStatus,
           progress: progress,
           etaOrDistance: distKm != null
-              ? '${distKm.toStringAsFixed(1)} كم'
+              ? '${distKm.toStringAsFixed(1)} km'
               : '${a['appointment_time'] ?? ""}',
         );
 
@@ -794,14 +870,23 @@ class _HomeLiveProgressBannerState extends State<HomeLiveProgressBanner> {
           headerIcon: Icons.build_circle,
           thumbIcon: step == 'on_the_way' ? Icons.directions_car : Icons.build,
           title: item.isProviderSide
-              ? 'حجز عميل بالورشة (${a['appointment_date'] ?? ''})'
-              : 'حالة موعد الورشة (${a['appointment_date'] ?? ''})',
+              ? _loc.tr(
+                  'حجز عميل بالورشة (${a['appointment_date'] ?? ''})',
+                  'Workshop Booking (${a['appointment_date'] ?? ''})',
+                )
+              : _loc.tr(
+                  'حالة موعد الورشة (${a['appointment_date'] ?? ''})',
+                  'Workshop Appointment (${a['appointment_date'] ?? ''})',
+                ),
           statusText: fullStatus,
           progress: progress,
           paymentStatus: payStatus,
           isCancelling: _cancellingIds.contains(id),
           payLabel: canPayWorkshop
-              ? 'دفع الفاتورة (${amount.toStringAsFixed(2)} د.أ)'
+              ? _loc.tr(
+                  'دفع الفاتورة (${amount.toStringAsFixed(2)} د.أ)',
+                  'Pay Invoice (${amount.toStringAsFixed(2)} JOD)',
+                )
               : null,
           onPayInvoice: canPayWorkshop
               ? () => Navigator.push(
@@ -818,7 +903,7 @@ class _HomeLiveProgressBannerState extends State<HomeLiveProgressBanner> {
                   )
               : null,
           actionLabel: (!item.isProviderSide && step == 'on_the_way')
-              ? 'تأكيد وصولي'
+              ? _loc.tr('تأكيد وصولي', 'I Arrived')
               : null,
           onAction: (!item.isProviderSide &&
                   step == 'on_the_way' &&
@@ -885,7 +970,6 @@ class _HomeLiveProgressBannerState extends State<HomeLiveProgressBanner> {
             distKm = _tracker.emergencyDistanceKm.value;
             gpsRatio = _tracker.emergencyGpsProgress.value;
           } else if (pickLat != null && pickLng != null) {
-            // موقع الميكانيكي/الونش الحي من الطلب، وإذا لم يصل بعد نستخدم آخر موقع محفوظ له
             final liveLat = (e['latitude'] as num?)?.toDouble() ??
                 (mechId != null ? _providerLocations[mechId]?.lat : null);
             final liveLng = (e['longitude'] as num?)?.toDouble() ??
@@ -905,6 +989,8 @@ class _HomeLiveProgressBannerState extends State<HomeLiveProgressBanner> {
 
         final progress =
             _emergencyProgressValue(status, step, gpsRatio: gpsRatio);
+        if (progress >= 1.0) return const SizedBox.shrink();
+
         final baseLabel = _emergencyStepLabel(
           status,
           step,
@@ -920,11 +1006,13 @@ class _HomeLiveProgressBannerState extends State<HomeLiveProgressBanner> {
 
         DynamicIslandService.instance.syncProgress(
           keyId: 'emg_$id',
-          title: isWinch ? 'ونش طوارئ غيارك' : 'ميكانيكي طوارئ غيارك',
+          title: isWinch
+              ? _loc.tr('ونش طوارئ غيارك', 'Ghiyarak Tow Truck')
+              : _loc.tr('ميكانيكي طوارئ غيارك', 'Ghiyarak Mechanic'),
           statusText: fullStatus,
           progress: progress,
           etaOrDistance: distKm != null
-              ? '${distKm.toStringAsFixed(1)} كم'
+              ? '${distKm.toStringAsFixed(1)} km'
               : ((e['estimated_time'] as String?) ?? ''),
         );
 
@@ -933,14 +1021,23 @@ class _HomeLiveProgressBannerState extends State<HomeLiveProgressBanner> {
           headerIcon: isWinch ? Icons.local_shipping : Icons.car_crash,
           thumbIcon: isWinch ? Icons.local_shipping : Icons.build,
           title: item.isProviderSide
-              ? 'مهمة طوارئ (${e['car_details'] ?? e['description'] ?? ''})'
-              : '${isWinch ? 'طلب ونش طوارئ' : 'طلب ميكانيكي طوارئ'} (${e['description'] ?? ''})',
+              ? _loc.tr(
+                  'مهمة طوارئ (${e['car_details'] ?? e['description'] ?? ''})',
+                  'Emergency Task (${e['car_details'] ?? e['description'] ?? ''})',
+                )
+              : _loc.tr(
+                  '${isWinch ? 'طلب ونش طوارئ' : 'طلب ميكانيكي طوارئ'} (${e['description'] ?? ''})',
+                  '${isWinch ? 'Tow Request' : 'Mechanic Request'} (${e['description'] ?? ''})',
+                ),
           statusText: fullStatus,
           progress: progress,
           paymentStatus: payStatus,
           isCancelling: _cancellingIds.contains(id),
           payLabel: canPayEmergency
-              ? 'دفع الفاتورة (${amount.toStringAsFixed(2)} د.أ)'
+              ? _loc.tr(
+                  'دفع الفاتورة (${amount.toStringAsFixed(2)} د.أ)',
+                  'Pay Invoice (${amount.toStringAsFixed(2)} JOD)',
+                )
               : null,
           onPayInvoice: canPayEmergency
               ? () => Navigator.push(
@@ -960,7 +1057,7 @@ class _HomeLiveProgressBannerState extends State<HomeLiveProgressBanner> {
                   isEnRoute &&
                   step != 'arrived_at_pickup' &&
                   status != 'completed')
-              ? 'تأكيد وصولي للموقع'
+              ? _loc.tr('تأكيد وصولي للموقع', 'Confirm Arrival')
               : null,
           onAction: (item.isProviderSide &&
                   isEnRoute &&
@@ -1063,9 +1160,9 @@ class _HomeLiveProgressBannerState extends State<HomeLiveProgressBanner> {
                     color: AppColors.success,
                     borderRadius: BorderRadius.circular(10),
                   ),
-                  child: const Text(
-                    'تم الدفع ✓',
-                    style: TextStyle(
+                  child: Text(
+                    _loc.tr('تم الدفع ✓', 'Paid ✓'),
+                    style: const TextStyle(
                       color: Colors.white,
                       fontSize: 10.5,
                       fontWeight: FontWeight.bold,
@@ -1075,7 +1172,6 @@ class _HomeLiveProgressBannerState extends State<HomeLiveProgressBanner> {
             ],
           ),
           const SizedBox(height: 10),
-          // شريط التقدم + الأيقونة يتحركان معاً حسب القرب الفعلي من الموقع (GPS)
           TweenAnimationBuilder<double>(
             tween: Tween(begin: 0, end: progress.clamp(0.0, 1.0)),
             duration: const Duration(milliseconds: 550),
@@ -1183,9 +1279,9 @@ class _HomeLiveProgressBannerState extends State<HomeLiveProgressBanner> {
                   ),
                   onPressed: onOpenMaps,
                   icon: const Icon(Icons.map_outlined, size: 15),
-                  label: const Text(
-                    'الخريطة',
-                    style: TextStyle(fontSize: 11.5),
+                  label: Text(
+                    _loc.tr('الخريطة', 'Map'),
+                    style: const TextStyle(fontSize: 11.5),
                   ),
                 ),
               if (actionLabel != null && onAction != null)
@@ -1225,134 +1321,15 @@ class _HomeLiveProgressBannerState extends State<HomeLiveProgressBanner> {
                           ),
                         )
                       : const Icon(Icons.cancel_outlined, size: 15),
-                  label: const Text(
-                    'إلغاء الطلب',
-                    style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.bold),
+                  label: Text(
+                    _loc.tr('إلغاء الطلب', 'Cancel'),
+                    style: const TextStyle(
+                        fontSize: 11.5, fontWeight: FontWeight.bold),
                   ),
                 ),
             ],
           ),
         ],
-      ),
-    );
-  }
-}
-
-class _BannerTopToast extends StatefulWidget {
-  final String title;
-  final String message;
-  final bool isError;
-  final VoidCallback onDone;
-
-  const _BannerTopToast({
-    required this.title,
-    required this.message,
-    required this.isError,
-    required this.onDone,
-  });
-
-  @override
-  State<_BannerTopToast> createState() => _BannerTopToastState();
-}
-
-class _BannerTopToastState extends State<_BannerTopToast>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _ctrl;
-  late final Animation<Offset> _slide;
-  Timer? _timer;
-  bool _closing = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _ctrl = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 280),
-    );
-    _slide = Tween<Offset>(
-      begin: const Offset(0, -1.2),
-      end: Offset.zero,
-    ).animate(CurvedAnimation(parent: _ctrl, curve: Curves.easeOutBack));
-    _ctrl.forward();
-    _timer = Timer(const Duration(seconds: 3), _dismiss);
-  }
-
-  Future<void> _dismiss() async {
-    if (_closing || !mounted) return;
-    _closing = true;
-    _timer?.cancel();
-    await _ctrl.reverse();
-    widget.onDone();
-  }
-
-  @override
-  void dispose() {
-    _timer?.cancel();
-    _ctrl.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final bg = widget.isError ? const Color(0xFFDC2626) : AppColors.success;
-    return Positioned(
-      top: MediaQuery.of(context).padding.top + 10,
-      left: 16,
-      right: 16,
-      child: SlideTransition(
-        position: _slide,
-        child: Material(
-          color: Colors.transparent,
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-            decoration: BoxDecoration(
-              color: bg,
-              borderRadius: BorderRadius.circular(16),
-              boxShadow: [
-                BoxShadow(
-                  color: bg.withValues(alpha: 0.35),
-                  blurRadius: 14,
-                  offset: const Offset(0, 6),
-                ),
-              ],
-            ),
-            child: Row(
-              children: [
-                Icon(
-                  widget.isError
-                      ? Icons.error_outline_rounded
-                      : Icons.check_circle_rounded,
-                  color: Colors.white,
-                  size: 22,
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        widget.title,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.w800,
-                          fontSize: 13.5,
-                        ),
-                      ),
-                      Text(
-                        widget.message,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 12,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
       ),
     );
   }
