@@ -19,11 +19,11 @@ class EnvConfig {
   // معرّفات Google AdMob (الافتراضي Test IDs الرسمية من Google — بدّلها بمعرّفاتك عند النشر عبر dart-define)
   static const String admobAndroidBannerId = String.fromEnvironment(
     'ADMOB_ANDROID_BANNER',
-    defaultValue: 'ca-app-pub-3940256099942544/6300978111',
+    defaultValue: 'ca-app-pub-9603448958879862~2042793991',
   );
   static const String admobIosBannerId = String.fromEnvironment(
     'ADMOB_IOS_BANNER',
-    defaultValue: 'ca-app-pub-3940256099942544/2934735716',
+    defaultValue: 'ca-app-pub-9603448958879862~5759723902',
   );
 
   // بيانات الدعم الفني (static const لقبولها داخل const Text في كل الشاشات)
@@ -73,6 +73,10 @@ class EnvConfig {
   static final ValueNotifier<bool> adsEnabled = ValueNotifier<bool>(true);
   static final ValueNotifier<bool> maintenanceMode = ValueNotifier<bool>(false);
 }
+static const String supabaseUrl = String.fromEnvironment(
+  'SUPABASE_URL',
+  defaultValue: 'https://api.ghayarakjo.com',
+);
 
 /// كاش خفيف بالذاكرة للبيانات العامة قليلة التغيير
 class AppMemoryCache {

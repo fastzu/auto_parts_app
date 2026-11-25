@@ -5,6 +5,62 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'dynamic_island_service.dart';
 import 'notifications_service.dart';
 
+/// تحليل تاريخ ووقت موعد الورشة (يدعم ص/م و AM/PM ونظام 24 ساعة)
+DateTime? parseWorkshopAppointmentDateTime(
+  String? dateStr,
+  String? timeStr,
+) {
+  if (dateStr == null || dateStr.trim().isEmpty) return null;
+  final dateParts = dateStr.trim().split('-');
+  if (dateParts.length != 3) return null;
+  final year = int.tryParse(dateParts[0]);
+  final month = int.tryParse(dateParts[1]);
+  final day = int.tryParse(dateParts[2]);
+  if (year == null || month == null || day == null) return null;
+
+  int hour = 9;
+  int minute = 0;
+  final raw = (timeStr ?? '').trim();
+  if (raw.isNotEmpty) {
+    final isPm = raw.contains('م') || raw.toUpperCase().contains('PM');
+    final isAm = raw.contains('ص') || raw.toUpperCase().contains('AM');
+    final match = RegExp(r'(\d{1,2})\s*:\s*(\d{2})').firstMatch(raw);
+    if (match != null) {
+      hour = int.tryParse(match.group(1)!) ?? 9;
+      minute = int.tryParse(match.group(2)!) ?? 0;
+      if (isPm && hour < 12) hour += 12;
+      if (isAm && hour == 12) hour = 0;
+    }
+  }
+  return DateTime(year, month, day, hour, minute);
+}
+
+/// هل حان وقت إظهار البروجرس لموعد الورشة؟
+/// يظهر فقط قبل الموعد بساعة واحدة، أو إذا بدأ الميكانيكي العمل فعلياً أو أصدر فاتورة أو اقترح موعداً بديلاً
+bool isWorkshopProgressWindowActive(Map<String, dynamic> appt) {
+  final status = (appt['status'] as String?) ?? 'pending';
+  final step = (appt['progress_step'] as String?) ?? 'pending';
+
+  if (status == 'reschedule_proposed') return true;
+  if (step == 'arrived_at_workshop' ||
+      step == 'diagnosis' ||
+      step == 'repairing' ||
+      step == 'testing' ||
+      step == 'awaiting_payment' ||
+      step == 'completed') {
+    return true;
+  }
+
+  final scheduled = parseWorkshopAppointmentDateTime(
+    appt['appointment_date'] as String?,
+    appt['appointment_time'] as String?,
+  );
+  if (scheduled == null) return true;
+
+  final revealAt = scheduled.subtract(const Duration(hours: 1));
+  return !DateTime.now().isBefore(revealAt);
+}
+
 class LiveProgressTracker {
   LiveProgressTracker._();
   static final LiveProgressTracker instance = LiveProgressTracker._();
@@ -15,44 +71,20 @@ class LiveProgressTracker {
   final SupabaseClient _db = Supabase.instance.client;
   final NotificationsService _notifs = NotificationsService.instance;
 
-  final ValueNotifier<double?> workshopDistanceKm = ValueNotifier<double?>(null);
-  final ValueNotifier<double> workshopGpsProgress = ValueNotifier<double>(0.05);
+  final ValueNotifier<double?> workshopDistanceKm =
+      ValueNotifier<double?>(null);
   final ValueNotifier<double?> emergencyDistanceKm =
       ValueNotifier<double?>(null);
-  final ValueNotifier<double> emergencyGpsProgress = ValueNotifier<double>(0.05);
-
-  final Map<String, double> _initialDistanceKm = {};
-  final Set<String> _arrivedWorkshopIds = {};
-  final Set<String> _arrivedEmergencyIds = {};
-  final Set<String> _markingWorkshopIds = {};
-  final Set<String> _markingEmergencyIds = {};
 
   String? _activeWorkshopApptId;
   String? _activeEmergencyReqId;
-  DateTime? _lastWorkshopDbSync;
-  DateTime? _lastEmergencyDbSync;
 
-  static double distanceKmBetween(
-    double lat1,
-    double lng1,
-    double lat2,
-    double lng2,
-  ) {
-    final meters = Geolocator.distanceBetween(lat1, lng1, lat2, lng2);
-    return double.parse((meters / 1000.0).toStringAsFixed(2));
-  }
-
-  /// يحسب نسبة التقدم المستمرة من 0.05 إلى 1.0 حسب المسافة الحالية مقارنة بالمسافة الأولية
-  double computeGpsProgress(String keyId, double currentKm) {
-    if (currentKm <= 0.15) return 1.0; // وصل ضمن 150 متر
-    final prevInit = _initialDistanceKm[keyId];
-    if (prevInit == null || currentKm > prevInit) {
-      _initialDistanceKm[keyId] = currentKm < 0.4 ? 0.4 : currentKm;
-    }
-    final initial = _initialDistanceKm[keyId]!;
-    final ratio = (initial - currentKm) / initial;
-    return ratio.clamp(0.05, 0.99);
-  }
+  // أقفال لمنع تكرار إشعار الوصول أكثر من مرة
+  final Set<String> _arrivedWorkshopIds = {};
+  final Set<String> _arrivedEmergencyIds = {};
+  bool _markingWorkshop = false;
+  bool _markingEmergency = false;
+  DateTime? _lastProviderGpsPush;
 
   Future<bool> _hasPermission() async {
     try {
@@ -69,7 +101,7 @@ class LiveProgressTracker {
     }
   }
 
-  /// تتبع العميل في طريقه إلى الورشة
+  /// تتبع العميل في طريقه إلى الورشة + تحديث المسافة + Dynamic Island
   Future<void> startTrackingToWorkshop({
     required String appointmentId,
     required double workshopLat,
@@ -82,121 +114,88 @@ class LiveProgressTracker {
     }
     _activeWorkshopApptId = appointmentId;
     await _workshopSub?.cancel();
-    _workshopSub = null;
 
     if (!await _hasPermission()) return;
 
-    Future<bool> handlePosition(Position pos) async {
-      if (_arrivedWorkshopIds.contains(appointmentId)) return true;
+    _workshopSub = Geolocator.getPositionStream(
+      locationSettings: const LocationSettings(
+        accuracy: LocationAccuracy.high,
+        distanceFilter: 20,
+      ),
+    ).listen(
+      (pos) async {
+        if (_arrivedWorkshopIds.contains(appointmentId) || _markingWorkshop) {
+          return;
+        }
+        final meters = Geolocator.distanceBetween(
+          pos.latitude,
+          pos.longitude,
+          workshopLat,
+          workshopLng,
+        );
+        final km = double.parse((meters / 1000).toStringAsFixed(1));
+        workshopDistanceKm.value = km;
 
-      final km = distanceKmBetween(
-        pos.latitude,
-        pos.longitude,
-        workshopLat,
-        workshopLng,
-      );
-      final smoothProgress = computeGpsProgress('appt_$appointmentId', km);
-
-      workshopDistanceKm.value = km;
-      workshopGpsProgress.value = smoothProgress;
-
-      if (km <= 0.15) {
         await DynamicIslandService.instance.syncProgress(
           keyId: 'appt_$appointmentId',
           title: 'موعد الورشة',
-          statusText: 'وصلت إلى الورشة',
-          progress: 1.0,
-          etaOrDistance: 'وصلت ✓',
+          statusText:
+              meters <= 150 ? 'وصلت إلى الورشة' : 'في الطريق إلى الورشة',
+          progress:
+              meters <= 150 ? 0.35 : (1.0 - (km / 20.0)).clamp(0.1, 0.3),
+          etaOrDistance: meters <= 150 ? 'وصلت ✓' : '$km كم',
         );
-        await markWorkshopArrived(
-          appointmentId: appointmentId,
-          workshopUserId: workshopUserId,
-        );
-        return true;
-      }
 
-      final now = DateTime.now();
-      if (_lastWorkshopDbSync == null ||
-          now.difference(_lastWorkshopDbSync!).inSeconds >= 5) {
-        _lastWorkshopDbSync = now;
-        try {
-          await _db.from('workshop_appointments').update({
-            'customer_latitude': pos.latitude,
-            'customer_longitude': pos.longitude,
-          }).eq('id', appointmentId);
-        } catch (_) {}
-      }
-
-      await DynamicIslandService.instance.syncProgress(
-        keyId: 'appt_$appointmentId',
-        title: 'موعد الورشة',
-        statusText: 'في الطريق إلى الورشة',
-        progress: smoothProgress,
-        etaOrDistance: '${km.toStringAsFixed(1)} كم',
-      );
-      return false;
-    }
-
-    try {
-      final firstPos = await Geolocator.getCurrentPosition();
-      final arrivedNow = await handlePosition(firstPos);
-      if (arrivedNow || _arrivedWorkshopIds.contains(appointmentId)) {
-        return; // وصل مسبقاً — لا تفتح بث GPS أبداً
-      }
-    } catch (_) {}
-
-    if (_arrivedWorkshopIds.contains(appointmentId)) return;
-
-    _workshopSub = Geolocator.getPositionStream(
-      locationSettings: const LocationSettings(
-        accuracy: LocationAccuracy.bestForNavigation,
-        distanceFilter: 10,
-      ),
-    ).listen((pos) {
-      handlePosition(pos);
-    }, onError: (_) {});
+        if (meters <= 150) {
+          await markWorkshopArrived(
+            appointmentId: appointmentId,
+            workshopUserId: workshopUserId,
+          );
+        }
+      },
+      onError: (_) {},
+    );
   }
 
   Future<void> markWorkshopArrived({
     required String appointmentId,
     required String workshopUserId,
   }) async {
-    if (_arrivedWorkshopIds.contains(appointmentId) ||
-        _markingWorkshopIds.contains(appointmentId)) {
+    if (_arrivedWorkshopIds.contains(appointmentId) || _markingWorkshop) {
       return;
     }
-    _markingWorkshopIds.add(appointmentId);
+    _markingWorkshop = true;
     _arrivedWorkshopIds.add(appointmentId);
 
     try {
       await _workshopSub?.cancel();
       _workshopSub = null;
       workshopDistanceKm.value = 0.0;
-      workshopGpsProgress.value = 1.0;
 
-      // تحديث مشروط: لا يرسل الإشعار إلا إذا كانت الحالة فعلاً on_the_way
       final updated = await _db
           .from('workshop_appointments')
           .update({'progress_step': 'arrived_at_workshop'})
           .eq('id', appointmentId)
-          .or('progress_step.is.null,progress_step.eq.on_the_way')
+          .eq('progress_step', 'on_the_way')
           .select('id');
 
-      if ((updated as List).isEmpty) return;
-
-      await _notifs.sendNotification(
-        targetUserId: workshopUserId,
-        title: 'وصل العميل إلى ورشتك',
-        body: 'يمكنك الآن البدء بفحص السيارة وتحديث مراحل الصيانة.',
-        type: 'customer_arrived',
-        referenceId: appointmentId,
-      );
+      if ((updated as List).isNotEmpty) {
+        await _notifs.sendNotification(
+          targetUserId: workshopUserId,
+          title: 'وصل العميل إلى ورشتك 🚗',
+          body: 'يمكنك الآن البدء بفحص السيارة وتحديث مراحل الصيانة.',
+          type: 'customer_arrived',
+          referenceId: appointmentId,
+        );
+      }
+    } catch (_) {
+      // نبقي القفل مفعلاً خلال الجلسة لمنع تكرار الإشعار
     } finally {
-      _markingWorkshopIds.remove(appointmentId);
+      _markingWorkshop = false;
     }
   }
 
-  /// تتبع الميكانيكي / الونش في طريقه للعميل
+  /// تتبع فني الطوارئ / سائق الونش وهو يقترب من العميل + تحديث موقعه الحي على الخريطة (UPDATE بنفس الصف بدون سجل تاريخي)
   Future<void> startTrackingEmergencyArrival({
     required String requestId,
     required String customerUserId,
@@ -210,65 +209,55 @@ class LiveProgressTracker {
     }
     _activeEmergencyReqId = requestId;
     await _emergencySub?.cancel();
-    _emergencySub = null;
 
     if (!await _hasPermission()) return;
 
-    Future<bool> handlePosition(Position pos) async {
-      if (_arrivedEmergencyIds.contains(requestId)) return true;
-
-      final km = distanceKmBetween(
-        pos.latitude,
-        pos.longitude,
-        pickupLat,
-        pickupLng,
-      );
-      final smoothProgress = computeGpsProgress('emg_$requestId', km);
-
-      emergencyDistanceKm.value = km;
-      emergencyGpsProgress.value = smoothProgress;
-
-      if (km <= 0.15) {
-        await markEmergencyArrived(
-          requestId: requestId,
-          customerUserId: customerUserId,
-          serviceType: serviceType,
-        );
-        return true;
-      }
-
-      final now = DateTime.now();
-      if (_lastEmergencyDbSync == null ||
-          now.difference(_lastEmergencyDbSync!).inSeconds >= 5) {
-        _lastEmergencyDbSync = now;
-        try {
-          await _db.from('mechanic_requests').update({
-            'latitude': pos.latitude,
-            'longitude': pos.longitude,
-          }).eq('id', requestId);
-        } catch (_) {}
-      }
-      return false;
-    }
-
-    try {
-      final firstPos = await Geolocator.getCurrentPosition();
-      final arrivedNow = await handlePosition(firstPos);
-      if (arrivedNow || _arrivedEmergencyIds.contains(requestId)) {
-        return; // وصل مسبقاً — لا تفتح بث GPS أبداً
-      }
-    } catch (_) {}
-
-    if (_arrivedEmergencyIds.contains(requestId)) return;
+    final providerId = _db.auth.currentUser?.id;
 
     _emergencySub = Geolocator.getPositionStream(
       locationSettings: const LocationSettings(
         accuracy: LocationAccuracy.bestForNavigation,
         distanceFilter: 10,
       ),
-    ).listen((pos) {
-      handlePosition(pos);
-    }, onError: (_) {});
+    ).listen(
+      (pos) async {
+        if (_arrivedEmergencyIds.contains(requestId) || _markingEmergency) {
+          return;
+        }
+
+        // تحديث موقع المزود الحي في صفه فقط (سياسة أوبر: لا يُحفظ سجل تاريخي للمواقع)
+        final now = DateTime.now();
+        if (providerId != null &&
+            (_lastProviderGpsPush == null ||
+                now.difference(_lastProviderGpsPush!).inSeconds >= 3)) {
+          _lastProviderGpsPush = now;
+          try {
+            await _db.from('customers').update({
+              'latitude': pos.latitude,
+              'longitude': pos.longitude,
+            }).eq('id', providerId);
+          } catch (_) {}
+        }
+
+        final meters = Geolocator.distanceBetween(
+          pos.latitude,
+          pos.longitude,
+          pickupLat,
+          pickupLng,
+        );
+        final km = double.parse((meters / 1000).toStringAsFixed(1));
+        emergencyDistanceKm.value = km;
+
+        if (meters <= 120) {
+          await markEmergencyArrived(
+            requestId: requestId,
+            customerUserId: customerUserId,
+            serviceType: serviceType,
+          );
+        }
+      },
+      onError: (_) {},
+    );
   }
 
   Future<void> markEmergencyArrived({
@@ -276,41 +265,39 @@ class LiveProgressTracker {
     required String customerUserId,
     required String serviceType,
   }) async {
-    if (_arrivedEmergencyIds.contains(requestId) ||
-        _markingEmergencyIds.contains(requestId)) {
+    if (_arrivedEmergencyIds.contains(requestId) || _markingEmergency) {
       return;
     }
-    _markingEmergencyIds.add(requestId);
+    _markingEmergency = true;
     _arrivedEmergencyIds.add(requestId);
 
     try {
       await _emergencySub?.cancel();
       _emergencySub = null;
       emergencyDistanceKm.value = 0.0;
-      emergencyGpsProgress.value = 1.0;
 
-      // تحديث مشروط: لا يرسل الإشعار إلا مرة واحدة عند التحوّل من on_the_way
       final updated = await _db
           .from('mechanic_requests')
           .update({'progress_step': 'arrived_at_pickup'})
           .eq('id', requestId)
-          .or('progress_step.is.null,progress_step.eq.on_the_way')
+          .eq('progress_step', 'on_the_way')
           .select('id');
 
-      if ((updated as List).isEmpty) return;
-
-      final isWinch = serviceType == 'winch';
-      await _notifs.sendNotification(
-        targetUserId: customerUserId,
-        title: isWinch ? 'وصل الونش إلى موقعك' : 'وصل ميكانيكي الطوارئ',
-        body: isWinch
-            ? 'سائق الونش متواجد الآن عند نقطة الالتقاط.'
-            : 'الميكانيكي وصل إلى موقع سيارتك الآن.',
-        type: isWinch ? 'winch_arrived' : 'mechanic_arrived',
-        referenceId: requestId,
-      );
+      if ((updated as List).isNotEmpty) {
+        final isWinch = serviceType == 'winch';
+        await _notifs.sendNotification(
+          targetUserId: customerUserId,
+          title: isWinch ? 'وصل الونش إلى موقعك 🚚' : 'وصل ميكانيكي الطوارئ 🔧',
+          body: isWinch
+              ? 'سائق الونش متواجد الآن عند نقطة الالتقاط.'
+              : 'الميكانيكي وصل إلى موقع سيارتك الآن.',
+          type: isWinch ? 'winch_arrived' : 'mechanic_arrived',
+          referenceId: requestId,
+        );
+      }
+    } catch (_) {
     } finally {
-      _markingEmergencyIds.remove(requestId);
+      _markingEmergency = false;
     }
   }
 
@@ -319,5 +306,7 @@ class LiveProgressTracker {
     _workshopSub = null;
     _emergencySub?.cancel();
     _emergencySub = null;
+    _activeWorkshopApptId = null;
+    _activeEmergencyReqId = null;
   }
 }

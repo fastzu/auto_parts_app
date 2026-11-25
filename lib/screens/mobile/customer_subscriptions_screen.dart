@@ -1,11 +1,11 @@
 import 'package:material_ui/material_ui.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../models/subscription_plans.dart';
+import '../../services/app_locale_service.dart';
 import '../../services/paytabs_payment_service.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/animations.dart';
 
-class CustomerSubscriptionsScreen extends StatefulWidget {
+class CustomerSubscriptionsScreen extends StatelessWidget {
   final String currentPlanCode;
   final VoidCallback onSubscribed;
 
@@ -16,315 +16,168 @@ class CustomerSubscriptionsScreen extends StatefulWidget {
   });
 
   @override
-  State<CustomerSubscriptionsScreen> createState() =>
-      _CustomerSubscriptionsScreenState();
-}
-
-class _CustomerSubscriptionsScreenState
-    extends State<CustomerSubscriptionsScreen> {
-  final _db = Supabase.instance.client;
-  late String _activePlanCode = widget.currentPlanCode;
-  bool _cancelling = false;
-
-  Future<void> _cancelMembership() async {
-    final uid = _db.auth.currentUser?.id;
-    if (uid == null) return;
-
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text(
-          'إلغاء العضوية المدفوعة',
-          style: TextStyle(fontWeight: FontWeight.bold),
-        ),
-        content: const Text(
-          'هل أنت متأكد من إلغاء عضوية البرو؟\n\nسيتم تحويل حسابك إلى العضوية المجانية (عمولة 2% على خدمات الورش والطوارئ).',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('تراجع'),
-          ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.red,
-              foregroundColor: Colors.white,
-            ),
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('نعم، إلغاء العضوية'),
-          ),
-        ],
-      ),
-    );
-
-    if (confirm != true || !mounted) return;
-
-    setState(() => _cancelling = true);
-    try {
-      await _db.from('customers').update({
-        'subscription_plan': 'free',
-        'subscription_expires_at': null,
-      }).eq('id', uid);
-
-      setState(() => _activePlanCode = 'free');
-      widget.onSubscribed();
-
-      if (mounted) {
-        _showTopNotice(
-          title: 'تم إلغاء العضوية',
-          message: 'تم تحويل حسابك إلى العضوية المجانية بنجاح.',
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        _showTopNotice(
-          title: 'تعذر إلغاء العضوية',
-          message: '$e',
-          isError: true,
-        );
-      }
-    } finally {
-      if (mounted) setState(() => _cancelling = false);
-    }
-  }
-
-  void _showTopNotice({
-    required String title,
-    required String message,
-    bool isError = false,
-  }) {
-    final overlay = Overlay.maybeOf(context);
-    if (overlay == null) return;
-    late OverlayEntry entry;
-    entry = OverlayEntry(
-      builder: (_) => Positioned(
-        top: MediaQuery.of(context).padding.top + 10,
-        left: 16,
-        right: 16,
-        child: Material(
-          color: Colors.transparent,
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-            decoration: BoxDecoration(
-              color: isError ? const Color(0xFFDC2626) : AppColors.success,
-              borderRadius: BorderRadius.circular(16),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.2),
-                  blurRadius: 12,
-                  offset: const Offset(0, 4),
-                ),
-              ],
-            ),
-            child: Row(
-              children: [
-                Icon(
-                  isError ? Icons.error_outline : Icons.check_circle_rounded,
-                  color: Colors.white,
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        title,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      Text(
-                        message,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 12,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-    overlay.insert(entry);
-    Future.delayed(const Duration(seconds: 3), () {
-      if (entry.mounted) entry.remove();
-    });
-  }
-
-  @override
   Widget build(BuildContext context) {
-    final hasPaidPlan = _activePlanCode != 'free';
+    final loc = AppLocaleService.instance;
+    return ValueListenableBuilder<String>(
+      valueListenable: loc.langCode,
+      builder: (_, __, ___) {
+        return Scaffold(
+          appBar: AppBar(
+            title: Text(loc.tr('عضوية المستخدم', 'Customer Membership')),
+          ),
+          body: ListView(
+            padding: const EdgeInsets.all(16),
+            children: List.generate(
+              AppSubscriptionCatalog.customerPlans.length,
+              (i) {
+                final plan = AppSubscriptionCatalog.customerPlans[i];
+                final isCurrent = currentPlanCode == plan.code;
 
-    return Scaffold(
-      appBar: AppBar(title: const Text('عضوية المستخدم')),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          ...List.generate(AppSubscriptionCatalog.customerPlans.length, (i) {
-            final plan = AppSubscriptionCatalog.customerPlans[i];
-            final isCurrent = _activePlanCode == plan.code;
-
-            return FadeSlideIn(
-              index: i,
-              child: Container(
-                margin: const EdgeInsets.only(bottom: 14),
-                padding: const EdgeInsets.all(18),
-                decoration: BoxDecoration(
-                  color: AppColors.surface,
-                  borderRadius: BorderRadius.circular(18),
-                  border: Border.all(
-                    color: isCurrent ? AppColors.orange : AppColors.border,
-                    width: isCurrent ? 2 : 1,
-                  ),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text(
-                          plan.title,
-                          style: const TextStyle(
-                              fontSize: 17, fontWeight: FontWeight.bold),
-                        ),
-                        Text(
-                          plan.priceJod == 0
-                              ? 'مجاني'
-                              : '${plan.priceJod} د.أ / شهر',
-                          style: const TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w800,
-                            color: AppColors.orange,
-                          ),
-                        ),
-                      ],
+                return FadeSlideIn(
+                  index: i,
+                  child: Container(
+                    margin: const EdgeInsets.only(bottom: 14),
+                    padding: const EdgeInsets.all(18),
+                    decoration: BoxDecoration(
+                      color: AppColors.surface,
+                      borderRadius: BorderRadius.circular(18),
+                      border: Border.all(
+                        color: isCurrent ? AppColors.orange : AppColors.border,
+                        width: isCurrent ? 2 : 1,
+                      ),
                     ),
-                    const SizedBox(height: 10),
-                    ...plan.features.map(
-                      (f) => Padding(
-                        padding: const EdgeInsets.only(bottom: 6),
-                        child: Row(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
-                            const Icon(Icons.check_circle,
-                                size: 17, color: AppColors.success),
-                            const SizedBox(width: 8),
-                            Expanded(
-                                child: Text(f,
-                                    style: const TextStyle(fontSize: 13))),
+                            Flexible(
+                              child: Text(
+                                plan.title,
+                                style: const TextStyle(
+                                  fontSize: 17,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
+                            Text(
+                              plan.priceJod == 0
+                                  ? loc.tr('مجاني', 'Free')
+                                  : '${plan.priceJod} ${loc.tr("د.أ / شهر", "JOD / mo")}',
+                              style: const TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w800,
+                                color: AppColors.orange,
+                              ),
+                            ),
                           ],
                         ),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton(
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor:
-                              isCurrent ? AppColors.navy : AppColors.orange,
-                          foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(vertical: 13),
+                        const SizedBox(height: 10),
+                        ...plan.features.map(
+                          (f) => Padding(
+                            padding: const EdgeInsets.only(bottom: 6),
+                            child: Row(
+                              children: [
+                                const Icon(
+                                  Icons.check_circle,
+                                  size: 17,
+                                  color: AppColors.success,
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    f,
+                                    style: const TextStyle(fontSize: 13),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
                         ),
-                        onPressed: (isCurrent || plan.priceJod == 0)
-                            ? null
-                            : () async {
-                                final ok = await PayTabsPaymentService()
-                                    .startPaymentFlow(
-                                  context: context,
-                                  baseAmount: plan.priceJod,
-                                  title: plan.title,
-                                  orderType: 'sub',
-                                  referenceId: plan.code,
-                                );
-                                if (ok && mounted) {
-                                  widget.onSubscribed();
-                                  Navigator.pop(context);
-                                }
-                              },
-                        child: Text(isCurrent ? 'باقتك الحالية' : 'اشترك الآن'),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            );
-          }),
-
-          // زر إلغاء العضوية للمشتركين بالباقة المدفوعة
-          if (hasPaidPlan) ...[
-            const SizedBox(height: 8),
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: Colors.red.withValues(alpha: 0.06),
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: Colors.red.withValues(alpha: 0.3)),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Row(
-                    children: [
-                      Icon(Icons.cancel_outlined, color: Colors.red, size: 20),
-                      SizedBox(width: 8),
-                      Text(
-                        'إدارة العضوية الحالية',
-                        style: TextStyle(
-                          fontWeight: FontWeight.bold,
-                          color: Colors.red,
-                          fontSize: 14,
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 6),
-                  const Text(
-                    'يمكنك إلغاء اشتراكك في أي وقت والعودة إلى العضوية المجانية.',
-                    style:
-                        TextStyle(fontSize: 12, color: AppColors.textSecondary),
-                  ),
-                  const SizedBox(height: 12),
-                  SizedBox(
-                    width: double.infinity,
-                    child: OutlinedButton.icon(
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: Colors.red,
-                        side: const BorderSide(color: Colors.red),
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                      ),
-                      onPressed: _cancelling ? null : _cancelMembership,
-                      icon: _cancelling
-                          ? const SizedBox(
-                              width: 16,
-                              height: 16,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                color: Colors.red,
+                        const SizedBox(height: 12),
+                        SizedBox(
+                          width: double.infinity,
+                          child: ElevatedButton(
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: isCurrent
+                                  ? AppColors.navy
+                                  : AppColors.orange,
+                              foregroundColor: Colors.white,
+                              padding: const EdgeInsets.symmetric(vertical: 13),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(14),
                               ),
-                            )
-                          : const Icon(Icons.person_off_outlined),
-                      label: const Text(
-                        'إلغاء العضوية',
-                        style: TextStyle(fontWeight: FontWeight.bold),
-                      ),
+                            ),
+                            onPressed: (isCurrent || plan.priceJod == 0)
+                                ? null
+                                : () async {
+                                    final navigator = Navigator.of(context);
+                                    final ok = await PayTabsPaymentService()
+                                        .startPaymentFlow(
+                                      context: context,
+                                      baseAmount: plan.priceJod,
+                                      title: plan.title,
+                                      orderType: 'sub',
+                                      referenceId: plan.code,
+                                    );
+                                    if (!ok) return;
+                                    onSubscribed();
+                                    if (navigator.canPop()) navigator.pop();
+                                  },
+                            child: Text(
+                              isCurrent
+                                  ? loc.tr('باقتك الحالية', 'Current Plan')
+                                  : loc.tr('اشترك الآن (الدفع)',
+                                      'Subscribe & Checkout'),
+                              style:
+                                  const TextStyle(fontWeight: FontWeight.bold),
+                            ),
+                          ),
+                        ),
+                        if (plan.priceJod > 0) ...[
+                          const SizedBox(height: 8),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 10, vertical: 7),
+                            decoration: BoxDecoration(
+                              color: AppColors.navy.withValues(alpha: 0.05),
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: Row(
+                              children: [
+                                const Icon(
+                                  Icons.history_toggle_off_rounded,
+                                  size: 16,
+                                  color: AppColors.navy,
+                                ),
+                                const SizedBox(width: 6),
+                                Expanded(
+                                  child: Text(
+                                    loc.tr(
+                                      'يمكنك طلب استرداد قيمة الباقة (Refund) خلال 24 ساعة فقط من تاريخ الاشتراك وفق الشروط والأحكام.',
+                                      'You may request a subscription refund within 24 hours of purchase only, subject to Terms & Conditions.',
+                                    ),
+                                    style: const TextStyle(
+                                      fontSize: 11,
+                                      color: AppColors.textSecondary,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ],
                     ),
                   ),
-                ],
-              ),
+                );
+              },
             ),
-          ],
-        ],
-      ),
+          ),
+        );
+      },
     );
   }
 }

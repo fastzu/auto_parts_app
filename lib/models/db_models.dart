@@ -28,8 +28,11 @@ class CustomerProfile {
   final String? winchDriverName;
   final String? winchDriverPhone;
   final DateTime? subscriptionExpiresAt;
+  final DateTime? subscriptionStartedAt;
   final double ratingAvg;
   final int ratingCount;
+  final int warningsCount;
+  final bool isDeleted;
 
   CustomerProfile({
     required this.id,
@@ -61,9 +64,13 @@ class CustomerProfile {
     this.winchDriverName,
     this.winchDriverPhone,
     this.subscriptionExpiresAt,
+    this.subscriptionStartedAt,
     this.ratingAvg = 0.0,
     this.ratingCount = 0,
+    this.warningsCount = 0,
+    this.isDeleted = false,
   });
+
   int get seoBoostTier {
     if (subscriptionExpiresAt != null &&
         subscriptionExpiresAt!.isBefore(DateTime.now())) {
@@ -111,8 +118,13 @@ class CustomerProfile {
       subscriptionExpiresAt: map['subscription_expires_at'] != null
           ? DateTime.tryParse(map['subscription_expires_at'].toString())
           : null,
+      subscriptionStartedAt: map['subscription_started_at'] != null
+          ? DateTime.tryParse(map['subscription_started_at'].toString())
+          : null,
       ratingAvg: (map['rating_avg'] as num?)?.toDouble() ?? 0.0,
       ratingCount: (map['rating_count'] as num?)?.toInt() ?? 0,
+      warningsCount: (map['warnings_count'] as num?)?.toInt() ?? 0,
+      isDeleted: (map['is_deleted'] as bool?) ?? false,
     );
   }
 }
@@ -190,6 +202,9 @@ class DbMechanicRequest {
   final String status;
   final String progressStep;
   final double totalAmount;
+  final double quotedPrice;
+  final String? quoteNotes;
+  final List<String> rejectedProviderIds;
   final double commissionAmount;
   final String paymentStatus;
   final double? latitude;
@@ -201,6 +216,9 @@ class DbMechanicRequest {
   final String? dropoffAddress;
   final String? estimatedTime;
   final bool broadcastAll;
+  final int? customerRating;
+  final String? customerReview;
+  final DateTime? invoiceIssuedAt;
 
   DbMechanicRequest({
     required this.id,
@@ -213,6 +231,9 @@ class DbMechanicRequest {
     required this.status,
     required this.progressStep,
     required this.totalAmount,
+    this.quotedPrice = 0.0,
+    this.quoteNotes,
+    this.rejectedProviderIds = const [],
     required this.commissionAmount,
     required this.paymentStatus,
     this.latitude,
@@ -224,9 +245,25 @@ class DbMechanicRequest {
     this.dropoffAddress,
     this.estimatedTime,
     this.broadcastAll = false,
+    this.customerRating,
+    this.customerReview,
+    this.invoiceIssuedAt,
   });
 
+  bool get isInvoiceLocked =>
+      invoiceIssuedAt != null ||
+      progressStep == 'awaiting_payment' ||
+      paymentStatus == 'paid' ||
+      paymentStatus == 'pending_verification';
+
   factory DbMechanicRequest.fromMap(Map<String, dynamic> map) {
+    final rawRejected = map['rejected_provider_ids'];
+    final rejectedList = rawRejected is List
+        ? rawRejected.map((e) => e.toString()).toList()
+        : <String>[];
+    final total = (map['total_amount'] as num?)?.toDouble() ?? 0.0;
+    final quoted = (map['quoted_price'] as num?)?.toDouble() ?? total;
+
     return DbMechanicRequest(
       id: map['id'] as String,
       userId: map['user_id'] as String?,
@@ -237,7 +274,10 @@ class DbMechanicRequest {
       description: map['description'] as String?,
       status: (map['status'] as String?) ?? 'pending',
       progressStep: (map['progress_step'] as String?) ?? 'pending',
-      totalAmount: (map['total_amount'] as num?)?.toDouble() ?? 0.0,
+      totalAmount: total,
+      quotedPrice: quoted,
+      quoteNotes: map['quote_notes'] as String?,
+      rejectedProviderIds: rejectedList,
       commissionAmount: (map['commission_amount'] as num?)?.toDouble() ?? 0.0,
       paymentStatus: (map['payment_status'] as String?) ?? 'unpaid',
       latitude: (map['latitude'] as num?)?.toDouble(),
@@ -251,6 +291,11 @@ class DbMechanicRequest {
       dropoffAddress: map['dropoff_address'] as String?,
       estimatedTime: map['estimated_time'] as String?,
       broadcastAll: (map['broadcast_all'] as bool?) ?? false,
+      customerRating: (map['customer_rating'] as num?)?.toInt(),
+      customerReview: map['customer_review'] as String?,
+      invoiceIssuedAt: map['invoice_issued_at'] != null
+          ? DateTime.tryParse(map['invoice_issued_at'].toString())
+          : null,
     );
   }
 }
@@ -316,6 +361,9 @@ class DbWorkshopAppointment {
   final double platformCommission;
   final String paymentMethod;
   final String paymentStatus;
+  final int? customerRating;
+  final String? customerReview;
+  final DateTime? invoiceIssuedAt;
 
   DbWorkshopAppointment({
     required this.id,
@@ -330,7 +378,16 @@ class DbWorkshopAppointment {
     required this.platformCommission,
     required this.paymentMethod,
     this.paymentStatus = 'unpaid',
+    this.customerRating,
+    this.customerReview,
+    this.invoiceIssuedAt,
   });
+
+  bool get isInvoiceLocked =>
+      invoiceIssuedAt != null ||
+      progressStep == 'awaiting_payment' ||
+      paymentStatus == 'paid' ||
+      paymentStatus == 'pending_verification';
 
   factory DbWorkshopAppointment.fromMap(Map<String, dynamic> map) {
     return DbWorkshopAppointment(
@@ -347,6 +404,11 @@ class DbWorkshopAppointment {
           (map['platform_commission'] as num?)?.toDouble() ?? 0.0,
       paymentMethod: (map['payment_method'] as String?) ?? 'cash',
       paymentStatus: (map['payment_status'] as String?) ?? 'unpaid',
+      customerRating: (map['customer_rating'] as num?)?.toInt(),
+      customerReview: map['customer_review'] as String?,
+      invoiceIssuedAt: map['invoice_issued_at'] != null
+          ? DateTime.tryParse(map['invoice_issued_at'].toString())
+          : null,
     );
   }
 }
