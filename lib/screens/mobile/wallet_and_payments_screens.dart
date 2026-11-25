@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:material_ui/material_ui.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -5,10 +6,8 @@ import '../../config/env_config.dart';
 import '../../models/db_models.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/animations.dart';
-import '../../widgets/app_top_toast.dart';
 import '../../widgets/commission_payment_sheet.dart';
 
-/// شاشة المحفظة الثابتة للتاجر والميكانيكي والونش (لا ترجع لصفر + خيار دفع العمولة)
 class ProviderWalletView extends StatefulWidget {
   final CustomerProfile profile;
   final VoidCallback onRefreshProfile;
@@ -25,85 +24,60 @@ class ProviderWalletView extends StatefulWidget {
 
 class _ProviderWalletViewState extends State<ProviderWalletView> {
   final _db = Supabase.instance.client;
-  DashboardPeriod _period = DashboardPeriod.month1;
+
+  DashboardPeriod _period = DashboardPeriod.months3;
   DateTimeRange? _customRange;
 
+  StreamSubscription<List<Map<String, dynamic>>>? _txSub;
+  StreamSubscription<List<Map<String, dynamic>>>? _custSub;
+
+  List<DbWalletTransaction> _transactions = [];
   bool _loading = true;
-  late double _walletBalance = widget.profile.walletBalance;
-  late double _pendingCommissionDebt = widget.profile.pendingCommissionDebt;
-  List<DbWalletTransaction> _txs = [];
-  RealtimeChannel? _channel;
+
+  late double _storedWalletBalance = widget.profile.walletBalance;
+  late double _commissionDebt = widget.profile.pendingCommissionDebt;
 
   @override
   void initState() {
     super.initState();
-    _loadData();
-    _channel = _db
-        .channel('provider_wallet_view_${widget.profile.id}')
-        .onPostgresChanges(
-          event: PostgresChangeEvent.all,
-          schema: 'public',
-          table: 'wallet_transactions',
-          filter: PostgresChangeFilter(
-            type: PostgresChangeFilterType.eq,
-            column: 'provider_id',
-            value: widget.profile.id,
-          ),
-          callback: (_) => _loadData(silent: true),
-        )
-        .onPostgresChanges(
-          event: PostgresChangeEvent.update,
-          schema: 'public',
-          table: 'customers',
-          filter: PostgresChangeFilter(
-            type: PostgresChangeFilterType.eq,
-            column: 'id',
-            value: widget.profile.id,
-          ),
-          callback: (_) => _loadData(silent: true),
-        )
-        .subscribe();
+    _loadInitial();
+    _bindStreams();
   }
 
   @override
   void dispose() {
-    if (_channel != null) {
-      _db.removeChannel(_channel!);
-    }
+    _txSub?.cancel();
+    _custSub?.cancel();
     super.dispose();
   }
 
-  Future<void> _loadData({bool silent = false}) async {
-    if (!silent && mounted && _txs.isEmpty) {
-      setState(() => _loading = true);
-    }
+  Future<void> _loadInitial() async {
     try {
-      final results = await Future.wait([
-        _db
-            .from('customers')
-            .select('wallet_balance, pending_commission_debt')
-            .eq('id', widget.profile.id)
-            .maybeSingle(),
-        _db
-            .from('wallet_transactions')
-            .select()
-            .eq('provider_id', widget.profile.id)
-            .order('created_at', ascending: false)
-            .limit(150),
-      ]);
+      final cust = await _db
+          .from('customers')
+          .select('wallet_balance, pending_commission_debt')
+          .eq('id', widget.profile.id)
+          .maybeSingle();
 
-      final cust = results[0] as Map<String, dynamic>?;
-      final rows = List<Map<String, dynamic>>.from(results[1] as List);
-      final parsed = rows.map(DbWalletTransaction.fromMap).toList();
+      final rows = await _db
+          .from('wallet_transactions')
+          .select()
+          .eq('provider_id', widget.profile.id)
+          .order('created_at', ascending: false);
 
       if (!mounted) return;
       setState(() {
         if (cust != null) {
-          _walletBalance = (cust['wallet_balance'] as num?)?.toDouble() ?? 0.0;
-          _pendingCommissionDebt =
-              (cust['pending_commission_debt'] as num?)?.toDouble() ?? 0.0;
+          _storedWalletBalance =
+              (cust['wallet_balance'] as num?)?.toDouble() ??
+                  _storedWalletBalance;
+          _commissionDebt =
+              (cust['pending_commission_debt'] as num?)?.toDouble() ??
+                  _commissionDebt;
         }
-        _txs = parsed;
+        _transactions = List<Map<String, dynamic>>.from(rows)
+            .map(DbWalletTransaction.fromMap)
+            .toList();
         _loading = false;
       });
     } catch (_) {
@@ -111,31 +85,81 @@ class _ProviderWalletViewState extends State<ProviderWalletView> {
     }
   }
 
-  bool _inPeriod(DateTime dt) {
-    final local = dt.toLocal();
-    final range = DateRangeFilterBar.resolveRange(_period, _customRange);
-    return !local.isBefore(range.start) &&
-        !local.isAfter(range.end.add(const Duration(days: 1)));
+  void _bindStreams() {
+    _txSub?.cancel();
+    _custSub?.cancel();
+
+    _txSub = _db
+        .from('wallet_transactions')
+        .stream(primaryKey: ['id'])
+        .eq('provider_id', widget.profile.id)
+        .order('created_at', ascending: false)
+        .listen(
+          (rows) {
+            if (!mounted) return;
+            setState(() {
+              _transactions =
+                  rows.map(DbWalletTransaction.fromMap).toList();
+              _loading = false;
+            });
+          },
+          onError: (_) {},
+        );
+
+    _custSub = _db
+        .from('customers')
+        .stream(primaryKey: ['id'])
+        .eq('id', widget.profile.id)
+        .listen(
+          (rows) {
+            if (!mounted || rows.isEmpty) return;
+            final c = rows.first;
+            setState(() {
+              _storedWalletBalance =
+                  (c['wallet_balance'] as num?)?.toDouble() ??
+                      _storedWalletBalance;
+              _commissionDebt =
+                  (c['pending_commission_debt'] as num?)?.toDouble() ??
+                      _commissionDebt;
+            });
+          },
+          onError: (_) {},
+        );
   }
+
+  bool _inPeriod(DateTime dt) {
+    final range = DateRangeFilterBar.resolveRange(_period, _customRange);
+    return !dt.isBefore(range.start) &&
+        !dt.isAfter(range.end.add(const Duration(days: 1)));
+  }
+
+  String _txLabel(String type) => switch (type) {
+        'workshop' => 'فاتورة صيانة ورشة',
+        'emergency' => 'فاتورة خدمة طوارئ',
+        'winch' => 'فاتورة ونش سحب',
+        'commission_settlement' => 'سداد عمولة للمنصة',
+        'subscription' => 'اشتراك باقة',
+        _ => 'حركة مالية ($type)',
+      };
 
   @override
   Widget build(BuildContext context) {
-    final filtered = _txs.where((t) => _inPeriod(t.createdAt)).toList();
-    final earnings = filtered
-        .where((t) => t.transactionType != 'commission_settlement')
-        .toList();
-    final gross = earnings.fold(0.0, (s, t) => s + t.grossAmount);
-    final comm = earnings.fold(0.0, (s, t) => s + t.commissionAmount);
-    final net = earnings.fold(0.0, (s, t) => s + t.netAmount);
-    final displayBalance = _walletBalance > 0 ? _walletBalance : net;
+    final filtered =
+        _transactions.where((t) => _inPeriod(t.createdAt)).toList();
+
+    final txGross = filtered.fold<double>(0.0, (s, t) => s + t.grossAmount);
+    final txComm = filtered.fold<double>(0.0, (s, t) => s + t.commissionAmount);
+    final txNet = filtered.fold<double>(0.0, (s, t) => s + t.netAmount);
+
+    final displayNet = _storedWalletBalance > 0 ? _storedWalletBalance : txNet;
 
     return RefreshIndicator(
       onRefresh: () async {
-        await _loadData();
+        await _loadInitial();
         widget.onRefreshProfile();
       },
       child: ListView(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.fromLTRB(16, 14, 16, 90),
         children: [
           DateRangeFilterBar(
             period: _period,
@@ -145,134 +169,141 @@ class _ProviderWalletViewState extends State<ProviderWalletView> {
               _customRange = r;
             }),
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 14),
           Container(
-            padding: const EdgeInsets.all(18),
+            padding: const EdgeInsets.all(20),
             decoration: BoxDecoration(
               color: AppColors.navy,
               borderRadius: BorderRadius.circular(18),
+              boxShadow: [
+                BoxShadow(
+                  color: AppColors.navy.withValues(alpha: 0.22),
+                  blurRadius: 14,
+                  offset: const Offset(0, 5),
+                ),
+              ],
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text('صافي الرصيد في المحفظة (بعد العمولة)',
-                    style: TextStyle(color: Colors.white70)),
+                const Text(
+                  'صافي الرصيد في المحفظة (بعد العمولة)',
+                  style: TextStyle(color: Colors.white70, fontSize: 13),
+                ),
                 const SizedBox(height: 6),
                 Text(
-                  '${displayBalance.toStringAsFixed(2)} د.أ',
+                  '${displayNet.toStringAsFixed(2)} د.أ',
                   style: const TextStyle(
                     color: Colors.white,
-                    fontSize: 28,
+                    fontSize: 30,
                     fontWeight: FontWeight.w900,
                   ),
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  'قبل العمولة: ${gross.toStringAsFixed(2)} د.أ  |  العمولات: ${comm.toStringAsFixed(2)} د.أ',
+                  'قبل العمولة: ${txGross.toStringAsFixed(2)} د.أ  |  العمولات: ${txComm.toStringAsFixed(2)} د.أ',
                   style: const TextStyle(color: Colors.white70, fontSize: 12),
                 ),
               ],
             ),
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 14),
 
-          // بطاقة وزر دفع العمولة المستحقة بنفس وسائل الدفع في التطبيق
           CommissionDebtCard(
-            dueCommission: _pendingCommissionDebt,
-            walletBalance: _walletBalance,
-            onPayTap: () => showCommissionPaymentSheet(
-              context: context,
-              profile: widget.profile,
-              dueCommission: _pendingCommissionDebt,
-              walletBalance: _walletBalance,
-              onSettled: () {
-                _loadData();
+            debtAmount: _commissionDebt,
+            walletBalance: displayNet,
+            onPayTap: () async {
+              final settled = await showCommissionPaymentSheet(
+                context: context,
+                profile: widget.profile,
+                debtAmount: _commissionDebt,
+                walletBalance: displayNet,
+                onSettled: () {
+                  _loadInitial();
+                  widget.onRefreshProfile();
+                },
+              );
+              if (settled) {
+                await _loadInitial();
                 widget.onRefreshProfile();
-              },
-            ),
+              }
+            },
           ),
 
-          const SizedBox(height: 16),
-          if (_loading && _txs.isEmpty)
+          const SizedBox(height: 18),
+          const Text(
+            'سجل الحركات المالية',
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w800,
+              color: AppColors.navy,
+            ),
+          ),
+          const SizedBox(height: 10),
+          if (_loading)
             const Padding(
-              padding: EdgeInsets.all(24),
+              padding: EdgeInsets.symmetric(vertical: 28),
               child: Center(child: CircularProgressIndicator()),
             )
           else if (filtered.isEmpty)
-            const Padding(
-              padding: EdgeInsets.all(24),
-              child: Center(
+            Container(
+              padding: const EdgeInsets.all(24),
+              decoration: BoxDecoration(
+                color: AppColors.surface,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: AppColors.border),
+              ),
+              child: const Center(
                 child: Text(
-                  'لا توجد حركات مالية خلال هذه الفترة',
+                  'لا توجد حركات مالية ضمن هذه الفترة',
                   style: TextStyle(color: AppColors.textSecondary),
                 ),
               ),
             )
           else
-            ...filtered.map((t) {
-              final isSettlement = t.transactionType == 'commission_settlement';
-              return Card(
-                margin: const EdgeInsets.only(bottom: 8),
+            ...filtered.map(
+              (t) => Card(
+                margin: const EdgeInsets.only(bottom: 10),
                 child: ListTile(
                   leading: CircleAvatar(
-                    backgroundColor: isSettlement
-                        ? AppColors.orangeLight
-                        : AppColors.success.withValues(alpha: 0.12),
+                    backgroundColor: t.netAmount >= 0
+                        ? AppColors.success.withValues(alpha: 0.14)
+                        : Colors.red.withValues(alpha: 0.12),
                     child: Icon(
-                      isSettlement
-                          ? Icons.receipt_long_rounded
-                          : Icons.arrow_downward_rounded,
+                      t.netAmount >= 0
+                          ? Icons.arrow_downward_rounded
+                          : Icons.arrow_upward_rounded,
                       color:
-                          isSettlement ? AppColors.orange : AppColors.success,
-                      size: 20,
+                          t.netAmount >= 0 ? AppColors.success : Colors.red,
                     ),
                   ),
                   title: Text(
-                    '${_txTypeAr(t.transactionType)} · ${_payMethodAr(t.paymentMethod)}',
-                    style: const TextStyle(fontWeight: FontWeight.bold),
+                    _txLabel(t.transactionType),
+                    style: const TextStyle(
+                        fontWeight: FontWeight.bold, fontSize: 14),
                   ),
                   subtitle: Text(
-                    isSettlement
-                        ? 'الحالة: ${t.status == 'pending_review' ? 'بانتظار مراجعة الإدارة' : 'تم التأكيد ✓'}'
-                        : 'قبل العمولة: ${t.grossAmount.toStringAsFixed(2)} · عمولة: -${t.commissionAmount.toStringAsFixed(2)}',
+                    'الوسيلة: ${t.paymentMethod} · قبل العمولة: ${t.grossAmount.toStringAsFixed(2)} · عمولة: ${t.commissionAmount.toStringAsFixed(2)}',
+                    style: const TextStyle(fontSize: 11.5),
                   ),
                   trailing: Text(
-                    isSettlement
-                        ? '-${t.grossAmount.toStringAsFixed(2)} د.أ'
-                        : '+${t.netAmount.toStringAsFixed(2)} د.أ',
+                    '${t.netAmount >= 0 ? '+' : ''}${t.netAmount.toStringAsFixed(2)} د.أ',
                     style: TextStyle(
                       color:
-                          isSettlement ? AppColors.orange : AppColors.success,
-                      fontWeight: FontWeight.bold,
+                          t.netAmount >= 0 ? AppColors.success : Colors.red,
+                      fontWeight: FontWeight.w800,
+                      fontSize: 14,
                     ),
                   ),
                 ),
-              );
-            }),
+              ),
+            ),
         ],
       ),
     );
   }
-
-  String _txTypeAr(String raw) => switch (raw.toLowerCase()) {
-        'order' || 'part_order' => 'بيع قطعة غيار',
-        'workshop' || 'appointment' => 'خدمة ورشة',
-        'winch_towing' || 'winch' || 'emergency' => 'طلب طوارئ / ونش',
-        'commission_settlement' => 'سداد عمولة المنصة',
-        _ => raw,
-      };
-
-  String _payMethodAr(String raw) => switch (raw.toLowerCase()) {
-        'visa' || 'card' || 'meps' => 'Visa / Mastercard',
-        'apple_pay' || 'applepay' => 'Apple Pay',
-        'google_pay' || 'googlepay' => 'Google Pay',
-        'wallet' => 'رصيد المحفظة',
-        'cash' => 'نقداً (كاش)',
-        _ => raw,
-      };
 }
 
-/// شاشة المدفوعات وسجل الدفعات للمستخدم العادي
 class CustomerPaymentsHistoryScreen extends StatefulWidget {
   final CustomerProfile profile;
   const CustomerPaymentsHistoryScreen({super.key, required this.profile});
@@ -282,33 +313,29 @@ class CustomerPaymentsHistoryScreen extends StatefulWidget {
       _CustomerPaymentsHistoryScreenState();
 }
 
-class _PaymentRecordItem {
-  final String id;
+class _PaymentRecord {
   final String title;
-  final String providerName;
-  final String paymentMethod;
+  final String subtitle;
   final double amount;
+  final String method;
   final String status;
-  final DateTime createdAt;
+  final DateTime date;
 
-  const _PaymentRecordItem({
-    required this.id,
+  const _PaymentRecord({
     required this.title,
-    required this.providerName,
-    required this.paymentMethod,
+    required this.subtitle,
     required this.amount,
+    required this.method,
     required this.status,
-    required this.createdAt,
+    required this.date,
   });
 }
 
 class _CustomerPaymentsHistoryScreenState
     extends State<CustomerPaymentsHistoryScreen> {
   final _db = Supabase.instance.client;
-  DashboardPeriod _period = DashboardPeriod.month3;
-  DateTimeRange? _customRange;
   bool _loading = true;
-  List<_PaymentRecordItem> _records = [];
+  List<_PaymentRecord> _records = [];
 
   @override
   void initState() {
@@ -318,183 +345,111 @@ class _CustomerPaymentsHistoryScreenState
 
   Future<void> _loadPayments() async {
     setState(() => _loading = true);
+    final list = <_PaymentRecord>[];
+    final seenIds = <String>{};
+
     try {
-      final uid = widget.profile.id;
-      final results = await Future.wait([
-        _db
-            .from('wallet_transactions')
-            .select()
-            .eq('customer_id', uid)
-            .order('created_at', ascending: false)
-            .limit(100)
-            .catchError((_) => <dynamic>[]),
-        _db
-            .from('workshop_appointments')
-            .select()
-            .eq('user_id', uid)
-            .eq('payment_status', 'paid')
-            .order('created_at', ascending: false)
-            .limit(100)
-            .catchError((_) => <dynamic>[]),
-        _db
-            .from('mechanic_requests')
-            .select()
-            .eq('user_id', uid)
-            .eq('payment_status', 'paid')
-            .order('created_at', ascending: false)
-            .limit(100)
-            .catchError((_) => <dynamic>[]),
-      ]);
+      final txRows = await _db
+          .from('wallet_transactions')
+          .select()
+          .eq('customer_id', widget.profile.id)
+          .order('created_at', ascending: false);
 
-      final txRows = List<Map<String, dynamic>>.from(results[0] as List);
-      final apptRows = List<Map<String, dynamic>>.from(results[1] as List);
-      final emgRows = List<Map<String, dynamic>>.from(results[2] as List);
-
-      final providerIds = <String>{};
-      for (final r in txRows) {
-        final pid = r['provider_id'] as String?;
-        if (pid != null && pid.isNotEmpty) providerIds.add(pid);
+      for (final raw in List<Map<String, dynamic>>.from(txRows)) {
+        final refId = (raw['reference_id'] ?? raw['id']).toString();
+        seenIds.add(refId);
+        list.add(_PaymentRecord(
+          title: _typeArabic((raw['transaction_type'] as String?) ?? ''),
+          subtitle: 'طريقة الدفع: ${_methodArabic(raw['payment_method'] as String?)}',
+          amount: (raw['gross_amount'] as num?)?.toDouble() ?? 0.0,
+          method: _methodArabic(raw['payment_method'] as String?),
+          status: (raw['status'] as String?) ?? 'completed',
+          date: DateTime.tryParse((raw['created_at'] ?? '').toString()) ??
+              DateTime.now(),
+        ));
       }
-      for (final r in apptRows) {
-        final pid = r['workshop_id'] as String?;
-        if (pid != null && pid.isNotEmpty) providerIds.add(pid);
-      }
-      for (final r in emgRows) {
-        final pid = r['mechanic_id'] as String?;
-        if (pid != null && pid.isNotEmpty) providerIds.add(pid);
-      }
+    } catch (_) {}
 
-      final providerNames = <String, String>{};
-      if (providerIds.isNotEmpty) {
-        try {
-          final pRows = await _db
-              .from('customers')
-              .select('id, full_name, username')
-              .inFilter('id', providerIds.toList());
-          for (final p in (pRows as List)) {
-            final full = (p['full_name'] as String?)?.trim() ?? '';
-            final user = (p['username'] as String?)?.trim() ?? '';
-            providerNames[p['id'] as String] =
-                full.isNotEmpty ? full : (user.isNotEmpty ? user : 'مقدم خدمة');
-          }
-        } catch (_) {}
-      }
+    try {
+      final appts = await _db
+          .from('workshop_appointments')
+          .select()
+          .eq('user_id', widget.profile.id)
+          .gt('total_amount', 0)
+          .order('created_at', ascending: false);
 
-      final seenRefs = <String>{};
-      final items = <_PaymentRecordItem>[];
-
-      for (final r in txRows) {
-        final refId = (r['reference_id'] ?? r['id']).toString();
-        seenRefs.add(refId);
-        final pid = r['provider_id'] as String?;
-        final type = (r['transaction_type'] as String? ?? 'order');
-        items.add(
-          _PaymentRecordItem(
-            id: (r['id'] ?? '').toString(),
-            title: _typeLabel(type),
-            providerName:
-                pid != null ? (providerNames[pid] ?? 'غيارك') : 'غيارك',
-            paymentMethod: (r['payment_method'] as String?) ?? 'visa',
-            amount: (r['gross_amount'] as num?)?.toDouble() ?? 0.0,
-            status: (r['status'] as String?) ?? 'completed',
-            createdAt: DateTime.tryParse((r['created_at'] as String?) ?? '') ??
-                DateTime.now(),
-          ),
-        );
-      }
-
-      for (final a in apptRows) {
+      for (final a in List<Map<String, dynamic>>.from(appts)) {
         final id = (a['id'] ?? '').toString();
-        if (seenRefs.contains(id)) continue;
-        final pid = a['workshop_id'] as String?;
-        items.add(
-          _PaymentRecordItem(
-            id: id,
-            title: (a['service_description'] as String?)?.isNotEmpty == true
-                ? 'صيانة ورشة · ${a['service_description']}'
-                : 'فاتورة موعد ورشة',
-            providerName:
-                pid != null ? (providerNames[pid] ?? 'ورشة صيانة') : 'ورشة',
-            paymentMethod: (a['payment_method'] as String?) ?? 'cash',
-            amount: (a['total_amount'] as num?)?.toDouble() ?? 0.0,
-            status: 'completed',
-            createdAt: DateTime.tryParse((a['created_at'] as String?) ?? '') ??
-                DateTime.now(),
-          ),
-        );
+        if (seenIds.contains(id)) continue;
+        list.add(_PaymentRecord(
+          title: 'فاتورة ورشة صيانة',
+          subtitle:
+              '${a['service_description'] ?? 'صيانة مركبة'} · ${a['appointment_date'] ?? ''}',
+          amount: (a['total_amount'] as num?)?.toDouble() ?? 0.0,
+          method: _methodArabic(a['payment_method'] as String?),
+          status: (a['payment_status'] as String?) ?? 'unpaid',
+          date: DateTime.tryParse((a['created_at'] ?? '').toString()) ??
+              DateTime.now(),
+        ));
       }
+    } catch (_) {}
 
-      for (final e in emgRows) {
+    try {
+      final emgs = await _db
+          .from('mechanic_requests')
+          .select()
+          .eq('user_id', widget.profile.id)
+          .gt('total_amount', 0)
+          .order('created_at', ascending: false);
+
+      for (final e in List<Map<String, dynamic>>.from(emgs)) {
         final id = (e['id'] ?? '').toString();
-        if (seenRefs.contains(id)) continue;
-        final pid = e['mechanic_id'] as String?;
+        if (seenIds.contains(id)) continue;
         final isWinch = (e['service_type'] as String?) == 'winch';
-        items.add(
-          _PaymentRecordItem(
-            id: id,
-            title: isWinch ? 'فاتورة ونش طوارئ' : 'فاتورة ميكانيكي طوارئ',
-            providerName: pid != null
-                ? (providerNames[pid] ?? 'مزود طوارئ')
-                : 'طوارئ غيارك',
-            paymentMethod: (e['payment_method'] as String?) ?? 'cash',
-            amount: (e['total_amount'] as num?)?.toDouble() ?? 0.0,
-            status: 'completed',
-            createdAt: DateTime.tryParse((e['created_at'] as String?) ?? '') ??
-                DateTime.now(),
-          ),
-        );
+        list.add(_PaymentRecord(
+          title: isWinch ? 'فاتورة ونش طوارئ' : 'فاتورة ميكانيكي طوارئ',
+          subtitle: (e['description'] as String?) ?? (e['car_details'] as String? ?? ''),
+          amount: (e['total_amount'] as num?)?.toDouble() ?? 0.0,
+          method: _methodArabic(e['payment_method'] as String?),
+          status: (e['payment_status'] as String?) ?? 'unpaid',
+          date: DateTime.tryParse((e['created_at'] ?? '').toString()) ??
+              DateTime.now(),
+        ));
       }
+    } catch (_) {}
 
-      items.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    list.sort((a, b) => b.date.compareTo(a.date));
 
-      if (!mounted) return;
+    if (mounted) {
       setState(() {
-        _records = items;
+        _records = list;
         _loading = false;
       });
-    } catch (e) {
-      if (mounted) {
-        setState(() => _loading = false);
-        AppTopToast.error('تعذر تحميل سجل الدفعات: $e', context: context);
-      }
     }
   }
 
-  bool _inPeriod(DateTime dt) {
-    final local = dt.toLocal();
-    final range = DateRangeFilterBar.resolveRange(_period, _customRange);
-    return !local.isBefore(range.start) &&
-        !local.isAfter(range.end.add(const Duration(days: 1)));
-  }
-
-  String _typeLabel(String raw) => switch (raw.toLowerCase()) {
-        'workshop' || 'appointment' => 'فاتورة صيانة ورشة',
-        'winch_towing' || 'winch' => 'فاتورة ونش طوارئ',
+  String _typeArabic(String type) => switch (type) {
+        'workshop' => 'فاتورة ورشة صيانة',
         'emergency' => 'فاتورة ميكانيكي طوارئ',
-        'order' || 'part_order' => 'شراء قطعة غيار',
-        'subscription' => 'اشتراك باقة غيارك',
-        _ => 'دفعة مالية',
+        'winch' => 'فاتورة ونش سحب',
+        'subscription' => 'اشتراك عضوية',
+        _ => 'دفعة إلكترونية',
       };
 
-  String _methodLabel(String raw) => switch (raw.toLowerCase()) {
-        'visa' || 'card' || 'meps' => 'Visa / Mastercard',
-        'apple_pay' || 'applepay' => 'Apple Pay',
-        'google_pay' || 'googlepay' => 'Google Pay',
+  String _methodArabic(String? method) => switch ((method ?? '').toLowerCase()) {
+        'visa' || 'card' => 'Visa / Mastercard',
+        'apple_pay' => 'Apple Pay',
+        'google_pay' => 'Google Pay',
         'cash' => 'نقداً (كاش)',
-        _ => raw,
-      };
-
-  IconData _methodIcon(String raw) => switch (raw.toLowerCase()) {
-        'apple_pay' || 'applepay' => Icons.apple,
-        'google_pay' || 'googlepay' => Icons.g_mobiledata_rounded,
-        'cash' => Icons.payments_outlined,
-        _ => Icons.credit_card_rounded,
+        'wallet' => 'المحفظة',
+        _ => 'دفع إلكتروني',
       };
 
   @override
   Widget build(BuildContext context) {
-    final filtered = _records.where((r) => _inPeriod(r.createdAt)).toList();
-    final totalPaid = filtered.fold(0.0, (s, r) => s + r.amount);
+    final totalPaid = _records
+        .where((r) => r.status == 'paid' || r.status == 'completed')
+        .fold<double>(0.0, (s, r) => s + r.amount);
 
     return Scaffold(
       appBar: AppBar(title: const Text('المدفوعات وسجل الدفعات')),
@@ -503,17 +458,8 @@ class _CustomerPaymentsHistoryScreenState
         child: ListView(
           padding: const EdgeInsets.all(16),
           children: [
-            DateRangeFilterBar(
-              period: _period,
-              customRange: _customRange,
-              onChanged: (p, r) => setState(() {
-                _period = p;
-                _customRange = r;
-              }),
-            ),
-            const SizedBox(height: 12),
             Container(
-              padding: const EdgeInsets.all(18),
+              padding: const EdgeInsets.all(20),
               decoration: BoxDecoration(
                 color: AppColors.navy,
                 borderRadius: BorderRadius.circular(18),
@@ -522,7 +468,7 @@ class _CustomerPaymentsHistoryScreenState
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   const Text(
-                    'إجمالي مدفوعاتك خلال الفترة',
+                    'إجمالي مدفوعاتك المكتملة',
                     style: TextStyle(color: Colors.white70, fontSize: 13),
                   ),
                   const SizedBox(height: 6),
@@ -534,9 +480,9 @@ class _CustomerPaymentsHistoryScreenState
                       fontWeight: FontWeight.w900,
                     ),
                   ),
-                  const SizedBox(height: 6),
+                  const SizedBox(height: 4),
                   Text(
-                    'عدد العمليات المكتملة: ${filtered.length}',
+                    'عدد الفواتير المسجلة: ${_records.length}',
                     style: const TextStyle(color: Colors.white70, fontSize: 12),
                   ),
                 ],
@@ -545,46 +491,51 @@ class _CustomerPaymentsHistoryScreenState
             const SizedBox(height: 16),
             if (_loading)
               const Padding(
-                padding: EdgeInsets.all(28),
+                padding: EdgeInsets.symmetric(vertical: 40),
                 child: Center(child: CircularProgressIndicator()),
               )
-            else if (filtered.isEmpty)
-              const Padding(
-                padding: EdgeInsets.all(28),
-                child: Center(
-                  child: Column(
-                    children: [
-                      Icon(Icons.receipt_long_outlined,
-                          size: 48, color: AppColors.textSecondary),
-                      SizedBox(height: 10),
-                      Text(
-                        'لا توجد دفعات مسجلة خلال هذه الفترة',
-                        style: TextStyle(color: AppColors.textSecondary),
-                      ),
-                    ],
-                  ),
+            else if (_records.isEmpty)
+              Container(
+                padding: const EdgeInsets.all(28),
+                decoration: BoxDecoration(
+                  color: AppColors.surface,
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: AppColors.border),
+                ),
+                child: const Column(
+                  children: [
+                    Icon(Icons.receipt_long_outlined,
+                        size: 46, color: AppColors.textSecondary),
+                    SizedBox(height: 10),
+                    Text(
+                      'لا توجد مدفوعات أو فواتير مسجلة حتى الآن',
+                      style: TextStyle(color: AppColors.textSecondary),
+                    ),
+                  ],
                 ),
               )
             else
-              ...filtered.map((r) {
-                final dateStr = r.createdAt.toLocal().toString().substring(0, 16);
+              ..._records.map((r) {
+                final isPaid = r.status == 'paid' || r.status == 'completed';
                 return Card(
                   margin: const EdgeInsets.only(bottom: 10),
                   child: ListTile(
                     leading: CircleAvatar(
-                      backgroundColor: AppColors.orangeLight,
-                      child: Icon(_methodIcon(r.paymentMethod),
-                          color: AppColors.orange, size: 20),
+                      backgroundColor: isPaid
+                          ? AppColors.success.withValues(alpha: 0.14)
+                          : AppColors.orangeLight,
+                      child: Icon(
+                        isPaid ? Icons.check_circle : Icons.schedule,
+                        color: isPaid ? AppColors.success : AppColors.orange,
+                      ),
                     ),
                     title: Text(
                       r.title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
                           fontWeight: FontWeight.bold, fontSize: 14),
                     ),
                     subtitle: Text(
-                      '${r.providerName} · ${_methodLabel(r.paymentMethod)}\n$dateStr',
+                      '${r.subtitle}\n${r.date.year}-${r.date.month.toString().padLeft(2, '0')}-${r.date.day.toString().padLeft(2, '0')} · ${r.method}',
                       style: const TextStyle(fontSize: 11.5),
                     ),
                     isThreeLine: true,
@@ -595,18 +546,19 @@ class _CustomerPaymentsHistoryScreenState
                         Text(
                           '${r.amount.toStringAsFixed(2)} د.أ',
                           style: const TextStyle(
+                            fontWeight: FontWeight.w800,
+                            fontSize: 14,
                             color: AppColors.navy,
-                            fontWeight: FontWeight.w900,
-                            fontSize: 14.5,
                           ),
                         ),
-                        const SizedBox(height: 2),
-                        const Text(
-                          'مدفوعة ✓',
+                        const SizedBox(height: 3),
+                        Text(
+                          isPaid ? 'مدفوعة ✓' : 'غير مدفوعة',
                           style: TextStyle(
-                            color: AppColors.success,
-                            fontSize: 10.5,
+                            fontSize: 11,
                             fontWeight: FontWeight.bold,
+                            color:
+                                isPaid ? AppColors.success : AppColors.orange,
                           ),
                         ),
                       ],
@@ -706,6 +658,7 @@ class SupportScreen extends StatelessWidget {
 class UserProfileScreen extends StatefulWidget {
   final CustomerProfile profile;
   final VoidCallback onSaved;
+
   const UserProfileScreen({
     super.key,
     required this.profile,
@@ -743,6 +696,72 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     super.dispose();
   }
 
+  void _showTopNotice(String title, String message, {bool isError = false}) {
+    if (!mounted) return;
+    final overlay = Overlay.maybeOf(context);
+    if (overlay == null) return;
+    late OverlayEntry entry;
+    entry = OverlayEntry(
+      builder: (_) => Positioned(
+        top: MediaQuery.of(context).padding.top + 10,
+        left: 16,
+        right: 16,
+        child: Material(
+          color: Colors.transparent,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            decoration: BoxDecoration(
+              color: isError ? const Color(0xFFDC2626) : AppColors.success,
+              borderRadius: BorderRadius.circular(16),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.2),
+                  blurRadius: 12,
+                  offset: const Offset(0, 4),
+                ),
+              ],
+            ),
+            child: Row(
+              children: [
+                Icon(
+                  isError ? Icons.error_outline : Icons.check_circle_rounded,
+                  color: Colors.white,
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        title,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      Text(
+                        message,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+    overlay.insert(entry);
+    Future.delayed(const Duration(seconds: 3), () {
+      if (entry.mounted) entry.remove();
+    });
+  }
+
   Future<void> _loadExtraFields() async {
     final row = await _db
         .from('customers')
@@ -768,14 +787,14 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
       }).eq('id', widget.profile.id);
       widget.onSaved();
       if (mounted) {
-        AppTopToast.success('تم تحديث معلومات البروفايل بنجاح!',
-            context: context);
+        _showTopNotice(
+          'تم التحديث بنجاح',
+          'تم حفظ معلومات البروفايل بنجاح.',
+        );
         Navigator.pop(context);
       }
     } catch (e) {
-      if (mounted) {
-        AppTopToast.error('تعذر التحديث: $e', context: context);
-      }
+      _showTopNotice('تعذر التحديث', '$e', isError: true);
     } finally {
       if (mounted) {
         setState(() => _saving = false);
@@ -786,6 +805,9 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
   @override
   Widget build(BuildContext context) {
     final p = widget.profile;
+    final isProvider =
+        p.role == 'merchant' || p.role == 'mechanic' || p.role == 'towing';
+
     return Scaffold(
       appBar: AppBar(title: const Text('ملفي الشخصي (البروفايل)')),
       body: ListView(
@@ -822,6 +844,26 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                     fontWeight: FontWeight.bold,
                   ),
                 ),
+                if (isProvider) ...[
+                  const SizedBox(height: 6),
+                  Row(
+                    children: [
+                      const Icon(Icons.star_rounded,
+                          color: Colors.amber, size: 18),
+                      const SizedBox(width: 4),
+                      Text(
+                        p.ratingCount > 0
+                            ? 'التقييم: ${p.ratingAvg.toStringAsFixed(1)} / 5 (${p.ratingCount} تقييم)'
+                            : 'لا توجد تقييمات بعد',
+                        style: const TextStyle(
+                          color: Colors.amber,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 12.5,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
                 if (_country != null || _age != null)
                   Text(
                     'الدولة: ${_country ?? "-"}  |  العمر: ${_age ?? "-"}',
