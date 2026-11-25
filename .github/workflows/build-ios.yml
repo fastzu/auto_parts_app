@@ -16,7 +16,6 @@ jobs:
 
       - name: Select latest Xcode
         run: |
-          ls -d /Applications/Xcode*.app
           LATEST=$(ls -d /Applications/Xcode_*.app 2>/dev/null | sort -V | tail -n 1)
           if [ -n "$LATEST" ]; then
             echo "Switching to: $LATEST"
@@ -35,38 +34,13 @@ jobs:
       - name: Install Flutter packages
         run: flutter pub get
 
-      - name: Prepare iOS config
-        run: flutter build ios --config-only --no-codesign
+      - name: Prepare iOS release config
+        run: flutter build ios --release --config-only --no-codesign
 
       - name: Setup Live Activity Widget Extension
         run: |
           gem install xcodeproj --no-document || true
           ruby ios/setup_live_activity.rb
-
-      - name: Disable Codesigning for All Targets
-        run: |
-          ruby -rxcodeproj -e '
-            proj = Xcodeproj::Project.open("ios/Runner.xcodeproj")
-            proj.targets.each do |t|
-              t.build_configurations.each do |c|
-                c.build_settings["CODE_SIGN_STYLE"] = "Manual"
-                c.build_settings["CODE_SIGNING_ALLOWED"] = "NO"
-                c.build_settings["CODE_SIGNING_REQUIRED"] = "NO"
-                c.build_settings["CODE_SIGN_IDENTITY"] = ""
-                c.build_settings["EXPANDED_CODE_SIGN_IDENTITY"] = ""
-                c.build_settings["DEVELOPMENT_TEAM"] = ""
-                c.build_settings["PROVISIONING_PROFILE_SPECIFIER"] = ""
-              end
-            end
-            if proj.root_object.attributes["TargetAttributes"]
-              proj.root_object.attributes["TargetAttributes"].each_value do |attrs|
-                attrs["ProvisioningStyle"] = "Manual"
-                attrs.delete("DevelopmentTeam")
-              end
-            end
-            proj.save
-            puts "Disabled signing for all targets in Runner.xcodeproj"
-          '
 
       - name: Install CocoaPods
         run: |
@@ -74,26 +48,61 @@ jobs:
             cd ios && pod install --repo-update
           fi
 
-      - name: Build iOS App (No Codesign)
+      - name: Disable Codesigning on Runner & Pods (No Developer Account)
         run: |
-          cd ios
-          xcodebuild -workspace Runner.xcworkspace \
+          ruby -rxcodeproj -e '
+            ["ios/Runner.xcodeproj", "ios/Pods/Pods.xcodeproj"].each do |path|
+              next unless File.exist?(path)
+              proj = Xcodeproj::Project.open(path)
+              proj.targets.each do |t|
+                t.build_configurations.each do |c|
+                  c.build_settings["CODE_SIGN_STYLE"] = "Manual"
+                  c.build_settings["CODE_SIGNING_ALLOWED"] = "NO"
+                  c.build_settings["CODE_SIGNING_REQUIRED"] = "NO"
+                  c.build_settings["CODE_SIGN_IDENTITY"] = ""
+                  c.build_settings["EXPANDED_CODE_SIGN_IDENTITY"] = ""
+                  c.build_settings["DEVELOPMENT_TEAM"] = ""
+                  c.build_settings["PROVISIONING_PROFILE_SPECIFIER"] = ""
+                end
+              end
+              if proj.root_object.attributes["TargetAttributes"]
+                proj.root_object.attributes["TargetAttributes"].each_value do |attrs|
+                  attrs["ProvisioningStyle"] = "Manual"
+                  attrs.delete("DevelopmentTeam")
+                end
+              end
+              proj.save
+              puts "Disabled codesigning in #{path}"
+            end
+          '
+
+      - name: Build iOS App (Unsigned - No Account Needed)
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -workspace ios/Runner.xcworkspace \
             -scheme Runner \
             -configuration Release \
             -sdk iphoneos \
-            -derivedDataPath ../build/ios_derived \
-            build \
+            -derivedDataPath build/ios/DerivedData \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_STYLE=Manual \
             CODE_SIGN_IDENTITY="" \
             EXPANDED_CODE_SIGN_IDENTITY="" \
             DEVELOPMENT_TEAM="" \
-            PROVISIONING_PROFILE_SPECIFIER=""
+            PROVISIONING_PROFILE_SPECIFIER="" \
+            build
 
       - name: Package IPA
         run: |
+          APP_PATH="build/ios/DerivedData/Build/Products/Release-iphoneos/Runner.app"
+          if [ ! -d "$APP_PATH" ]; then
+            echo "Runner.app not found at $APP_PATH"
+            exit 1
+          fi
           mkdir -p build/ios/ipa/Payload
-          cp -R build/ios_derived/Build/Products/Release-iphoneos/Runner.app build/ios/ipa/Payload/
+          cp -R "$APP_PATH" build/ios/ipa/Payload/
           cd build/ios/ipa
           zip -ry AutoPartsApp-unsigned.ipa Payload
 
