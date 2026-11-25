@@ -1,4 +1,4 @@
-import 'package:material_ui/material_ui.dart';
+﻿import 'package:material_ui/material_ui.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../config/env_config.dart';
@@ -1067,7 +1067,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     super.initState();
     _nameCtrl = TextEditingController(text: widget.profile.fullName ?? '');
     _phoneCtrl = TextEditingController(text: widget.profile.phone ?? '');
-    _addressCtrl = TextEditingController(text: widget.profile.address ?? '');
+    _addressCtrl = TextEditingController(text: widget.profile.workshopAddress ?? '');
   }
 
   @override
@@ -1084,7 +1084,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
       await _db.from('customers').update({
         'full_name': _nameCtrl.text.trim(),
         'phone': _phoneCtrl.text.trim(),
-        'address': _addressCtrl.text.trim(),
+        'workshop_address': _addressCtrl.text.trim(),
       }).eq('id', widget.profile.id);
       widget.onSaved();
       if (!mounted) return;
