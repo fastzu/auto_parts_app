@@ -1,17 +1,34 @@
 import 'dart:async';
 import 'package:flutter_map/flutter_map.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../config/env_config.dart';
 import '../../models/db_models.dart';
 import '../../models/subscription_plans.dart';
-import '../../services/live_progress_tracker.dart';
 import '../../services/location_service.dart';
 import '../../services/notifications_service.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/animations.dart';
-import 'workshop_checkout_screen.dart';
+
+class _NearbyProvider {
+  final String id;
+  final String name;
+  final double distanceKm;
+  final double? lat;
+  final double? lng;
+  final double ratingAvg;
+
+  const _NearbyProvider({
+    required this.id,
+    required this.name,
+    required this.distanceKm,
+    this.lat,
+    this.lng,
+    this.ratingAvg = 0.0,
+  });
+}
 
 class EmergencyScreen extends StatefulWidget {
   final CustomerProfile profile;
@@ -24,7 +41,6 @@ class EmergencyScreen extends StatefulWidget {
 class _EmergencyScreenState extends State<EmergencyScreen> {
   final _db = Supabase.instance.client;
   final _locationService = LocationService();
-  final _tracker = LiveProgressTracker.instance;
   final _notifs = NotificationsService.instance;
   final _mapController = MapController();
   final _carCtrl = TextEditingController();
@@ -35,6 +51,7 @@ class _EmergencyScreenState extends State<EmergencyScreen> {
   bool _pickingDropoff = false;
   bool _loadingGps = false;
   bool _loadingRate = true;
+  bool _loadingProviders = true;
   bool _submitting = false;
 
   LatLng _pickupLatLng = const LatLng(31.9720, 35.8450);
@@ -43,12 +60,21 @@ class _EmergencyScreenState extends State<EmergencyScreen> {
   String _dropoffAddress = 'أقرب مركز صيانة / ورشة';
   double _distanceKm = 6.0;
   double _kmRate = 1.5;
+  double _nearbyRadiusKm = 15.0;
 
-  StreamSubscription<List<Map<String, dynamic>>>? _activeEmgSub;
-  List<Map<String, dynamic>> _activeRequests = [];
-  final Set<String> _cancellingIds = {};
-  final Set<String> _fetchingProvIds = {};
-  final Map<String, ({double? lat, double? lng})> _provCoords = {};
+  List<_NearbyProvider> _nearbyProviders = [];
+  List<_NearbyProvider> _allAvailableProviders = [];
+  Timer? _providersRefreshTimer;
+
+  // حالة انتظار قبول الطلب (5 دقائق)
+  String? _waitingRequestId;
+  bool _waitingIsWinch = false;
+  bool _timedOutNoProvider = false;
+  int _remainingSeconds = 300;
+  double _lastOrderPrice = 0.0;
+  int _lastOrderEta = 10;
+  Timer? _waitTickTimer;
+  StreamSubscription<List<Map<String, dynamic>>>? _waitStreamSub;
 
   final Map<String, double> _baseFees = const {
     'بطارية': 15.0,
@@ -61,214 +87,120 @@ class _EmergencyScreenState extends State<EmergencyScreen> {
   @override
   void initState() {
     super.initState();
-    _loadKmRate();
+    _loadSettings();
     _detectMyLocation();
-    _listenActiveRequests();
+    // تحديث مواقع السيارات على الخريطة كل 8 ثوانٍ لحركة حية
+    _providersRefreshTimer = Timer.periodic(const Duration(seconds: 8), (_) {
+      if (mounted) _loadNearestProviders(silent: true);
+    });
   }
 
   @override
   void dispose() {
-    _activeEmgSub?.cancel();
+    _providersRefreshTimer?.cancel();
+    _waitTickTimer?.cancel();
+    _waitStreamSub?.cancel();
     _carCtrl.dispose();
     super.dispose();
   }
 
-  void _listenActiveRequests() {
-    _activeEmgSub?.cancel();
-    _activeEmgSub = _db
-        .from('mechanic_requests')
-        .stream(primaryKey: ['id'])
-        .eq('user_id', widget.profile.id)
-        .order('created_at', ascending: false)
-        .listen(
-          (rows) {
-            if (!mounted) return;
-            final active = rows.where((e) {
-              final status = (e['status'] as String?) ?? 'pending';
-              final payStatus = (e['payment_status'] as String?) ?? 'unpaid';
-              final amount = (e['total_amount'] as num?)?.toDouble() ?? 0.0;
-              if (status == 'cancelled' || status == 'rejected') return false;
-              if (status != 'completed') return true;
-              return status == 'completed' && amount > 0 && payStatus != 'paid';
-            }).toList();
-            setState(() => _activeRequests = active);
-            for (final r in active) {
-              final mId = r['mechanic_id'] as String?;
-              if (mId != null && mId.isNotEmpty) {
-                _fetchProviderFallbackCoords(mId);
-              }
-            }
-          },
-          onError: (_) {},
-        );
-  }
-
-  Future<void> _fetchProviderFallbackCoords(String mechId) async {
-    if (_provCoords.containsKey(mechId) || _fetchingProvIds.contains(mechId)) {
-      return;
-    }
-    _fetchingProvIds.add(mechId);
+  Future<void> _loadSettings() async {
     try {
-      final row = await _db
-          .from('customers')
-          .select('latitude, longitude, workshop_latitude, workshop_longitude')
-          .eq('id', mechId)
-          .maybeSingle();
-      final lat = (row?['latitude'] as num?)?.toDouble() ??
-          (row?['workshop_latitude'] as num?)?.toDouble();
-      final lng = (row?['longitude'] as num?)?.toDouble() ??
-          (row?['workshop_longitude'] as num?)?.toDouble();
-      if (mounted) {
-        setState(() => _provCoords[mechId] = (lat: lat, lng: lng));
-      }
-    } catch (_) {} finally {
-      _fetchingProvIds.remove(mechId);
-    }
-  }
-
-  void _showTopToast(String title, String message, {bool isError = false}) {
-    if (!mounted) return;
-    final overlay = Overlay.maybeOf(context);
-    if (overlay == null) return;
-    late OverlayEntry entry;
-    entry = OverlayEntry(
-      builder: (_) => Positioned(
-        top: MediaQuery.of(context).padding.top + 10,
-        left: 16,
-        right: 16,
-        child: Material(
-          color: Colors.transparent,
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-            decoration: BoxDecoration(
-              color: isError ? const Color(0xFFDC2626) : AppColors.success,
-              borderRadius: BorderRadius.circular(16),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.2),
-                  blurRadius: 12,
-                  offset: const Offset(0, 4),
-                ),
-              ],
-            ),
-            child: Row(
-              children: [
-                Icon(
-                  isError ? Icons.error_outline : Icons.check_circle_rounded,
-                  color: Colors.white,
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        title,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      Text(
-                        message,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 12,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-    overlay.insert(entry);
-    Future.delayed(const Duration(seconds: 3), () {
-      if (entry.mounted) entry.remove();
-    });
-  }
-
-  Future<void> _cancelEmergencyRequest(Map<String, dynamic> req) async {
-    final id = req['id'] as String;
-    if (_cancellingIds.contains(id)) return;
-
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text(
-          'إلغاء طلب الطوارئ',
-          style: TextStyle(fontWeight: FontWeight.bold),
-        ),
-        content: const Text(
-          'هل أنت متأكد من إلغاء طلب الطوارئ الحالي؟ سيتم إشعار الفني/سائق الونش فوراً.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('تراجع'),
-          ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.red,
-              foregroundColor: Colors.white,
-            ),
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('نعم، إلغاء الطلب'),
-          ),
-        ],
-      ),
-    );
-
-    if (confirm != true || !mounted) return;
-
-    setState(() => _cancellingIds.add(id));
-    try {
-      await _db.from('mechanic_requests').update({
-        'status': 'cancelled',
-        'progress_step': 'cancelled',
-      }).eq('id', id);
-
-      final mechId = req['mechanic_id'] as String?;
-      if (mechId != null && mechId.isNotEmpty) {
-        await _notifs.sendNotification(
-          targetUserId: mechId,
-          title: 'تم إلغاء طلب الطوارئ',
-          body: 'قام العميل بإلغاء طلب الطوارئ.',
-          type: 'order_cancelled',
-          referenceId: id,
-        );
-      }
-
-      _showTopToast('تم الإلغاء', 'تم إلغاء طلب الطوارئ بنجاح.');
-    } catch (e) {
-      _showTopToast('تعذر الإلغاء', '$e', isError: true);
-    } finally {
-      if (mounted) setState(() => _cancellingIds.remove(id));
-    }
-  }
-
-  Future<void> _loadKmRate() async {
-    try {
-      final row = await _db
+      final rows = await _db
           .from('system_settings')
-          .select('value')
-          .eq('key', 'winch_price_per_km')
-          .maybeSingle();
-      if (mounted) {
-        final parsed = double.tryParse(row?['value']?.toString() ?? '');
-        setState(() {
-          if (parsed != null && parsed > 0) {
-            _kmRate = parsed;
-          }
-          _loadingRate = false;
-        });
+          .select('key, value')
+          .inFilter('key', ['winch_price_per_km', 'emergency_search_radius_km']);
+      if (!mounted) return;
+      double kmRate = _kmRate;
+      double radius = _nearbyRadiusKm;
+      for (final row in (rows as List)) {
+        final k = row['key'] as String?;
+        final v = double.tryParse(row['value']?.toString() ?? '');
+        if (k == 'winch_price_per_km' && v != null && v > 0) kmRate = v;
+        if (k == 'emergency_search_radius_km' && v != null && v > 0) radius = v;
       }
+      setState(() {
+        _kmRate = kmRate;
+        _nearbyRadiusKm = radius;
+        _loadingRate = false;
+      });
     } catch (_) {
       if (mounted) setState(() => _loadingRate = false);
+    }
+  }
+
+  Future<void> _loadNearestProviders({bool silent = false}) async {
+    if (!silent && mounted) setState(() => _loadingProviders = true);
+    try {
+      final useWinch = EnvConfig.winchEnabled.value && _serviceType == 'winch';
+      final rows = await _db
+          .from('customers')
+          .select(
+            'id, full_name, username, role, has_towing, is_available, latitude, longitude, workshop_latitude, workshop_longitude, rating_avg',
+          )
+          .eq('is_available', true)
+          .inFilter('role', ['mechanic', 'towing']);
+
+      final all = <_NearbyProvider>[];
+      for (final r in (rows as List)) {
+        final map = Map<String, dynamic>.from(r as Map);
+        final id = (map['id'] as String?) ?? '';
+        if (id.isEmpty || id == widget.profile.id) continue;
+
+        final role = (map['role'] as String?) ?? '';
+        final hasTowing = map['has_towing'] == true;
+        final matchesType = useWinch
+            ? (role == 'towing' || hasTowing)
+            : (role == 'mechanic');
+        if (!matchesType) continue;
+
+        final lat = (map['latitude'] as num?)?.toDouble() ??
+            (map['workshop_latitude'] as num?)?.toDouble();
+        final lng = (map['longitude'] as num?)?.toDouble() ??
+            (map['workshop_longitude'] as num?)?.toDouble();
+
+        double distKm = 9999.0;
+        if (lat != null && lng != null) {
+          distKm = Geolocator.distanceBetween(
+                _pickupLatLng.latitude,
+                _pickupLatLng.longitude,
+                lat,
+                lng,
+              ) /
+              1000.0;
+        }
+
+        final name = ((map['full_name'] as String?)?.trim().isNotEmpty == true)
+            ? (map['full_name'] as String).trim()
+            : ((map['username'] as String?) ??
+                (useWinch ? 'ونش طوارئ' : 'ميكانيكي طوارئ'));
+
+        all.add(
+          _NearbyProvider(
+            id: id,
+            name: name,
+            distanceKm: distKm,
+            lat: lat,
+            lng: lng,
+            ratingAvg: (map['rating_avg'] as num?)?.toDouble() ?? 0.0,
+          ),
+        );
+      }
+
+      all.sort((a, b) => a.distanceKm.compareTo(b.distanceKm));
+      final nearby = all
+          .where((p) =>
+              p.lat != null && p.lng != null && p.distanceKm <= _nearbyRadiusKm)
+          .toList();
+
+      if (!mounted) return;
+      setState(() {
+        _allAvailableProviders = all;
+        _nearbyProviders = nearby;
+        _loadingProviders = false;
+      });
+    } catch (_) {
+      if (mounted) setState(() => _loadingProviders = false);
     }
   }
 
@@ -286,8 +218,10 @@ class _EmergencyScreenState extends State<EmergencyScreen> {
         _loadingGps = false;
       });
       _mapController.move(_pickupLatLng, 13.5);
+      await _loadNearestProviders();
     } catch (_) {
       if (mounted) setState(() => _loadingGps = false);
+      await _loadNearestProviders();
     }
   }
 
@@ -309,259 +243,205 @@ class _EmergencyScreenState extends State<EmergencyScreen> {
           _locationService.calculateDistanceKm(_pickupLatLng, _dropoffLatLng);
       _distanceKm = dist < 0.5 ? 1.0 : double.parse(dist.toStringAsFixed(2));
     });
+    if (!_pickingDropoff) {
+      await _loadNearestProviders();
+    }
   }
 
-  Future<void> _submitOrder(double finalPrice, int etaMinutes) async {
+  void _startWaitingForAcceptance(String reqId, bool isWinch) {
+    _waitTickTimer?.cancel();
+    _waitStreamSub?.cancel();
+
+    setState(() {
+      _waitingRequestId = reqId;
+      _waitingIsWinch = isWinch;
+      _timedOutNoProvider = false;
+      _remainingSeconds = 300; // 5 دقائق
+    });
+
+    // متابعة فورية لحالة الطلب
+    _waitStreamSub = _db
+        .from('mechanic_requests')
+        .stream(primaryKey: ['id'])
+        .eq('id', reqId)
+        .listen((rows) {
+          if (rows.isEmpty || !mounted) return;
+          final row = rows.first;
+          final status = (row['status'] as String?) ?? 'pending';
+          if (status == 'accepted' || status == 'completed') {
+            _waitTickTimer?.cancel();
+            _waitStreamSub?.cancel();
+            setState(() {
+              _waitingRequestId = null;
+              _timedOutNoProvider = false;
+            });
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(
+                  isWinch
+                      ? 'تم قبول طلبك! ونش الطوارئ في طريقه إليك الآن ✓'
+                      : 'تم قبول طلبك! ميكانيكي الطوارئ في طريقه إليك الآن ✓',
+                ),
+                backgroundColor: AppColors.success,
+              ),
+            );
+          } else if (status == 'cancelled' || status == 'rejected') {
+            _waitTickTimer?.cancel();
+            _waitStreamSub?.cancel();
+            setState(() {
+              _waitingRequestId = null;
+              _timedOutNoProvider = true;
+            });
+          }
+        }, onError: (_) {});
+
+    // عدّاد 5 دقائق
+    _waitTickTimer = Timer.periodic(const Duration(seconds: 1), (timer) async {
+      if (!mounted) {
+        timer.cancel();
+        return;
+      }
+      if (_remainingSeconds <= 1) {
+        timer.cancel();
+        _waitStreamSub?.cancel();
+        final expiredId = _waitingRequestId;
+        if (expiredId != null) {
+          try {
+            await _db
+                .from('mechanic_requests')
+                .update({'status': 'cancelled'})
+                .eq('id', expiredId)
+                .eq('status', 'pending');
+          } catch (_) {}
+        }
+        if (mounted) {
+          setState(() {
+            _waitingRequestId = null;
+            _timedOutNoProvider = true;
+          });
+        }
+      } else {
+        setState(() => _remainingSeconds--);
+      }
+    });
+  }
+
+  Future<void> _cancelWaitingOrder() async {
+    final reqId = _waitingRequestId;
+    _waitTickTimer?.cancel();
+    _waitStreamSub?.cancel();
+    setState(() {
+      _waitingRequestId = null;
+      _timedOutNoProvider = false;
+    });
+    if (reqId != null) {
+      try {
+        await _db
+            .from('mechanic_requests')
+            .update({'status': 'cancelled'})
+            .eq('id', reqId)
+            .eq('status', 'pending');
+      } catch (_) {}
+    }
+  }
+
+  Future<void> _submitOrder(
+    double finalPrice,
+    int etaMinutes, {
+    bool forceBroadcastAll = false,
+  }) async {
     FocusScope.of(context).unfocus();
     final carText = _carCtrl.text.trim();
     if (carText.isEmpty) {
-      _showTopToast(
-        'بيانات ناقصة',
-        'يرجى كتابة نوع وموديل السيارة أولاً',
-        isError: true,
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('يرجى كتابة نوع وموديل السيارة أولاً'),
+          backgroundColor: Colors.red,
+        ),
       );
       return;
     }
 
     final useWinch = EnvConfig.winchEnabled.value && _serviceType == 'winch';
-    setState(() => _submitting = true);
-    try {
-      await _db.from('mechanic_requests').insert({
-        'user_id': widget.profile.id,
-        'service_type': useWinch ? 'winch' : 'mechanic',
-        'car_details': carText,
-        'phone': widget.profile.phone,
-        'description': _selectedProblem,
-        'latitude': null,
-        'longitude': null,
-        'pickup_latitude': _pickupLatLng.latitude,
-        'pickup_longitude': _pickupLatLng.longitude,
-        'dropoff_latitude': useWinch ? _dropoffLatLng.latitude : null,
-        'dropoff_longitude': useWinch ? _dropoffLatLng.longitude : null,
-        'dropoff_address': useWinch ? _dropoffAddress : _pickupAddress,
-        'total_amount': useWinch ? finalPrice : 0.0,
-        'estimated_time': '$etaMinutes دقيقة',
-        'status': 'pending',
-        'progress_step': 'pending',
-      });
+    _lastOrderPrice = finalPrice;
+    _lastOrderEta = etaMinutes;
 
+    setState(() {
+      _submitting = true;
+      _timedOutNoProvider = false;
+    });
+
+    try {
+      await _loadNearestProviders(silent: true);
+      final bool broadcastAll = forceBroadcastAll || _nearbyProviders.isEmpty;
+
+      final inserted = await _db
+          .from('mechanic_requests')
+          .insert({
+            'user_id': widget.profile.id,
+            'service_type': useWinch ? 'winch' : 'mechanic',
+            'car_details': carText,
+            'phone': widget.profile.phone,
+            'description': _selectedProblem,
+            'latitude': null,
+            'longitude': null,
+            'pickup_latitude': _pickupLatLng.latitude,
+            'pickup_longitude': _pickupLatLng.longitude,
+            'dropoff_latitude': useWinch ? _dropoffLatLng.latitude : null,
+            'dropoff_longitude': useWinch ? _dropoffLatLng.longitude : null,
+            'dropoff_address': useWinch ? _dropoffAddress : _pickupAddress,
+            'total_amount': (useWinch || EnvConfig.paymentsEnabled.value)
+                ? finalPrice
+                : 0.0,
+            'estimated_time': '$etaMinutes دقيقة',
+            'status': 'pending',
+            'progress_step': 'pending',
+            'broadcast_all': broadcastAll,
+          })
+          .select('id')
+          .single();
+
+      final reqId = inserted['id'] as String;
+
+      final targets = broadcastAll ? _allAvailableProviders : _nearbyProviders;
+      for (final provider in targets.take(25)) {
+        try {
+          await _notifs.sendNotification(
+            targetUserId: provider.id,
+            title: useWinch
+                ? (broadcastAll
+                    ? '🚨 طلب ونش طوارئ عام جديد'
+                    : '🚨 طلب ونش طوارئ قريب منك')
+                : (broadcastAll
+                    ? '🚨 طلب ميكانيكي طوارئ عام جديد'
+                    : '🚨 طلب ميكانيكي طوارئ قريب منك'),
+            body: '$_selectedProblem · $carText · $_pickupAddress',
+            type: 'emergency_request',
+            referenceId: reqId,
+          );
+        } catch (_) {}
+      }
+
+      if (!mounted) return;
+      _startWaitingForAcceptance(reqId, useWinch);
+    } catch (e) {
       if (mounted) {
-        _carCtrl.clear();
-        _showTopToast(
-          'تم إرسال الطلب بنجاح',
-          useWinch
-              ? 'السعر التقديري ${finalPrice.toStringAsFixed(2)} د.أ · جاري تعيين أقرب ونش'
-              : 'جاري البحث عن أقرب ميكانيكي طوارئ لموقعك',
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('تعذر إرسال الطلب: $e'),
+            backgroundColor: Colors.red,
+          ),
         );
       }
-    } catch (e) {
-      _showTopToast('تعذر إرسال الطلب', '$e', isError: true);
     } finally {
-      if (mounted) {
-        setState(() => _submitting = false);
-      }
+      if (mounted) setState(() => _submitting = false);
     }
   }
 
-  Widget _buildActiveRequestCard(Map<String, dynamic> e) {
-    final id = e['id'] as String;
-    final status = (e['status'] as String?) ?? 'pending';
-    final step = (e['progress_step'] as String?) ?? 'pending';
-    final serviceType = (e['service_type'] as String?) ?? 'mechanic';
-    final isWinch = serviceType == 'winch';
-    final mechId = e['mechanic_id'] as String?;
-    final pickLat = (e['pickup_latitude'] as num?)?.toDouble();
-    final pickLng = (e['pickup_longitude'] as num?)?.toDouble();
-    final amount = (e['total_amount'] as num?)?.toDouble() ?? 0.0;
-    final payStatus = (e['payment_status'] as String?) ?? 'unpaid';
-
-    double? distKm;
-    double progress;
-    final isEnRoute = step == 'on_the_way' ||
-        status == 'accepted' ||
-        status == 'in_progress';
-
-    if (step == 'completed' || status == 'completed') {
-      progress = 1.0;
-    } else if (step == 'arrived_at_pickup') {
-      progress = 0.90;
-    } else if (isEnRoute && pickLat != null && pickLng != null) {
-      final liveLat = (e['latitude'] as num?)?.toDouble() ??
-          (mechId != null ? _provCoords[mechId]?.lat : null);
-      final liveLng = (e['longitude'] as num?)?.toDouble() ??
-          (mechId != null ? _provCoords[mechId]?.lng : null);
-      if (liveLat != null && liveLng != null) {
-        distKm = LiveProgressTracker.distanceKmBetween(
-          liveLat,
-          liveLng,
-          pickLat,
-          pickLng,
-        );
-        final ratio = _tracker.computeGpsProgress('emg_scr_$id', distKm);
-        progress = (0.22 + (ratio * 0.64)).clamp(0.22, 0.86);
-      } else {
-        progress = 0.45;
-      }
-    } else {
-      progress = 0.16;
-    }
-
-    String statusText;
-    if (status == 'completed' || step == 'completed') {
-      statusText = 'تم إنهاء المساعدة الطارئة ✓';
-    } else if (step == 'arrived_at_pickup') {
-      statusText =
-          isWinch ? 'وصل الونش إلى موقعك ✓' : 'وصل الميكانيكي إلى موقعك ✓';
-    } else if (isEnRoute) {
-      final base =
-          isWinch ? 'الونش في طريقه إليك' : 'الميكانيكي في طريقه إليك';
-      if (distKm != null) {
-        final eta = (distKm * 2.2).round().clamp(1, 90);
-        final distLabel = distKm < 1.0
-            ? '${(distKm * 1000).round()} م'
-            : '${distKm.toStringAsFixed(1)} كم';
-        statusText = '$base · يبعد $distLabel (~$eta د)';
-      } else {
-        statusText = base;
-      }
-    } else {
-      statusText = isWinch
-          ? 'جاري البحث عن أقرب ونش طوارئ...'
-          : 'جاري البحث عن أقرب ميكانيكي طوارئ...';
-    }
-
-    final canCancel = status != 'completed' &&
-        status != 'cancelled' &&
-        payStatus != 'paid';
-    final canPay = payStatus != 'paid' &&
-        amount > 0 &&
-        mechId != null &&
-        mechId.isNotEmpty;
-
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: AppColors.navy,
-        borderRadius: BorderRadius.circular(16),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Icon(
-                isWinch ? Icons.local_shipping : Icons.build_circle,
-                color: AppColors.orange,
-                size: 20,
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  '${isWinch ? 'طلب ونش نشط' : 'طلب ميكانيكي نشط'} · ${e['description'] ?? ''}',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 13,
-                  ),
-                ),
-              ),
-              Text(
-                '${(progress * 100).round()}%',
-                style: const TextStyle(
-                  color: AppColors.orange,
-                  fontWeight: FontWeight.bold,
-                  fontSize: 13,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 6),
-          Text(
-            statusText,
-            style: const TextStyle(color: Colors.white70, fontSize: 12),
-          ),
-          const SizedBox(height: 8),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(8),
-            child: LinearProgressIndicator(
-              value: progress,
-              minHeight: 7,
-              backgroundColor: Colors.white24,
-              color: AppColors.orange,
-            ),
-          ),
-          const SizedBox(height: 10),
-          Wrap(
-            spacing: 8,
-            runSpacing: 6,
-            children: [
-              if (canPay)
-                ElevatedButton.icon(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.success,
-                    foregroundColor: Colors.white,
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-                    minimumSize: Size.zero,
-                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  ),
-                  onPressed: () => Navigator.push(
-                    context,
-                    animatedRoute(
-                      EmergencyCheckoutScreen(
-                        request: DbMechanicRequest.fromMap(e),
-                        customerProfile: widget.profile,
-                        onPaymentCompleted: () {
-                          if (mounted) setState(() {});
-                        },
-                      ),
-                    ),
-                  ),
-                  icon: const Icon(Icons.receipt_long, size: 15),
-                  label: Text(
-                    'دفع الفاتورة (${amount.toStringAsFixed(2)} د.أ)',
-                    style: const TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ),
-              if (canCancel)
-                TextButton.icon(
-                  style: TextButton.styleFrom(
-                    backgroundColor: Colors.red.withValues(alpha: 0.2),
-                    foregroundColor: const Color(0xFFFFB4B4),
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-                    minimumSize: Size.zero,
-                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  ),
-                  onPressed: _cancellingIds.contains(id)
-                      ? null
-                      : () => _cancelEmergencyRequest(e),
-                  icon: _cancellingIds.contains(id)
-                      ? const SizedBox(
-                          width: 13,
-                          height: 13,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: Colors.white,
-                          ),
-                        )
-                      : const Icon(Icons.cancel_outlined, size: 15),
-                  label: const Text(
-                    'إلغاء الطلب',
-                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
-                  ),
-                ),
-            ],
-          ),
-        ],
-      ),
-    );
+  String _formatCountdown(int seconds) {
+    final m = (seconds ~/ 60).toString().padLeft(2, '0');
+    final s = (seconds % 60).toString().padLeft(2, '0');
+    return '$m:$s';
   }
 
   @override
@@ -587,14 +467,26 @@ class _EmergencyScreenState extends State<EmergencyScreen> {
             : 5.0;
         final rawTotal = baseFee + winchDistanceCost;
         final isPro = AppSubscriptionCatalog.customerFeeRate(
-                widget.profile.subscriptionPlan) ==
+              widget.profile.subscriptionPlan,
+            ) ==
             0.0;
         final proDiscount = isPro
             ? double.parse((rawTotal * 0.15).toStringAsFixed(2))
             : 0.0;
         final finalPrice =
             double.parse((rawTotal - proDiscount).toStringAsFixed(2));
-        final eta = (_distanceKm * 2.4).round().clamp(8, 45);
+        final nearest =
+            _nearbyProviders.isNotEmpty ? _nearbyProviders.first : null;
+        final etaKm = nearest != null ? nearest.distanceKm : _distanceKm;
+        final eta = (etaKm * 2.4).round().clamp(5, 45);
+
+        // سيارات سكنية 2D على الخريطة (القريبين أو كل المتاحين)
+        final mapVehicles = (_nearbyProviders.isNotEmpty
+                ? _nearbyProviders
+                : _allAvailableProviders)
+            .where((p) => p.lat != null && p.lng != null)
+            .take(12)
+            .toList();
 
         return SafeArea(
           child: Column(
@@ -618,21 +510,181 @@ class _EmergencyScreenState extends State<EmergencyScreen> {
                             ),
                           ),
                         ),
-                        if (isWinch)
-                          IconButton(
-                            tooltip: 'تحديث تسعيرة الونش',
-                            onPressed: _loadKmRate,
-                            icon: const Icon(Icons.refresh,
-                                color: AppColors.navy, size: 20),
+                        IconButton(
+                          tooltip: 'تحديث أقرب المزوّدين',
+                          onPressed: () {
+                            _loadSettings();
+                            _loadNearestProviders();
+                          },
+                          icon: const Icon(
+                            Icons.refresh,
+                            color: AppColors.navy,
+                            size: 20,
                           ),
+                        ),
                       ],
                     ),
-                    const SizedBox(height: 10),
+                    const SizedBox(height: 12),
 
-                    // طلبات الطوارئ النشطة مع التتبع المباشر وزر الإلغاء
-                    if (_activeRequests.isNotEmpty) ...[
-                      ..._activeRequests.map(_buildActiveRequestCard),
-                      const SizedBox(height: 6),
+                    // شريط انتظار قبول الطلب (خط يتحرك يمين وشمال) أو رسالة انتهاء الـ 5 دقائق
+                    if (_waitingRequestId != null) ...[
+                      Container(
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          color: AppColors.navy,
+                          borderRadius: BorderRadius.circular(18),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            Row(
+                              children: [
+                                Icon(
+                                  _waitingIsWinch
+                                      ? Icons.local_shipping_rounded
+                                      : Icons.build_circle_rounded,
+                                  color: AppColors.orange,
+                                  size: 26,
+                                ),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: Text(
+                                    _waitingIsWinch
+                                        ? 'بانتظار قبول ونش طوارئ...'
+                                        : 'بانتظار قبول ميكانيكي طوارئ...',
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 15,
+                                    ),
+                                  ),
+                                ),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 10,
+                                    vertical: 4,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: Colors.white.withValues(alpha: 0.14),
+                                    borderRadius: BorderRadius.circular(10),
+                                  ),
+                                  child: Text(
+                                    _formatCountdown(_remainingSeconds),
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 12.5,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 12),
+                            const _SlidingRadarBar(),
+                            const SizedBox(height: 10),
+                            Row(
+                              children: [
+                                const Expanded(
+                                  child: Text(
+                                    'سيظهر التتبع المباشر على الشاشة الرئيسية فور قبول طلبك',
+                                    style: TextStyle(
+                                      color: Colors.white70,
+                                      fontSize: 11.5,
+                                    ),
+                                  ),
+                                ),
+                                TextButton(
+                                  onPressed: _cancelWaitingOrder,
+                                  child: const Text(
+                                    'إلغاء الطلب',
+                                    style: TextStyle(
+                                      color: Colors.redAccent,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                    ] else if (_timedOutNoProvider) ...[
+                      Container(
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          color: Colors.red.withValues(alpha: 0.06),
+                          borderRadius: BorderRadius.circular(18),
+                          border: Border.all(
+                            color: Colors.red.withValues(alpha: 0.35),
+                          ),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            Row(
+                              children: [
+                                const Icon(
+                                  Icons.error_outline_rounded,
+                                  color: Colors.red,
+                                  size: 26,
+                                ),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: Text(
+                                    _waitingIsWinch
+                                        ? 'عذراً، لا يوجد ونش طوارئ متاح حالياً'
+                                        : 'عذراً، لا يوجد ميكانيكي طوارئ متاح حالياً',
+                                    style: const TextStyle(
+                                      color: Colors.red,
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 14.5,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 6),
+                            const Text(
+                              'مضت 5 دقائق دون قبول الطلب. يمكنك إعادة إرسال الطلب لجميع المزوّدين المتاحين الآن.',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: AppColors.textSecondary,
+                              ),
+                            ),
+                            const SizedBox(height: 12),
+                            ElevatedButton.icon(
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: AppColors.orange,
+                                foregroundColor: Colors.white,
+                                padding:
+                                    const EdgeInsets.symmetric(vertical: 12),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                              ),
+                              onPressed: _submitting
+                                  ? null
+                                  : () => _submitOrder(
+                                        _lastOrderPrice > 0
+                                            ? _lastOrderPrice
+                                            : finalPrice,
+                                        _lastOrderEta > 0 ? _lastOrderEta : eta,
+                                        forceBroadcastAll: true,
+                                      ),
+                              icon: const Icon(Icons.replay_rounded),
+                              label: const Text(
+                                'إعادة الطلب',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 15,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 12),
                     ],
 
                     if (showWinch) ...[
@@ -647,16 +699,16 @@ class _EmergencyScreenState extends State<EmergencyScreen> {
                           children: [
                             _segTab('ونش سحب', isWinch, () {
                               setState(() => _serviceType = 'winch');
-                              _loadKmRate();
+                              _loadSettings();
+                              _loadNearestProviders();
                             }),
-                            _segTab(
-                              'ميكانيكي طوارئ',
-                              !isWinch,
-                              () => setState(() {
+                            _segTab('ميكانيكي طوارئ', !isWinch, () {
+                              setState(() {
                                 _serviceType = 'mechanic';
                                 _pickingDropoff = false;
-                              }),
-                            ),
+                              });
+                              _loadNearestProviders();
+                            }),
                           ],
                         ),
                       ),
@@ -710,65 +762,76 @@ class _EmergencyScreenState extends State<EmergencyScreen> {
                       ),
 
                     SizedBox(
-                      height: 205,
+                      height: 220,
                       child: ClipRRect(
                         borderRadius: BorderRadius.circular(16),
                         child: Stack(
                           children: [
-                            Directionality(
-                              textDirection: TextDirection.ltr,
-                              child: FlutterMap(
-                                mapController: _mapController,
-                                options: MapOptions(
-                                  initialCenter: _pickupLatLng,
-                                  initialZoom: 13.5,
-                                  minZoom: 3,
-                                  maxZoom: 18,
-                                  onTap: (_, latLng) => _onMapTap(latLng),
+                            FlutterMap(
+                              mapController: _mapController,
+                              options: MapOptions(
+                                initialCenter: _pickupLatLng,
+                                initialZoom: 13.5,
+                                onTap: (_, latLng) => _onMapTap(latLng),
+                              ),
+                              children: [
+                                TileLayer(
+                                  urlTemplate:
+                                      'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                                  userAgentPackageName: 'com.autoparts.app',
                                 ),
-                                children: [
-                                  TileLayer(
-                                    urlTemplate:
-                                        'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                                    userAgentPackageName: 'com.autoparts.app',
-                                  ),
-                                  if (isWinch)
-                                    PolylineLayer(
-                                      polylines: [
-                                        Polyline(
-                                          points: [
-                                            _pickupLatLng,
-                                            _dropoffLatLng
-                                          ],
-                                          color: AppColors.orange,
-                                          strokeWidth: 4,
-                                        ),
-                                      ],
-                                    ),
-                                  MarkerLayer(
-                                    markers: [
-                                      Marker(
-                                        point: _pickupLatLng,
-                                        width: 72,
-                                        height: 72,
-                                        child: const PulsingPin(
-                                            color: AppColors.orange),
+                                if (isWinch)
+                                  PolylineLayer(
+                                    polylines: [
+                                      Polyline(
+                                        points: [
+                                          _pickupLatLng,
+                                          _dropoffLatLng
+                                        ],
+                                        color: AppColors.orange,
+                                        strokeWidth: 4,
                                       ),
-                                      if (isWinch)
-                                        Marker(
-                                          point: _dropoffLatLng,
-                                          width: 44,
-                                          height: 44,
-                                          child: const Icon(
-                                            Icons.flag,
-                                            color: AppColors.navy,
-                                            size: 34,
-                                          ),
-                                        ),
                                     ],
                                   ),
-                                ],
-                              ),
+                                MarkerLayer(
+                                  markers: [
+                                    // سيارات سكنية 2D للميكانيكيين / الونشات
+                                    ...mapVehicles.map(
+                                      (p) => Marker(
+                                        point: LatLng(p.lat!, p.lng!),
+                                        width: 46,
+                                        height: 46,
+                                        child: Tooltip(
+                                          message:
+                                              '${p.name} (${p.distanceKm.toStringAsFixed(1)} كم)',
+                                          child: _GreyCar2DMarker(
+                                            isWinch: isWinch,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                    Marker(
+                                      point: _pickupLatLng,
+                                      width: 72,
+                                      height: 72,
+                                      child: const PulsingPin(
+                                        color: AppColors.orange,
+                                      ),
+                                    ),
+                                    if (isWinch)
+                                      Marker(
+                                        point: _dropoffLatLng,
+                                        width: 44,
+                                        height: 44,
+                                        child: const Icon(
+                                          Icons.flag,
+                                          color: AppColors.navy,
+                                          size: 34,
+                                        ),
+                                      ),
+                                  ],
+                                ),
+                              ],
                             ),
                             Positioned(
                               bottom: 10,
@@ -795,6 +858,97 @@ class _EmergencyScreenState extends State<EmergencyScreen> {
                       ),
                     ),
                     const SizedBox(height: 10),
+
+                    // حالة أقرب مزوّد أو البث للجميع
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: nearest != null
+                            ? AppColors.success.withValues(alpha: 0.08)
+                            : AppColors.orangeLight,
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(
+                          color: nearest != null
+                              ? AppColors.success.withValues(alpha: 0.35)
+                              : AppColors.orange.withValues(alpha: 0.4),
+                        ),
+                      ),
+                      child: _loadingProviders
+                          ? const Row(
+                              children: [
+                                SizedBox(
+                                  width: 16,
+                                  height: 16,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: AppColors.navy,
+                                  ),
+                                ),
+                                SizedBox(width: 10),
+                                Text(
+                                  'جاري البحث عن أقرب مزوّد متاح حولك...',
+                                  style: TextStyle(fontSize: 12.5),
+                                ),
+                              ],
+                            )
+                          : nearest != null
+                              ? Row(
+                                  children: [
+                                    SizedBox(
+                                      width: 38,
+                                      height: 38,
+                                      child: _GreyCar2DMarker(isWinch: isWinch),
+                                    ),
+                                    const SizedBox(width: 10),
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          Text(
+                                            'أقرب ${isWinch ? 'ونش' : 'ميكانيكي'} متاح: ${nearest.name}',
+                                            style: const TextStyle(
+                                              fontWeight: FontWeight.bold,
+                                              fontSize: 13.5,
+                                              color: AppColors.navy,
+                                            ),
+                                          ),
+                                          const SizedBox(height: 2),
+                                          Text(
+                                            'يبعد عنك ${nearest.distanceKm.toStringAsFixed(1)} كم${nearest.ratingAvg > 0 ? ' · ★ ${nearest.ratingAvg.toStringAsFixed(1)}' : ''} · متاح ${_nearbyProviders.length} بالقرب منك',
+                                            style: const TextStyle(
+                                              fontSize: 12,
+                                              color: AppColors.success,
+                                              fontWeight: FontWeight.w600,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ],
+                                )
+                              : Row(
+                                  children: [
+                                    const Icon(
+                                      Icons.campaign_rounded,
+                                      color: AppColors.orange,
+                                    ),
+                                    const SizedBox(width: 10),
+                                    Expanded(
+                                      child: Text(
+                                        'لا يوجد ${isWinch ? 'ونش' : 'ميكانيكي'} قريب ضمن ${_nearbyRadiusKm.toInt()} كم حالياً — سيتم إرسال طلبك تلقائياً لجميع المزوّدين المتاحين (${_allAvailableProviders.length}).',
+                                        style: const TextStyle(
+                                          fontSize: 12,
+                                          color: AppColors.navy,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                    ),
+
+                    const SizedBox(height: 10),
                     _infoRow('موقعك الحالي', _pickupAddress),
                     if (isWinch) ...[
                       const SizedBox(height: 8),
@@ -817,12 +971,15 @@ class _EmergencyScreenState extends State<EmergencyScreen> {
                         filled: true,
                         fillColor: AppColors.surface,
                         border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(14)),
+                          borderRadius: BorderRadius.circular(14),
+                        ),
                       ),
                     ),
                     const SizedBox(height: 14),
-                    const Text('ما المشكلة؟',
-                        style: TextStyle(fontWeight: FontWeight.bold)),
+                    const Text(
+                      'ما المشكلة؟',
+                      style: TextStyle(fontWeight: FontWeight.bold),
+                    ),
                     const SizedBox(height: 8),
                     Wrap(
                       spacing: 8,
@@ -835,7 +992,9 @@ class _EmergencyScreenState extends State<EmergencyScreen> {
                           child: AnimatedContainer(
                             duration: const Duration(milliseconds: 180),
                             padding: const EdgeInsets.symmetric(
-                                horizontal: 16, vertical: 9),
+                              horizontal: 16,
+                              vertical: 9,
+                            ),
                             decoration: BoxDecoration(
                               color: selected
                                   ? AppColors.orangeLight
@@ -862,7 +1021,6 @@ class _EmergencyScreenState extends State<EmergencyScreen> {
                       }).toList(),
                     ),
                     const SizedBox(height: 14),
-
                     Container(
                       padding: const EdgeInsets.all(14),
                       decoration: BoxDecoration(
@@ -914,39 +1072,43 @@ class _EmergencyScreenState extends State<EmergencyScreen> {
                   ],
                 ),
               ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 8, 16, 20),
-                child: BounceTap(
-                  onTap:
-                      _submitting ? () {} : () => _submitOrder(finalPrice, eta),
-                  child: Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                    alignment: Alignment.center,
-                    decoration: BoxDecoration(
-                      color: AppColors.orange,
-                      borderRadius: BorderRadius.circular(14),
-                    ),
-                    child: _submitting
-                        ? const SizedBox(
-                            width: 22,
-                            height: 22,
-                            child: CircularProgressIndicator(
-                                color: Colors.white, strokeWidth: 2.4),
-                          )
-                        : Text(
-                            isWinch
-                                ? 'تأكيد طلب الونش (${finalPrice.toStringAsFixed(2)} د.أ)'
-                                : 'تأكيد طلب الطوارئ',
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold,
+              if (_waitingRequestId == null)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 20),
+                  child: BounceTap(
+                    onTap: _submitting
+                        ? () {}
+                        : () => _submitOrder(finalPrice, eta),
+                    child: Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        color: AppColors.orange,
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      child: _submitting
+                          ? const SizedBox(
+                              width: 22,
+                              height: 22,
+                              child: CircularProgressIndicator(
+                                color: Colors.white,
+                                strokeWidth: 2.4,
+                              ),
+                            )
+                          : Text(
+                              isWinch
+                                  ? 'تأكيد طلب الونش (${finalPrice.toStringAsFixed(2)} د.أ)'
+                                  : 'تأكيد طلب الطوارئ',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                              ),
                             ),
-                          ),
+                    ),
                   ),
                 ),
-              ),
             ],
           ),
         );
@@ -1008,4 +1170,196 @@ class _EmergencyScreenState extends State<EmergencyScreen> {
       ],
     );
   }
+}
+
+/// شريط تحميل يتحرك بسلاسة يمين وشمال أثناء انتظار قبول الطلب
+class _SlidingRadarBar extends StatefulWidget {
+  const _SlidingRadarBar();
+
+  @override
+  State<_SlidingRadarBar> createState() => _SlidingRadarBarState();
+}
+
+class _SlidingRadarBarState extends State<_SlidingRadarBar>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1100),
+    )..repeat(reverse: true);
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 6,
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.16),
+        borderRadius: BorderRadius.circular(99),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: AnimatedBuilder(
+        animation: _ctrl,
+        builder: (_, __) {
+          final alignX = -1.0 + (_ctrl.value * 2.0);
+          return Align(
+            alignment: Alignment(alignX, 0),
+            child: FractionallySizedBox(
+              widthFactor: 0.36,
+              child: Container(
+                decoration: BoxDecoration(
+                  color: AppColors.orange,
+                  borderRadius: BorderRadius.circular(99),
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
+/// سيارة سكنية 2D (منظور علوي مثل Uber) للميكانيكي أو الونش
+class _GreyCar2DMarker extends StatelessWidget {
+  final bool isWinch;
+  const _GreyCar2DMarker({required this.isWinch});
+
+  @override
+  Widget build(BuildContext context) {
+    return CustomPaint(
+      size: const Size(40, 40),
+      painter: _GreyCar2DPainter(isWinch: isWinch),
+    );
+  }
+}
+
+class _GreyCar2DPainter extends CustomPainter {
+  final bool isWinch;
+  const _GreyCar2DPainter({required this.isWinch});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final w = size.width;
+    final h = size.height;
+
+    // ظل ناعم تحت السيارة
+    final shadowPaint = Paint()
+      ..color = Colors.black.withValues(alpha: 0.25)
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 3);
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+        Rect.fromCenter(
+          center: Offset(w * 0.52, h * 0.54),
+          width: w * 0.48,
+          height: h * 0.78,
+        ),
+        const Radius.circular(8),
+      ),
+      shadowPaint,
+    );
+
+    // العجلات الأربع
+    final wheelPaint = Paint()..color = const Color(0xFF1F2937);
+    final wheelRects = [
+      Rect.fromLTWH(w * 0.20, h * 0.18, w * 0.09, h * 0.16),
+      Rect.fromLTWH(w * 0.71, h * 0.18, w * 0.09, h * 0.16),
+      Rect.fromLTWH(w * 0.20, h * 0.64, w * 0.09, h * 0.16),
+      Rect.fromLTWH(w * 0.71, h * 0.64, w * 0.09, h * 0.16),
+    ];
+    for (final wr in wheelRects) {
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(wr, const Radius.circular(2)),
+        wheelPaint,
+      );
+    }
+
+    // هيكل السيارة السكني (فضي/رمادي)
+    final bodyPaint = Paint()..color = const Color(0xFF9CA3AF);
+    final borderPaint = Paint()
+      ..color = const Color(0xFF4B5563)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.4;
+    final bodyRect = RRect.fromRectAndRadius(
+      Rect.fromCenter(
+        center: Offset(w * 0.5, h * 0.5),
+        width: w * 0.46,
+        height: h * 0.78,
+      ),
+      const Radius.circular(7),
+    );
+    canvas.drawRRect(bodyRect, bodyPaint);
+    canvas.drawRRect(bodyRect, borderPaint);
+
+    // الزجاج الأمامي الداكن
+    final glassPaint = Paint()..color = const Color(0xFF1F2937);
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+        Rect.fromLTWH(w * 0.32, h * 0.24, w * 0.36, h * 0.15),
+        const Radius.circular(3),
+      ),
+      glassPaint,
+    );
+
+    if (isWinch) {
+      // سطح الونش الخلفي (Flatbed) + ضوء طوارئ برتقالي
+      final bedPaint = Paint()..color = const Color(0xFF6B7280);
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(
+          Rect.fromLTWH(w * 0.30, h * 0.45, w * 0.40, h * 0.38),
+          const Radius.circular(3),
+        ),
+        bedPaint,
+      );
+      final beaconPaint = Paint()..color = AppColors.orange;
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(
+          Rect.fromLTWH(w * 0.36, h * 0.40, w * 0.28, h * 0.05),
+          const Radius.circular(2),
+        ),
+        beaconPaint,
+      );
+    } else {
+      // سقف السيارة والزجاج الخلفي للميكانيكي
+      final roofPaint = Paint()..color = const Color(0xFFD1D5DB);
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(
+          Rect.fromLTWH(w * 0.33, h * 0.41, w * 0.34, h * 0.22),
+          const Radius.circular(3),
+        ),
+        roofPaint,
+      );
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(
+          Rect.fromLTWH(w * 0.34, h * 0.65, w * 0.32, h * 0.11),
+          const Radius.circular(2.5),
+        ),
+        glassPaint,
+      );
+    }
+
+    // المصابيح الأمامية
+    final headPaint = Paint()..color = const Color(0xFFFEF08A);
+    canvas.drawCircle(Offset(w * 0.35, h * 0.14), 2.1, headPaint);
+    canvas.drawCircle(Offset(w * 0.65, h * 0.14), 2.1, headPaint);
+
+    // المصابيح الخلفية
+    final tailPaint = Paint()..color = const Color(0xFFEF4444);
+    canvas.drawCircle(Offset(w * 0.35, h * 0.86), 1.9, tailPaint);
+    canvas.drawCircle(Offset(w * 0.65, h * 0.86), 1.9, tailPaint);
+  }
+
+  @override
+  bool shouldRepaint(covariant _GreyCar2DPainter oldDelegate) =>
+      oldDelegate.isWinch != isWinch;
 }

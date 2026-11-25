@@ -234,7 +234,7 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
   }
 
   void _openSupportScreen() =>
-      Navigator.push(context, animatedRoute(SupportScreen()));
+      Navigator.push(context, animatedRoute(const SupportScreen()));
 
   Future<void> _signOut() async {
     await _notifs.stopRealtimeListener();
@@ -367,15 +367,10 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
             ),
             const SizedBox(height: 8),
             Text(
-              showSubs
-                  ? _loc.tr(
-                      'اشترك بإحدى باقات المزودين لزيادة عدد منشوراتك، وتقليل العمولة، وتصدر نتائج البحث في المتجر.',
-                      'Upgrade your provider plan to get more listings, lower commission, and higher search visibility.',
-                    )
-                  : _loc.tr(
-                      'وصلت للحد الأقصى الحالي للمنشورات. تواصل مع الدعم الفني لمزيد من المساعدة.',
-                      'You have reached your current listing limit. Contact support for help.',
-                    ),
+              _loc.tr(
+                'اشترك بإحدى باقات المزودين لزيادة عدد منشوراتك، وتقليل العمولة، وتصدر نتائج البحث في المتجر.',
+                'Upgrade your provider plan for more listings, lower commission, and higher search visibility.',
+              ),
               textAlign: TextAlign.center,
               style: const TextStyle(
                 fontSize: 13,
@@ -412,7 +407,9 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
                   label: Text(
                     _loc.tr('استعراض الباقات والاشتراك الآن', 'View Plans'),
                     style: const TextStyle(
-                        fontWeight: FontWeight.bold, fontSize: 15),
+                      fontWeight: FontWeight.bold,
+                      fontSize: 15,
+                    ),
                   ),
                 ),
               ),
@@ -464,8 +461,7 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
                 controller: currentPassCtrl,
                 obscureText: true,
                 decoration: InputDecoration(
-                  labelText:
-                      _loc.tr('كلمة المرور الحالية', 'Current Password'),
+                  labelText: _loc.tr('كلمة المرور الحالية', 'Current Password'),
                 ),
               ),
               const SizedBox(height: 10),
@@ -521,9 +517,7 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
                       try {
                         final email = widget.profile?.email ??
                             _db.auth.currentUser?.email;
-                        if (email == null) {
-                          throw Exception('Email unavailable');
-                        }
+                        if (email == null) throw Exception('Email unavailable');
                         await _db.auth.signInWithPassword(
                           email: email,
                           password: currentPassCtrl.text,
@@ -625,8 +619,6 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
                   child: pages[safeIndex],
                 ),
               ),
-
-              // زر فحص AI العائم
               Positioned(
                 left: 14,
                 bottom: 20,
@@ -768,7 +760,7 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
     final isProvider =
         role == 'merchant' || role == 'mechanic' || role == 'towing';
     final showPayments = EnvConfig.paymentsEnabled.value;
-    final showSubs = EnvConfig.subscriptionsEnabled.value;
+    final showSubscriptions = EnvConfig.subscriptionsEnabled.value;
     final showWinch = EnvConfig.winchEnabled.value;
 
     final displayName = isLoggedIn
@@ -784,7 +776,7 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
       isAdmin: isAdmin,
       role: role,
       showPayments: showPayments,
-      showSubs: showSubs,
+      showSubscriptions: showSubscriptions,
       showWinch: showWinch,
     );
 
@@ -814,7 +806,6 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
           ],
         ),
         actions: [
-          // زر تغيير اللغة بدل زر البروفايل
           InkWell(
             borderRadius: BorderRadius.circular(18),
             onTap: () {
@@ -855,7 +846,6 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
               ),
             ),
           ),
-          // زر الدردشات
           IconButton(
             tooltip: _loc.tr('الدردشات', 'Chats'),
             icon: Badge(
@@ -885,7 +875,6 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
               Navigator.push(context, animatedRoute(const ChatsListScreen()));
             },
           ),
-          // زر الإشعارات
           if (isLoggedIn)
             const NotificationBellButton(iconColor: AppColors.navy)
           else
@@ -911,9 +900,8 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
           setState(() {});
         },
         child: ListView(
-          padding: const EdgeInsets.fromLTRB(16, 14, 16, 120),
+          padding: const EdgeInsets.fromLTRB(16, 14, 16, 110),
           children: [
-            // بطاقة الترحيب العلوية (تفتح البروفايل عند الضغط عليها)
             BounceTap(
               onTap: () => _openUserProfile(p),
               child: Container(
@@ -1048,26 +1036,19 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
                         ],
                       ),
                     ),
-                    const Icon(
-                      Icons.arrow_forward_ios,
-                      color: Colors.white54,
-                      size: 16,
-                    ),
+                    const Icon(Icons.arrow_forward_ios,
+                        color: Colors.white54, size: 16),
                   ],
                 ),
               ),
             ),
-
             const SizedBox(height: 12),
             const HomeAdBanner(),
-
             if (isLoggedIn) ...[
               const SizedBox(height: 12),
               HomeLiveProgressBanner(viewerProfile: p),
             ],
-
             const SizedBox(height: 20),
-
             Row(
               children: [
                 const Icon(Icons.grid_view_rounded,
@@ -1084,7 +1065,6 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
               ],
             ),
             const SizedBox(height: 14),
-
             GridView.builder(
               shrinkWrap: true,
               physics: const NeverScrollableScrollPhysics(),
@@ -1199,7 +1179,7 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
     required bool isAdmin,
     required String role,
     required bool showPayments,
-    required bool showSubs,
+    required bool showSubscriptions,
     required bool showWinch,
   }) {
     void openChats() {
@@ -1230,10 +1210,8 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
       return [
         _ShortcutItem(
           title: _loc.tr('لوحة السوبر أدمن', 'Admin Panel'),
-          subtitle: _loc.tr(
-            'التسعيرات، الحسابات، الإعلانات والمالية',
-            'Pricing, accounts, ads & finance',
-          ),
+          subtitle: _loc.tr('التسعيرات، الحسابات، الإعلانات والمالية',
+              'Pricing, accounts, ads & finance'),
           icon: Icons.admin_panel_settings_outlined,
           iconColor: AppColors.orange,
           iconBg: AppColors.orange.withValues(alpha: 0.16),
@@ -1291,8 +1269,8 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
       return [
         _ShortcutItem(
           title: _loc.tr('لوحة الورشة والطوارئ', 'Workshop Dashboard'),
-          subtitle: _loc.tr(
-              'استقبال المواعيد وطلبات الإنقاذ', 'Manage bookings & SOS'),
+          subtitle: _loc.tr('استقبال المواعيد وطلبات الإنقاذ',
+              'Manage bookings & SOS'),
           icon: Icons.build_circle_outlined,
           iconColor: AppColors.orange,
           iconBg: AppColors.orange.withValues(alpha: 0.16),
@@ -1311,8 +1289,8 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
           ),
         _ShortcutItem(
           title: _loc.tr('قطع الغيار والمخزون', 'Parts & Inventory'),
-          subtitle: _loc.tr(
-              'إدارة القطع، الإخفاء والخصومات', 'Manage parts & offers'),
+          subtitle: _loc.tr('إدارة القطع، الإخفاء والخصومات',
+              'Manage parts & offers'),
           icon: Icons.inventory_2_outlined,
           iconColor: const Color(0xFF334155),
           iconBg: const Color(0xFFE2E8F0),
@@ -1328,19 +1306,20 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
           onTap: _handleAddProductTap,
         ),
         _ShortcutItem(
-          title: showSubs
+          title: showSubscriptions
               ? _loc.tr('الباقات والاشتراكات', 'Subscription Plans')
               : _loc.tr('متجر قطع الغيار', 'Parts Store'),
-          subtitle: showSubs
+          subtitle: showSubscriptions
               ? _loc.tr('تصدر نتائج البحث وعمولة أقل', 'Lower commission')
               : _loc.tr('شراء قطع لسيارات الزبائن', 'Browse parts'),
-          icon: showSubs
+          icon: showSubscriptions
               ? Icons.workspace_premium_outlined
               : Icons.storefront_outlined,
           iconColor: const Color(0xFFD97706),
           iconBg: const Color(0xFFFEF3C7),
-          onTap:
-              showSubs ? openProviderPlans : () => setState(() => _index = 1),
+          onTap: showSubscriptions
+              ? openProviderPlans
+              : () => setState(() => _index = 1),
         ),
         _ShortcutItem(
           title: _loc.tr('الدردشات', 'Chats'),
@@ -1359,8 +1338,8 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
       return [
         _ShortcutItem(
           title: _loc.tr('قطع الغيار والمخزون', 'My Inventory'),
-          subtitle: _loc.tr(
-              'إدارة القطع، الإخفاء والخصومات', 'Manage parts & discounts'),
+          subtitle: _loc.tr('إدارة القطع، الإخفاء والخصومات',
+              'Manage parts & discounts'),
           icon: Icons.inventory_2_outlined,
           iconColor: AppColors.orange,
           iconBg: AppColors.orange.withValues(alpha: 0.16),
@@ -1394,19 +1373,20 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
           onTap: () => setState(() => _index = 1),
         ),
         _ShortcutItem(
-          title: showSubs
+          title: showSubscriptions
               ? _loc.tr('الباقات والاشتراكات', 'Subscription Plans')
               : _loc.tr('مواعيد الورش', 'Workshop Bookings'),
-          subtitle: showSubs
+          subtitle: showSubscriptions
               ? _loc.tr('زيادة حد المنشورات وتصدر البحث', 'Boost visibility')
               : _loc.tr('حجوزات ومواعيد الصيانة', 'Maintenance bookings'),
-          icon: showSubs
+          icon: showSubscriptions
               ? Icons.workspace_premium_outlined
               : Icons.event_note_outlined,
           iconColor: const Color(0xFFD97706),
           iconBg: const Color(0xFFFEF3C7),
-          onTap:
-              showSubs ? openProviderPlans : () => setState(() => _index = 3),
+          onTap: showSubscriptions
+              ? openProviderPlans
+              : () => setState(() => _index = 3),
         ),
         _ShortcutItem(
           title: _loc.tr('الدردشات', 'Chats'),
@@ -1459,18 +1439,18 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
           onTap: () => setState(() => _index = 1),
         ),
         _ShortcutItem(
-          title: showSubs
+          title: showSubscriptions
               ? _loc.tr('الباقات والاشتراكات', 'Plans')
               : _loc.tr('الدعم الفني', 'Support'),
-          subtitle: showSubs
+          subtitle: showSubscriptions
               ? _loc.tr('عمولة أقل وظهور مميز', 'Lower fees & boost')
               : _loc.tr('المساعدة على مدار الساعة', '24/7 help'),
-          icon: showSubs
+          icon: showSubscriptions
               ? Icons.workspace_premium_outlined
               : Icons.support_agent,
           iconColor: const Color(0xFFD97706),
           iconBg: const Color(0xFFFEF3C7),
-          onTap: showSubs ? openProviderPlans : _openSupportScreen,
+          onTap: showSubscriptions ? openProviderPlans : _openSupportScreen,
         ),
         _ShortcutItem(
           title: _loc.tr('الدردشات', 'Chats'),
@@ -1488,8 +1468,8 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
     return [
       _ShortcutItem(
         title: _loc.tr('متجر قطع الغيار', 'Parts Store'),
-        subtitle:
-            _loc.tr('ابحث وتواصل مباشرة مع التجار', 'Search & contact merchants'),
+        subtitle: _loc.tr('ابحث وتواصل مباشرة مع التجار',
+            'Search & contact merchants'),
         icon: Icons.storefront_outlined,
         iconColor: AppColors.orange,
         iconBg: AppColors.orange.withValues(alpha: 0.16),
@@ -1537,19 +1517,19 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
             showAiDiagnosticSheet(context, viewerProfile: widget.profile),
       ),
       _ShortcutItem(
-        title: showSubs
+        title: showSubscriptions
             ? _loc.tr('الباقات والاشتراكات', 'Membership Plans')
             : _loc.tr('الدعم الفني', 'Support'),
-        subtitle: showSubs
+        subtitle: showSubscriptions
             ? _loc.tr('مزايا وخصومات حصرية', 'Exclusive perks & 0% fee')
             : _loc.tr('فريق الدعم جاهز لمساعدتك', 'We are here to help'),
-        icon: showSubs
+        icon: showSubscriptions
             ? Icons.workspace_premium_outlined
             : Icons.support_agent,
         iconColor: const Color(0xFFD97706),
         iconBg: const Color(0xFFFEF3C7),
         onTap: () {
-          if (!showSubs) {
+          if (!showSubscriptions) {
             _openSupportScreen();
             return;
           }
@@ -1575,8 +1555,8 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
       ),
       _ShortcutItem(
         title: _loc.tr('الدردشات', 'Chats'),
-        subtitle: _loc.tr(
-            'محادثاتك مع التجار والورش', 'Messages with shops & mechanics'),
+        subtitle: _loc.tr('محادثاتك مع التجار والورش',
+            'Messages with shops & mechanics'),
         icon: Icons.chat_bubble_outline,
         iconColor: const Color(0xFF0284C7),
         iconBg: const Color(0xFFE0F2FE),
@@ -1636,52 +1616,21 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
                 ),
                 if (isLoggedIn) ...[
                   const SizedBox(height: 8),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 6,
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 10, vertical: 3),
-                        decoration: BoxDecoration(
-                          color: AppColors.orange,
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: Text(
-                          _roleDisplayName(isAdmin ? 'admin' : role),
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 11,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: AppColors.orange,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Text(
+                      _roleDisplayName(isAdmin ? 'admin' : role),
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 11,
+                        fontWeight: FontWeight.bold,
                       ),
-                      if (isProvider && p.ratingCount > 0)
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 8, vertical: 3),
-                          decoration: BoxDecoration(
-                            color: Colors.amber.withValues(alpha: 0.2),
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              const Icon(Icons.star_rounded,
-                                  color: Colors.amber, size: 13),
-                              const SizedBox(width: 3),
-                              Text(
-                                '${p.ratingAvg.toStringAsFixed(1)} (${p.ratingCount})',
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                    ],
+                    ),
                   ),
                 ],
               ],
@@ -1760,11 +1709,6 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
                   _loc.tr('المحفظة المالية وسحب الأرباح', 'Wallet & Payouts'),
                   style: const TextStyle(fontWeight: FontWeight.w700),
                 ),
-                subtitle: Text(
-                  _loc.tr('الأرباح، سحب للبنك، وتسوية العمولة',
-                      'Withdraw to bank & settle fees'),
-                  style: const TextStyle(fontSize: 11),
-                ),
                 trailing: const Icon(Icons.arrow_forward_ios, size: 14),
                 onTap: () {
                   Navigator.pop(context);
@@ -1781,7 +1725,7 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
               },
             ),
           ],
-          if (isLoggedIn && !isProvider && !isAdmin && showPayments) ...[
+          if (isLoggedIn && showPayments && !isProvider && !isAdmin) ...[
             const Divider(),
             ListTile(
               leading: const Icon(Icons.receipt_long_outlined,
@@ -1867,6 +1811,14 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
             },
           ),
           ListTile(
+            leading: const Icon(Icons.policy_outlined, color: AppColors.navy),
+            title: Text(_loc.tr('الشروط وسياسة الخصوصية', 'Terms & Privacy')),
+            onTap: () {
+              Navigator.pop(context);
+              showAppLegalPoliciesSheet(context);
+            },
+          ),
+          ListTile(
             leading: const Icon(Icons.support_agent, color: AppColors.orange),
             title: Text(_loc.tr('الدعم الفني والمساعدة', 'Support & Help')),
             onTap: () {
@@ -1945,18 +1897,13 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
           children: [
             const Icon(Icons.lock_outline, size: 52, color: AppColors.navy),
             const SizedBox(height: 12),
-            Text(
-              msg,
-              textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 15),
-            ),
+            Text(msg, textAlign: TextAlign.center, style: const TextStyle(fontSize: 15)),
             const SizedBox(height: 16),
             ElevatedButton(
               style: ElevatedButton.styleFrom(
                 backgroundColor: AppColors.orange,
                 foregroundColor: Colors.white,
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 28, vertical: 14),
+                padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 14),
               ),
               onPressed: () => Navigator.push(
                 context,
@@ -1965,7 +1912,8 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
                 ),
               ),
               child: Text(
-                  _loc.tr('تسجيل الدخول / إنشاء حساب', 'Sign In / Sign Up')),
+                _loc.tr('تسجيل الدخول / إنشاء حساب', 'Sign In / Sign Up'),
+              ),
             ),
           ],
         ),
@@ -2036,6 +1984,15 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
             const SizedBox(height: 16),
             Card(
               child: ListTile(
+                leading: const Icon(Icons.policy_outlined, color: AppColors.navy),
+                title: Text(_loc.tr('الشروط وسياسة الخصوصية', 'Terms & Privacy')),
+                trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+                onTap: () => showAppLegalPoliciesSheet(context),
+              ),
+            ),
+            const SizedBox(height: 10),
+            Card(
+              child: ListTile(
                 leading:
                     const Icon(Icons.support_agent, color: AppColors.orange),
                 title: Text(_loc.tr('الدعم الفني والمساعدة', 'Support & Help')),
@@ -2049,7 +2006,7 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
     }
 
     final showPayments = EnvConfig.paymentsEnabled.value;
-    final showSubs = EnvConfig.subscriptionsEnabled.value;
+    final showSubscriptions = EnvConfig.subscriptionsEnabled.value;
 
     return SafeArea(
       child: ListView(
@@ -2099,10 +2056,10 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
             child: ListTile(
               leading:
                   const Icon(Icons.badge_outlined, color: AppColors.orange),
-              title: Text(_loc.tr('البروفايل (معلوماتي الشخصية)', 'My Profile')),
+              title: Text(_loc.tr('البروفايل وإعدادات الحساب', 'My Profile')),
               subtitle: Text(_loc.tr(
-                'عرض وتعديل الاسم، الهاتف، ومعلومات النشاط',
-                'View & edit name, phone and workshop info',
+                'تعديل البيانات، موقع الورشة، الاسترجاع وحذف الحساب',
+                'Edit profile, workshop location, refund & delete account',
               )),
               trailing: const Icon(Icons.arrow_forward_ios, size: 16),
               onTap: () => _openUserProfile(p),
@@ -2119,8 +2076,8 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
                   'Wallet & Bank Withdrawals',
                 )),
                 subtitle: Text(_loc.tr(
-                  'الأرباح، سحب للبنك (IBAN)، وتسوية العمولة',
-                  'Earnings, IBAN payouts & commissions',
+                  'الأرباح، سحب للبنك (IBAN / CliQ)، وتسوية العمولة',
+                  'Earnings, IBAN/CliQ payouts & commissions',
                 )),
                 trailing: const Icon(Icons.arrow_forward_ios, size: 16),
                 onTap: () => _openProviderWallet(p),
@@ -2135,15 +2092,15 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
                 title: Text(
                     _loc.tr('المدفوعات وسجل الدفعات', 'Payment History')),
                 subtitle: Text(_loc.tr(
-                  'مراجعة جميع الفواتير والدفعات السابقة',
-                  'Review all invoices & receipts',
+                  'دفع الفواتير المستحقة ومراجعة السجل',
+                  'Pay due invoices & review receipts',
                 )),
                 trailing: const Icon(Icons.arrow_forward_ios, size: 16),
                 onTap: () => _openCustomerPayments(p),
               ),
             ),
           ],
-          if (showSubs) ...[
+          if (showSubscriptions) ...[
             const SizedBox(height: 12),
             Card(
               child: ListTile(
@@ -2187,6 +2144,16 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
               title: Text(_loc.tr('تغيير كلمة المرور', 'Change Password')),
               trailing: const Icon(Icons.arrow_forward_ios, size: 16),
               onTap: _showChangePasswordDialog,
+            ),
+          ),
+          const SizedBox(height: 12),
+          Card(
+            child: ListTile(
+              leading: const Icon(Icons.policy_outlined, color: AppColors.navy),
+              title: Text(_loc.tr('الشروط والسياسات وخصوصية التطبيق',
+                  'Terms, Refund & Privacy Policy')),
+              trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+              onTap: () => showAppLegalPoliciesSheet(context),
             ),
           ),
           const SizedBox(height: 12),
@@ -2351,7 +2318,8 @@ class _ShellTopToastState extends State<_ShellTopToast>
                     ),
                   ),
                   IconButton(
-                    icon: const Icon(Icons.close, color: Colors.white, size: 18),
+                    icon:
+                        const Icon(Icons.close, color: Colors.white, size: 18),
                     onPressed: _dismiss,
                     padding: EdgeInsets.zero,
                     constraints: const BoxConstraints(),
