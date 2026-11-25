@@ -234,7 +234,7 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
   }
 
   void _openSupportScreen() =>
-      Navigator.push(context, animatedRoute(const SupportScreen()));
+      Navigator.push(context, animatedRoute(SupportScreen()));
 
   Future<void> _signOut() async {
     await _notifs.stopRealtimeListener();
