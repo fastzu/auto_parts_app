@@ -1,13 +1,10 @@
 import 'package:flutter/foundation.dart';
 
 class EnvConfig {
-  // للإنتاج والنشر: مرّر المفاتيح عبر:
-  // flutter build apk/ipa --release --obfuscate --split-debug-info=build/symbols \
-  //   --dart-define=SUPABASE_URL=https://xxx.supabase.co \
-  //   --dart-define=SUPABASE_ANON_KEY=eyJ...
+  // مرتبط الآن عبر Cloudflare Proxy للحماية من الاختراقات وهجمات DDoS
   static const String supabaseUrl = String.fromEnvironment(
     'SUPABASE_URL',
-    defaultValue: 'https://nsdymdqrlvbhvurwptvq.supabase.co',
+    defaultValue: 'https://api.ghayarakjo.com',
   );
 
   static const String supabaseAnonKey = String.fromEnvironment(
@@ -73,10 +70,6 @@ class EnvConfig {
   static final ValueNotifier<bool> adsEnabled = ValueNotifier<bool>(true);
   static final ValueNotifier<bool> maintenanceMode = ValueNotifier<bool>(false);
 }
-static const String supabaseUrl = String.fromEnvironment(
-  'SUPABASE_URL',
-  defaultValue: 'https://api.ghayarakjo.com',
-);
 
 /// كاش خفيف بالذاكرة للبيانات العامة قليلة التغيير
 class AppMemoryCache {
