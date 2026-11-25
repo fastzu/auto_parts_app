@@ -102,6 +102,7 @@ class RoleShortcutsHomeScreen extends StatelessWidget {
     final isAdmin = profile.isAdmin || profile.role == 'admin';
     final role = isAdmin ? 'admin' : profile.role;
     final showPayments = EnvConfig.paymentsEnabled.value;
+    final showSubs = EnvConfig.subscriptionsEnabled.value;
     final showWinch = EnvConfig.winchEnabled.value;
 
     if (role == 'admin') {
@@ -114,7 +115,8 @@ class RoleShortcutsHomeScreen extends StatelessWidget {
           highlight: true,
           onTap: () => Navigator.push(
             context,
-            animatedRoute(SuperAdminDashboardScreen(profile: profile, onSignedOut: onSignedOut)),
+            animatedRoute(SuperAdminDashboardScreen(
+                profile: profile, onSignedOut: onSignedOut)),
           ),
         ),
         _ShortcutItem(
@@ -143,21 +145,24 @@ class RoleShortcutsHomeScreen extends StatelessWidget {
           subtitle: 'نشر منتج جديد في المتجر',
           icon: Icons.add_box_outlined,
           color: Colors.indigo,
-          onTap: () => Navigator.push(context, animatedRoute(const AddProductScreen())),
+          onTap: () =>
+              Navigator.push(context, animatedRoute(const AddProductScreen())),
         ),
         _ShortcutItem(
           title: 'الدردشات',
           subtitle: 'المحادثات مع التجار والزبائن',
           icon: Icons.chat_bubble_outline,
           color: Colors.blue,
-          onTap: () => Navigator.push(context, animatedRoute(const ChatsListScreen())),
+          onTap: () =>
+              Navigator.push(context, animatedRoute(const ChatsListScreen())),
         ),
         _ShortcutItem(
           title: 'الإشعارات',
           subtitle: 'عرض التنبيهات والرسائل',
           icon: Icons.notifications_active_outlined,
           color: Colors.deepPurple,
-          onTap: () => NotificationsService.instance.openNotificationsSheet(context),
+          onTap: () =>
+              NotificationsService.instance.openNotificationsSheet(context),
         ),
         _ShortcutItem(
           title: 'فحص الأعطال AI',
@@ -177,14 +182,16 @@ class RoleShortcutsHomeScreen extends StatelessWidget {
           icon: Icons.inventory_2_outlined,
           color: AppColors.orange,
           highlight: true,
-          onTap: () => Navigator.push(context, animatedRoute(const MerchantProductsDashboard())),
+          onTap: () => Navigator.push(
+              context, animatedRoute(const MerchantProductsDashboard())),
         ),
         _ShortcutItem(
           title: 'إضافة قطعة جديدة',
           subtitle: 'انشر قطعة غيار خلال ثوانٍ',
           icon: Icons.add_circle_outline,
           color: AppColors.success,
-          onTap: () => Navigator.push(context, animatedRoute(const AddProductScreen())),
+          onTap: () =>
+              Navigator.push(context, animatedRoute(const AddProductScreen())),
         ),
         _ShortcutItem(
           title: 'متجر قطع الغيار',
@@ -201,7 +208,7 @@ class RoleShortcutsHomeScreen extends StatelessWidget {
             color: Colors.teal,
             onTap: onOpenWallet,
           ),
-        if (showPayments)
+        if (showSubs)
           _ShortcutItem(
             title: 'الباقات والاشتراكات',
             subtitle: 'رفع عدد المنشورات وتقليل العمولة',
@@ -222,7 +229,8 @@ class RoleShortcutsHomeScreen extends StatelessWidget {
           subtitle: 'الرد على استفسارات الزبائن',
           icon: Icons.chat_bubble_outline,
           color: Colors.blue,
-          onTap: () => Navigator.push(context, animatedRoute(const ChatsListScreen())),
+          onTap: () =>
+              Navigator.push(context, animatedRoute(const ChatsListScreen())),
         ),
         _ShortcutItem(
           title: 'فحص الأعطال AI',
@@ -265,14 +273,16 @@ class RoleShortcutsHomeScreen extends StatelessWidget {
           subtitle: 'إدارة القطع، الإخفاء والخصومات',
           icon: Icons.inventory_2_outlined,
           color: AppColors.navy,
-          onTap: () => Navigator.push(context, animatedRoute(const MerchantProductsDashboard())),
+          onTap: () => Navigator.push(
+              context, animatedRoute(const MerchantProductsDashboard())),
         ),
         _ShortcutItem(
           title: 'إضافة قطعة غيار',
           subtitle: 'نشر قطعة من مخزون الورشة',
           icon: Icons.add_box_outlined,
           color: AppColors.success,
-          onTap: () => Navigator.push(context, animatedRoute(const AddProductScreen())),
+          onTap: () =>
+              Navigator.push(context, animatedRoute(const AddProductScreen())),
         ),
         _ShortcutItem(
           title: 'متجر قطع الغيار',
@@ -282,6 +292,14 @@ class RoleShortcutsHomeScreen extends StatelessWidget {
           onTap: () => onSelectTab(1),
         ),
         if (showPayments)
+          _ShortcutItem(
+            title: 'محفظة الورشة',
+            subtitle: 'الأرباح والعمولات وسحب للبنك',
+            icon: Icons.account_balance_wallet_outlined,
+            color: Colors.teal,
+            onTap: onOpenWallet,
+          ),
+        if (showSubs)
           _ShortcutItem(
             title: 'الباقات والاشتراكات',
             subtitle: 'تصدر نتائج البحث وعمولة أقل',
@@ -302,7 +320,8 @@ class RoleShortcutsHomeScreen extends StatelessWidget {
           subtitle: 'التواصل المباشر مع الزبائن',
           icon: Icons.chat_bubble_outline,
           color: Colors.blue,
-          onTap: () => Navigator.push(context, animatedRoute(const ChatsListScreen())),
+          onTap: () =>
+              Navigator.push(context, animatedRoute(const ChatsListScreen())),
         ),
         _ShortcutItem(
           title: 'فحص الأعطال AI',
@@ -353,9 +372,18 @@ class RoleShortcutsHomeScreen extends StatelessWidget {
           subtitle: 'نشر قطعة غيار للبيع',
           icon: Icons.add_box_outlined,
           color: AppColors.success,
-          onTap: () => Navigator.push(context, animatedRoute(const AddProductScreen())),
+          onTap: () =>
+              Navigator.push(context, animatedRoute(const AddProductScreen())),
         ),
         if (showPayments)
+          _ShortcutItem(
+            title: 'محفظة الونش',
+            subtitle: 'الأرباح والعمولات وسحب للبنك',
+            icon: Icons.account_balance_wallet_outlined,
+            color: Colors.teal,
+            onTap: onOpenWallet,
+          ),
+        if (showSubs)
           _ShortcutItem(
             title: 'باقات المزودين',
             subtitle: 'أولوية الطلبات وعمولة أقل',
@@ -376,7 +404,8 @@ class RoleShortcutsHomeScreen extends StatelessWidget {
           subtitle: 'التواصل مع الزبائن والورش',
           icon: Icons.chat_bubble_outline,
           color: Colors.blue,
-          onTap: () => Navigator.push(context, animatedRoute(const ChatsListScreen())),
+          onTap: () =>
+              Navigator.push(context, animatedRoute(const ChatsListScreen())),
         ),
         _ShortcutItem(
           title: 'حسابي وإعداداتي',
@@ -433,9 +462,10 @@ class RoleShortcutsHomeScreen extends StatelessWidget {
         subtitle: 'تواصلك المباشر مع التجار والورش',
         icon: Icons.chat_bubble_outline,
         color: Colors.blue,
-        onTap: () => Navigator.push(context, animatedRoute(const ChatsListScreen())),
+        onTap: () =>
+            Navigator.push(context, animatedRoute(const ChatsListScreen())),
       ),
-      if (showPayments)
+      if (showSubs)
         _ShortcutItem(
           title: 'باقة البرو (Pro)',
           subtitle: 'خصومات حصرية وأولوية خدمة',
@@ -486,12 +516,14 @@ class RoleShortcutsHomeScreen extends StatelessWidget {
           IconButton(
             icon: const Icon(Icons.chat_bubble_outline),
             tooltip: 'الدردشات',
-            onPressed: () => Navigator.push(context, animatedRoute(const ChatsListScreen())),
+            onPressed: () =>
+                Navigator.push(context, animatedRoute(const ChatsListScreen())),
           ),
           IconButton(
             icon: const Icon(Icons.notifications_none),
             tooltip: 'الإشعارات',
-            onPressed: () => NotificationsService.instance.openNotificationsSheet(context),
+            onPressed: () =>
+                NotificationsService.instance.openNotificationsSheet(context),
           ),
         ],
       ),
@@ -544,7 +576,8 @@ class RoleShortcutsHomeScreen extends StatelessWidget {
                           runSpacing: 6,
                           children: [
                             Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 10, vertical: 3),
                               decoration: BoxDecoration(
                                 color: AppColors.orange,
                                 borderRadius: BorderRadius.circular(10),
@@ -560,7 +593,8 @@ class RoleShortcutsHomeScreen extends StatelessWidget {
                             ),
                             if (profile.isTrustedMerchant)
                               Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 8, vertical: 3),
                                 decoration: BoxDecoration(
                                   color: Colors.blue.withValues(alpha: 0.25),
                                   borderRadius: BorderRadius.circular(10),
@@ -568,7 +602,9 @@ class RoleShortcutsHomeScreen extends StatelessWidget {
                                 child: const Row(
                                   mainAxisSize: MainAxisSize.min,
                                   children: [
-                                    Icon(Icons.verified, color: Colors.lightBlueAccent, size: 13),
+                                    Icon(Icons.verified,
+                                        color: Colors.lightBlueAccent,
+                                        size: 13),
                                     SizedBox(width: 4),
                                     Text(
                                       'حساب موثّق',
@@ -596,11 +632,15 @@ class RoleShortcutsHomeScreen extends StatelessWidget {
             const SizedBox(height: 16),
             const Row(
               children: [
-                Icon(Icons.grid_view_rounded, color: AppColors.orange, size: 20),
+                Icon(Icons.grid_view_rounded,
+                    color: AppColors.orange, size: 20),
                 SizedBox(width: 6),
                 Text(
                   'اختصارات الوصول السريع',
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: AppColors.navy),
+                  style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w800,
+                      color: AppColors.navy),
                 ),
               ],
             ),
@@ -627,7 +667,8 @@ class RoleShortcutsHomeScreen extends StatelessWidget {
                     child: Container(
                       padding: const EdgeInsets.all(14),
                       decoration: BoxDecoration(
-                        color: item.highlight ? AppColors.orangeLight : Colors.white,
+                        color:
+                            item.highlight ? AppColors.orangeLight : Colors.white,
                         borderRadius: BorderRadius.circular(18),
                         border: Border.all(
                           color: item.highlight
@@ -654,7 +695,8 @@ class RoleShortcutsHomeScreen extends StatelessWidget {
                               color: item.color.withValues(alpha: 0.14),
                               borderRadius: BorderRadius.circular(14),
                             ),
-                            child: Icon(item.icon, color: item.color, size: 24),
+                            child:
+                                Icon(item.icon, color: item.color, size: 24),
                           ),
                           Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
@@ -702,16 +744,20 @@ class RoleShortcutsHomeScreen extends StatelessWidget {
                   Expanded(
                     child: TextButton.icon(
                       onPressed: onOpenSupport,
-                      icon: const Icon(Icons.support_agent, color: AppColors.orange, size: 18),
-                      label: const Text('الدعم الفني', style: TextStyle(color: AppColors.navy)),
+                      icon: const Icon(Icons.support_agent,
+                          color: AppColors.orange, size: 18),
+                      label: const Text('الدعم الفني',
+                          style: TextStyle(color: AppColors.navy)),
                     ),
                   ),
                   Container(width: 1, height: 22, color: AppColors.border),
                   Expanded(
                     child: TextButton.icon(
                       onPressed: () => _showTermsAndPrivacySheet(context),
-                      icon: const Icon(Icons.privacy_tip_outlined, color: AppColors.navy, size: 18),
-                      label: const Text('الشروط والخصوصية', style: TextStyle(color: AppColors.navy)),
+                      icon: const Icon(Icons.privacy_tip_outlined,
+                          color: AppColors.navy, size: 18),
+                      label: const Text('الشروط والخصوصية',
+                          style: TextStyle(color: AppColors.navy)),
                     ),
                   ),
                 ],

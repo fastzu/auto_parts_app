@@ -1,59 +1,112 @@
 import 'package:flutter/foundation.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import '../models/db_models.dart';
+import '../services/app_locale_service.dart';
 import '../services/paytabs_payment_service.dart';
 import '../theme/app_theme.dart';
 
-class CommissionDebtCard extends StatelessWidget {
+class CommissionDebtCard extends StatefulWidget {
   final double debtAmount;
   final double walletBalance;
-  final VoidCallback onPayTap;
+  final VoidCallback onSettled;
 
   const CommissionDebtCard({
     super.key,
     required this.debtAmount,
+    required this.onSettled,
     this.walletBalance = 0.0,
-    required this.onPayTap,
   });
 
   @override
+  State<CommissionDebtCard> createState() => _CommissionDebtCardState();
+}
+
+class _CommissionDebtCardState extends State<CommissionDebtCard> {
+  bool _opening = false;
+
+  @override
   Widget build(BuildContext context) {
-    final hasDebt = debtAmount > 0.009;
+    final loc = AppLocaleService.instance;
+    final hasDebt = widget.debtAmount > 0.009;
+
+    if (!hasDebt) {
+      return Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: AppColors.success.withValues(alpha: 0.08),
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: AppColors.success.withValues(alpha: 0.35)),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 44,
+              height: 44,
+              decoration: BoxDecoration(
+                color: AppColors.success.withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: const Icon(Icons.verified, color: AppColors.success),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    loc.tr('لا توجد عمولات مستحقة عليك',
+                        'No outstanding commission'),
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w800,
+                      fontSize: 14,
+                      color: AppColors.navy,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    loc.tr('حسابك المالي مسوّى بالكامل ✓',
+                        'Your financial account is fully settled ✓'),
+                    style: const TextStyle(
+                      fontSize: 12,
+                      color: AppColors.textSecondary,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Text(
+              '0.00 ${loc.tr('د.أ', 'JOD')}',
+              style: const TextStyle(
+                fontWeight: FontWeight.w900,
+                fontSize: 16,
+                color: AppColors.success,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: hasDebt
-            ? const Color(0xFFFFF5F5)
-            : AppColors.success.withValues(alpha: 0.08),
+        color: Colors.red.withValues(alpha: 0.05),
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(
-          color: hasDebt
-              ? Colors.red.withValues(alpha: 0.35)
-              : AppColors.success.withValues(alpha: 0.35),
-          width: 1.2,
-        ),
+        border: Border.all(color: Colors.red.withValues(alpha: 0.35)),
       ),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Row(
             children: [
               Container(
-                padding: const EdgeInsets.all(9),
+                width: 44,
+                height: 44,
                 decoration: BoxDecoration(
-                  color: hasDebt
-                      ? Colors.red.withValues(alpha: 0.12)
-                      : AppColors.success.withValues(alpha: 0.14),
-                  borderRadius: BorderRadius.circular(12),
+                  color: Colors.red.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(14),
                 ),
-                child: Icon(
-                  hasDebt
-                      ? Icons.account_balance_outlined
-                      : Icons.verified_rounded,
-                  color: hasDebt ? Colors.red.shade700 : AppColors.success,
-                  size: 22,
-                ),
+                child: const Icon(Icons.account_balance, color: Colors.red),
               ),
               const SizedBox(width: 12),
               Expanded(
@@ -61,20 +114,19 @@ class CommissionDebtCard extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      hasDebt
-                          ? 'عمولة مستحقة للتطبيق'
-                          : 'لا توجد عمولات مستحقة عليك',
-                      style: TextStyle(
-                        fontWeight: FontWeight.w800,
-                        fontSize: 14,
-                        color: hasDebt ? Colors.red.shade800 : AppColors.navy,
+                      loc.tr('عمولة مستحقة للتطبيق', 'Platform Commission Due'),
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w900,
+                        fontSize: 14.5,
+                        color: Colors.red,
                       ),
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      hasDebt
-                          ? 'عمولة الطلبات النقدية (كاش) المستحقة للمنصة'
-                          : 'حسابك المالي مسوّى بالكامل ✓',
+                      loc.tr(
+                        'عمولة طلبات الكاش — تُخصم تلقائياً من أول دفعة بطاقة أو سدّدها الآن لتتمكن من السحب',
+                        'Cash orders commission — auto-deducted from next card order or pay now to enable withdrawal',
+                      ),
                       style: const TextStyle(
                         fontSize: 11.5,
                         color: AppColors.textSecondary,
@@ -83,52 +135,96 @@ class CommissionDebtCard extends StatelessWidget {
                   ],
                 ),
               ),
+              const SizedBox(width: 8),
               Text(
-                '${debtAmount.toStringAsFixed(2)} د.أ',
-                style: TextStyle(
-                  fontSize: 17,
+                '${widget.debtAmount.toStringAsFixed(2)} ${loc.tr('د.أ', 'JOD')}',
+                style: const TextStyle(
                   fontWeight: FontWeight.w900,
-                  color: hasDebt ? Colors.red.shade700 : AppColors.success,
+                  fontSize: 17,
+                  color: Colors.red,
                 ),
               ),
             ],
           ),
-          if (hasDebt) ...[
-            const SizedBox(height: 12),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton.icon(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.orange,
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(vertical: 12),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                ),
-                onPressed: onPayTap,
-                icon: const Icon(Icons.payment_rounded, size: 19),
-                label: const Text(
-                  'دفع العمولة المستحقة الآن',
-                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
-                ),
+          const SizedBox(height: 12),
+          ElevatedButton.icon(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.orange,
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(vertical: 13),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(14),
               ),
             ),
-          ],
+            onPressed: _opening
+                ? null
+                : () async {
+                    setState(() => _opening = true);
+                    final paid = await showCommissionPaymentSheet(
+                      context,
+                      debtAmount: widget.debtAmount,
+                      walletBalance: widget.walletBalance,
+                    );
+                    if (mounted) {
+                      setState(() => _opening = false);
+                      if (paid) widget.onSettled();
+                    }
+                  },
+            icon: const Icon(Icons.credit_card, size: 19),
+            label: Text(
+              loc.tr('دفع العمولة المستحقة الآن', 'Pay Due Commission Now'),
+              style: const TextStyle(fontWeight: FontWeight.w800),
+            ),
+          ),
         ],
       ),
     );
   }
 }
 
-Future<bool> showCommissionPaymentSheet({
-  required BuildContext context,
-  required CustomerProfile profile,
+/// نافذة سداد العمولة المستحقة عبر الوسائل الإلكترونية فقط (Visa/Mastercard, Apple Pay, Google Pay)
+Future<bool> showCommissionPaymentSheet(
+  BuildContext context, {
   required double debtAmount,
   double walletBalance = 0.0,
-  VoidCallback? onSettled,
 }) async {
-  if (debtAmount <= 0) return false;
+  final loc = AppLocaleService.instance;
+  final db = Supabase.instance.client;
+  final user = db.auth.currentUser;
+  if (user == null) return false;
+
+  // تحقق فوري من الرصيد الفعلي للذمة في قاعدة البيانات لمنع أي دفع مكرر
+  double liveDebt = debtAmount;
+  try {
+    final row = await db
+        .from('customers')
+        .select('pending_commission_debt')
+        .eq('id', user.id)
+        .maybeSingle();
+    liveDebt =
+        ((row?['pending_commission_debt'] as num?)?.toDouble() ?? 0.0);
+  } catch (_) {}
+
+  if (liveDebt <= 0.009) {
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          behavior: SnackBarBehavior.floating,
+          backgroundColor: AppColors.success,
+          content: Text(
+            loc.tr('لا توجد عمولة مستحقة عليك حالياً ✓',
+                'No commission due right now ✓'),
+          ),
+        ),
+      );
+    }
+    return true;
+  }
+
+  if (!context.mounted) return false;
+
+  final isIOS = !kIsWeb && defaultTargetPlatform == TargetPlatform.iOS;
+  final isAndroid = !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
 
   final result = await showModalBottomSheet<bool>(
     context: context,
@@ -137,421 +233,297 @@ Future<bool> showCommissionPaymentSheet({
     shape: const RoundedRectangleBorder(
       borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
     ),
-    builder: (ctx) => _CommissionPaymentSheetBody(
-      profile: profile,
-      debtAmount: debtAmount,
-      walletBalance: walletBalance,
-    ),
-  );
+    builder: (ctx) {
+      String selected = 'visa';
+      bool processing = false;
 
-  if (result == true) {
-    onSettled?.call();
-    return true;
-  }
-  return false;
-}
+      return StatefulBuilder(
+        builder: (ctx, setSheetState) {
+          Future<void> handlePay() async {
+            if (processing) return;
 
-class _CommissionPaymentSheetBody extends StatefulWidget {
-  final CustomerProfile profile;
-  final double debtAmount;
-  final double walletBalance;
-
-  const _CommissionPaymentSheetBody({
-    required this.profile,
-    required this.debtAmount,
-    required this.walletBalance,
-  });
-
-  @override
-  State<_CommissionPaymentSheetBody> createState() =>
-      _CommissionPaymentSheetBodyState();
-}
-
-class _CommissionPaymentSheetBodyState
-    extends State<_CommissionPaymentSheetBody> {
-  final _db = Supabase.instance.client;
-  late final TextEditingController _amountCtrl;
-  String _method = 'visa';
-  bool _processing = false;
-
-  bool get _canUseWallet => widget.walletBalance >= 0.5;
-  bool get _isIos =>
-      !kIsWeb && defaultTargetPlatform == TargetPlatform.iOS;
-  bool get _isAndroid =>
-      !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
-
-  @override
-  void initState() {
-    super.initState();
-    _amountCtrl =
-        TextEditingController(text: widget.debtAmount.toStringAsFixed(2));
-  }
-
-  @override
-  void dispose() {
-    _amountCtrl.dispose();
-    super.dispose();
-  }
-
-  void _showTopToast(String title, String message, {bool isError = false}) {
-    if (!mounted) return;
-    final overlay = Overlay.maybeOf(context);
-    if (overlay == null) return;
-    late OverlayEntry entry;
-    entry = OverlayEntry(
-      builder: (_) => Positioned(
-        top: MediaQuery.of(context).padding.top + 10,
-        left: 16,
-        right: 16,
-        child: Material(
-          color: Colors.transparent,
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-            decoration: BoxDecoration(
-              color: isError ? const Color(0xFFDC2626) : AppColors.success,
-              borderRadius: BorderRadius.circular(16),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.2),
-                  blurRadius: 12,
-                  offset: const Offset(0, 4),
-                ),
-              ],
-            ),
-            child: Row(
-              children: [
-                Icon(
-                  isError ? Icons.error_outline : Icons.check_circle_rounded,
-                  color: Colors.white,
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        title,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      Text(
-                        message,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 12,
-                        ),
-                      ),
-                    ],
+            if (selected == 'apple_pay') {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  behavior: SnackBarBehavior.floating,
+                  backgroundColor: AppColors.navy,
+                  content: Text(
+                    loc.tr(
+                      'Apple Pay جاهزة للربط فور تفعيل حساب مطوري Apple — يرجى الدفع حالياً ببطاقة Visa / Mastercard',
+                      'Apple Pay will be active once Apple Developer Merchant ID is linked — please use Visa / Mastercard for now',
+                    ),
                   ),
                 ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-    overlay.insert(entry);
-    Future.delayed(const Duration(seconds: 3), () {
-      if (entry.mounted) entry.remove();
-    });
-  }
+              );
+              return;
+            }
 
-  Future<void> _settleDebtInDb(double amount, String method, String note) async {
-    try {
-      await _db.rpc('settle_provider_commission_debt', params: {
-        'p_amount': amount,
-        'p_payment_method': method,
-        'p_note': note,
-      });
-    } catch (_) {
-      // احتياطي في حال لم تُنشأ دالة RPC بعد
-      final newDebt =
-          (widget.debtAmount - amount).clamp(0.0, double.infinity);
-      final updates = <String, dynamic>{
-        'pending_commission_debt': double.parse(newDebt.toStringAsFixed(2)),
-      };
-      if (method == 'wallet') {
-        final newBal =
-            (widget.walletBalance - amount).clamp(0.0, double.infinity);
-        updates['wallet_balance'] = double.parse(newBal.toStringAsFixed(2));
-      }
-      await _db.from('customers').update(updates).eq('id', widget.profile.id);
-      await _db.from('wallet_transactions').insert({
-        'provider_id': widget.profile.id,
-        'customer_id': widget.profile.id,
-        'transaction_type': 'commission_settlement',
-        'payment_method': method,
-        'gross_amount': amount,
-        'commission_rate': 0,
-        'commission_amount': amount,
-        'net_amount': method == 'wallet' ? -amount : 0,
-        'status': method == 'cash_admin' ? 'pending_verification' : 'completed',
-      });
-    }
-  }
+            if (selected == 'google_pay') {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  behavior: SnackBarBehavior.floating,
+                  backgroundColor: AppColors.navy,
+                  content: Text(
+                    loc.tr(
+                      'Google Pay جاهزة للربط فور تفعيل بوابة التاجر — يرجى الدفع حالياً ببطاقة Visa / Mastercard',
+                      'Google Pay will be active once Merchant Gateway is linked — please use Visa / Mastercard for now',
+                    ),
+                  ),
+                ),
+              );
+              return;
+            }
 
-  Future<void> _submit() async {
-    final amount = double.tryParse(_amountCtrl.text.trim()) ?? 0.0;
-    if (amount <= 0 || amount > widget.debtAmount + 0.01) {
-      _showTopToast(
-        'مبلغ غير صالح',
-        'أدخل مبلغاً بين 0.50 و ${widget.debtAmount.toStringAsFixed(2)} د.أ',
-        isError: true,
-      );
-      return;
-    }
+            setSheetState(() => processing = true);
+            try {
+              final ok = await PayTabsPaymentService().payWithCardRedirect(
+                context: context,
+                amount: liveDebt,
+                title: loc.tr(
+                  'سداد عمولة منصة غيارك',
+                  'Ghiyarak Platform Commission Settlement',
+                ),
+                orderType: 'debt',
+                referenceId: user.id,
+                email: user.email,
+              );
 
-    if (_method == 'wallet' && amount > widget.walletBalance) {
-      _showTopToast(
-        'رصيد المحفظة غير كافٍ',
-        'رصيدك المتاح هو ${widget.walletBalance.toStringAsFixed(2)} د.أ',
-        isError: true,
-      );
-      return;
-    }
+              if (!ok) {
+                if (ctx.mounted) setSheetState(() => processing = false);
+                return;
+              }
 
-    if (_method == 'apple_pay' || _method == 'google_pay') {
-      _showTopToast(
-        _method == 'apple_pay' ? 'Apple Pay جاهز للربط' : 'Google Pay جاهز للربط',
-        'سيعمل تلقائياً فور تفعيل حساب المطورين وإضافة معرف التاجر، يمكنك الدفع حالياً ببطاقة Visa/Mastercard.',
-        isError: true,
-      );
-      return;
-    }
+              await db.rpc('settle_provider_commission_debt', params: {
+                'p_payment_method': 'visa',
+                'p_note': 'Paid via Visa/Mastercard',
+              });
 
-    setState(() => _processing = true);
-    try {
-      if (_method == 'visa') {
-        final paid = await PayTabsPaymentService().payWithCardRedirect(
-          context: context,
-          amount: amount,
-          title: 'سداد عمولة غيارك المستحقة',
-          orderType: 'debt',
-          referenceId: widget.profile.id,
-          email: widget.profile.email,
-          phone: widget.profile.phone,
-          name: widget.profile.fullName,
-        );
-        if (!paid) return;
-      }
+              if (!ctx.mounted) return;
+              Navigator.pop(ctx, true);
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  behavior: SnackBarBehavior.floating,
+                  backgroundColor: AppColors.success,
+                  content: Text(
+                    loc.tr(
+                      'تم سداد العمولة المستحقة (${liveDebt.toStringAsFixed(2)} د.أ) بنجاح ✓',
+                      'Commission (${liveDebt.toStringAsFixed(2)} JOD) paid successfully ✓',
+                    ),
+                  ),
+                ),
+              );
+            } catch (e) {
+              if (ctx.mounted) setSheetState(() => processing = false);
+              if (context.mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    behavior: SnackBarBehavior.floating,
+                    backgroundColor: Colors.red,
+                    content: Text(
+                      e.toString().replaceFirst('Exception: ', ''),
+                    ),
+                  ),
+                );
+              }
+            }
+          }
 
-      await _settleDebtInDb(
-        amount,
-        _method,
-        'سداد عمولة عبر $_method',
-      );
-
-      if (!mounted) return;
-      _showTopToast(
-        'تم سداد العمولة بنجاح',
-        _method == 'cash_admin'
-            ? 'تم تسجيل طلب التسوية النقدية مع الإدارة (${amount.toStringAsFixed(2)} د.أ).'
-            : 'تم خصم ${amount.toStringAsFixed(2)} د.أ من العمولات المستحقة.',
-      );
-      Navigator.pop(context, true);
-    } catch (e) {
-      _showTopToast('تعذر إتمام السداد', '$e', isError: true);
-    } finally {
-      if (mounted) setState(() => _processing = false);
-    }
-  }
-
-  Widget _methodTile({
-    required String value,
-    required IconData icon,
-    required String title,
-    required String subtitle,
-    bool enabled = true,
-  }) {
-    final selected = _method == value;
-    return GestureDetector(
-      onTap: enabled ? () => setState(() => _method = value) : null,
-      child: Opacity(
-        opacity: enabled ? 1.0 : 0.45,
-        child: Container(
-          margin: const EdgeInsets.only(bottom: 10),
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
-          decoration: BoxDecoration(
-            color: selected ? AppColors.orangeLight : AppColors.surface,
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(
-              color: selected ? AppColors.orange : AppColors.border,
-              width: selected ? 1.6 : 1,
-            ),
-          ),
-          child: Row(
-            children: [
-              Icon(icon,
-                  color: selected ? AppColors.orange : AppColors.navy,
-                  size: 24),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+          Widget methodTile({
+            required String id,
+            required IconData icon,
+            required String title,
+            required String subtitle,
+            Color? iconColor,
+          }) {
+            final isSel = selected == id;
+            return InkWell(
+              borderRadius: BorderRadius.circular(14),
+              onTap: processing ? null : () => setSheetState(() => selected = id),
+              child: Container(
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: isSel ? AppColors.orangeLight : AppColors.surface,
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(
+                    color: isSel ? AppColors.orange : AppColors.border,
+                    width: isSel ? 1.6 : 1,
+                  ),
+                ),
+                child: Row(
                   children: [
-                    Text(
-                      title,
-                      style: const TextStyle(
-                        fontWeight: FontWeight.bold,
-                        fontSize: 13.5,
-                        color: AppColors.navy,
+                    Icon(
+                      icon,
+                      color: iconColor ?? (isSel ? AppColors.orange : AppColors.navy),
+                      size: 26,
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            title,
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w800,
+                              fontSize: 14,
+                              color: AppColors.navy,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            subtitle,
+                            style: const TextStyle(
+                              fontSize: 11.5,
+                              color: AppColors.textSecondary,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
-                    Text(
-                      subtitle,
-                      style: const TextStyle(
-                        fontSize: 11.5,
-                        color: AppColors.textSecondary,
-                      ),
+                    Icon(
+                      isSel
+                          ? Icons.radio_button_checked
+                          : Icons.radio_button_off,
+                      color: isSel ? AppColors.orange : AppColors.textSecondary,
                     ),
                   ],
                 ),
               ),
-              Icon(
-                selected ? Icons.radio_button_checked : Icons.radio_button_off,
-                color: selected ? AppColors.orange : AppColors.textSecondary,
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
+            );
+          }
 
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: EdgeInsets.fromLTRB(
-        20,
-        16,
-        20,
-        MediaQuery.of(context).viewInsets.bottom + 24,
-      ),
-      child: SingleChildScrollView(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Center(
-              child: Container(
-                width: 44,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: Colors.grey.shade300,
-                  borderRadius: BorderRadius.circular(4),
-                ),
-              ),
-            ),
-            const SizedBox(height: 16),
-            const Text(
-              'دفع العمولة المستحقة',
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.w800,
-                color: AppColors.navy,
-              ),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              'إجمالي العمولة المستحقة: ${widget.debtAmount.toStringAsFixed(2)} د.أ',
-              style: const TextStyle(
-                color: Colors.red,
-                fontWeight: FontWeight.bold,
-                fontSize: 13,
-              ),
-            ),
-            const SizedBox(height: 14),
-            TextField(
-              controller: _amountCtrl,
-              keyboardType:
-                  const TextInputType.numberWithOptions(decimal: true),
-              decoration: InputDecoration(
-                labelText: 'المبلغ المراد دفعه (د.أ)',
-                prefixIcon: const Icon(Icons.payments_outlined),
-                filled: true,
-                fillColor: AppColors.surface,
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(14),
-                ),
-              ),
-            ),
-            const SizedBox(height: 14),
-            const Text(
-              'اختر وسيلة الدفع:',
-              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13.5),
-            ),
-            const SizedBox(height: 8),
-            _methodTile(
-              value: 'visa',
-              icon: Icons.credit_card,
-              title: 'Visa / Mastercard',
-              subtitle: 'الدفع الإلكتروني الآمن عبر MEPS',
-            ),
-            if (_isIos || kIsWeb)
-              _methodTile(
-                value: 'apple_pay',
-                icon: Icons.apple,
-                title: 'Apple Pay',
-                subtitle: 'جاهز للربط بحساب مطوري Apple',
-              ),
-            if (_isAndroid || kIsWeb)
-              _methodTile(
-                value: 'google_pay',
-                icon: Icons.g_mobiledata_rounded,
-                title: 'Google Pay',
-                subtitle: 'جاهز للربط بحساب مطوري Google',
-              ),
-            _methodTile(
-              value: 'wallet',
-              icon: Icons.account_balance_wallet_outlined,
-              title: 'خصم من رصيد المحفظة',
-              subtitle:
-                  'الرصيد المتاح: ${widget.walletBalance.toStringAsFixed(2)} د.أ',
-              enabled: _canUseWallet,
-            ),
-            _methodTile(
-              value: 'cash_admin',
-              icon: Icons.handshake_outlined,
-              title: 'تسوية نقدية مع إدارة غيارك',
-              subtitle: 'تسجيل طلب سداد كاش وتأكيده من الإدارة',
-            ),
-            const SizedBox(height: 10),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.orange,
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(vertical: 14),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(14),
+          return SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(20, 14, 20, 24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Center(
+                    child: Container(
+                      width: 44,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: AppColors.border,
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                    ),
                   ),
-                ),
-                onPressed: _processing ? null : _submit,
-                child: _processing
-                    ? const SizedBox(
-                        width: 20,
-                        height: 20,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2.2,
-                          color: Colors.white,
+                  const SizedBox(height: 16),
+                  Text(
+                    loc.tr('سداد العمولة المستحقة', 'Pay Platform Commission'),
+                    style: const TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w900,
+                      color: AppColors.navy,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 14, vertical: 12),
+                    decoration: BoxDecoration(
+                      color: Colors.red.withValues(alpha: 0.06),
+                      borderRadius: BorderRadius.circular(14),
+                      border:
+                          Border.all(color: Colors.red.withValues(alpha: 0.25)),
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(
+                          loc.tr('المبلغ المطلوب سداده:', 'Amount Due:'),
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w700,
+                            color: AppColors.navy,
+                          ),
                         ),
-                      )
-                    : const Text(
-                        'تأكيد دفع العمولة',
-                        style: TextStyle(
-                          fontWeight: FontWeight.bold,
-                          fontSize: 15,
+                        Text(
+                          '${liveDebt.toStringAsFixed(2)} ${loc.tr('د.أ', 'JOD')}',
+                          style: const TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.w900,
+                            color: Colors.red,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  methodTile(
+                    id: 'visa',
+                    icon: Icons.credit_card,
+                    title: 'Visa / Mastercard',
+                    subtitle: loc.tr(
+                      'دفع إلكتروني فوري وآمن — تُصفّر العمولة مباشرة',
+                      'Instant secure card payment — clears debt immediately',
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  if (isIOS || !isAndroid)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 10),
+                      child: methodTile(
+                        id: 'apple_pay',
+                        icon: Icons.apple,
+                        iconColor: Colors.black,
+                        title: 'Apple Pay',
+                        subtitle: loc.tr(
+                          'دفع سريع عبر Apple Pay',
+                          'Fast payment with Apple Pay',
                         ),
                       ),
+                    ),
+                  if (isAndroid || !isIOS)
+                    methodTile(
+                      id: 'google_pay',
+                      icon: Icons.g_mobiledata_rounded,
+                      iconColor: Colors.blue.shade700,
+                      title: 'Google Pay',
+                      subtitle: loc.tr(
+                        'دفع سريع عبر Google Pay',
+                        'Fast payment with Google Pay',
+                      ),
+                    ),
+                  const SizedBox(height: 18),
+                  ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.orange,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 15),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                    ),
+                    onPressed: processing ? null : handlePay,
+                    child: processing
+                        ? const SizedBox(
+                            width: 22,
+                            height: 22,
+                            child: CircularProgressIndicator(
+                              color: Colors.white,
+                              strokeWidth: 2.5,
+                            ),
+                          )
+                        : Text(
+                            loc.tr(
+                              'ادفع الآن (${liveDebt.toStringAsFixed(2)} د.أ)',
+                              'Pay Now (${liveDebt.toStringAsFixed(2)} JOD)',
+                            ),
+                            style: const TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                  ),
+                ],
               ),
             ),
-          ],
-        ),
-      ),
-    );
-  }
+          );
+        },
+      );
+    },
+  );
+
+  return result == true;
 }

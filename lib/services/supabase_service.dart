@@ -10,7 +10,8 @@ class SupabaseService {
   Future<CustomerProfile?> fetchMyProfile() async {
     final uid = currentAuthUser?.id;
     if (uid == null) return null;
-    final data = await _db.from('customers').select().eq('id', uid).maybeSingle();
+    final data =
+        await _db.from('customers').select().eq('id', uid).maybeSingle();
     if (data == null) return null;
     return CustomerProfile.fromMap(data);
   }
@@ -50,8 +51,13 @@ class SupabaseService {
     return await _db.from('advertisements').select().eq('is_active', true);
   }
 
-  Future<List<DbProduct>> fetchProducts({String? category, String? search}) async {
-    var query = _db.from('products').select().eq('is_hidden', false).eq('is_sold', false);
+  Future<List<DbProduct>> fetchProducts(
+      {String? category, String? search}) async {
+    var query = _db
+        .from('products')
+        .select()
+        .eq('is_hidden', false)
+        .eq('is_sold', false);
     if (category != null && category != 'الكل') {
       query = query.eq('main_category', category);
     }
@@ -69,25 +75,28 @@ class SupabaseService {
     return list;
   }
 
-  // ---------------- شراء قطعة وتسجيل الأرباح في المحفظة ----------------
+  // ---------------- شراء قطعة وتسجيل الأرباح والخصم التلقائي للعمولة ----------------
   Future<void> createPartOrder({
     required DbProduct product,
-    required String paymentMethod, // 'visa' (MEPS) | 'cliq' | 'cash'
+    required String paymentMethod, // 'visa' | 'apple_pay' | 'google_pay' | 'cash'
     double consumerFee = 0.0,
   }) async {
     final buyerId = currentAuthUser!.id;
-    // جلب نسبة عمولة البائع من جدول customers
     final sellerData = await _db
         .from('customers')
-        .select('commission_rate, wallet_balance')
+        .select('commission_rate, wallet_balance, pending_commission_debt')
         .eq('id', product.userId)
         .single();
 
-    final double commRate = (sellerData['commission_rate'] as num?)?.toDouble() ?? 0.15;
+    final double commRate =
+        (sellerData['commission_rate'] as num?)?.toDouble() ?? 0.15;
     final double partPrice = product.price;
-    final double sellerCommission = partPrice * commRate;
-    final double sellerNet = partPrice - sellerCommission;
-    final double totalPaid = partPrice + consumerFee;
+    final double sellerCommission =
+        double.parse((partPrice * commRate).toStringAsFixed(2));
+    final double sellerNet =
+        double.parse((partPrice - sellerCommission).toStringAsFixed(2));
+    final double totalPaid =
+        double.parse((partPrice + consumerFee).toStringAsFixed(2));
 
     // 1) إدراج في part_orders
     final order = await _db.from('part_orders').insert({
@@ -117,11 +126,47 @@ class SupabaseService {
       'status': 'completed',
     });
 
-    // 3) تحديث رصيد محفظة التاجر
-    final currentWallet = (sellerData['wallet_balance'] as num?)?.toDouble() ?? 0.0;
-    await _db.from('customers').update({
-      'wallet_balance': currentWallet + sellerNet,
-    }).eq('id', product.userId);
+    // 3) تحديث رصيد المحفظة / ذمة العمولة
+    final currentWallet =
+        (sellerData['wallet_balance'] as num?)?.toDouble() ?? 0.0;
+    final currentDebt =
+        (sellerData['pending_commission_debt'] as num?)?.toDouble() ?? 0.0;
+
+    if (paymentMethod == 'cash') {
+      await _db.from('customers').update({
+        'pending_commission_debt':
+            double.parse((currentDebt + sellerCommission).toStringAsFixed(2)),
+      }).eq('id', product.userId);
+    } else {
+      final autoDeduct = currentDebt > 0
+          ? (sellerNet < currentDebt ? sellerNet : currentDebt)
+          : 0.0;
+      final creditWallet =
+          double.parse((sellerNet - autoDeduct).toStringAsFixed(2));
+      final newDebt =
+          double.parse((currentDebt - autoDeduct).toStringAsFixed(2));
+
+      await _db.from('customers').update({
+        'wallet_balance':
+            double.parse((currentWallet + creditWallet).toStringAsFixed(2)),
+        'pending_commission_debt': newDebt < 0 ? 0.0 : newDebt,
+      }).eq('id', product.userId);
+
+      if (autoDeduct > 0) {
+        await _db.from('wallet_transactions').insert({
+          'provider_id': product.userId,
+          'customer_id': product.userId,
+          'reference_id': order['id'],
+          'transaction_type': 'commission_auto_deduct',
+          'payment_method': paymentMethod,
+          'gross_amount': autoDeduct,
+          'commission_rate': 1.0,
+          'commission_amount': autoDeduct,
+          'net_amount': -autoDeduct,
+          'status': 'completed',
+        });
+      }
+    }
   }
 
   // ---------------- طلبات الطوارئ (الونش والميكانيكي) بالبث المباشر ----------------
@@ -180,9 +225,9 @@ class SupabaseService {
         'payment_status': 'paid',
       }).eq('id', req.id);
 
-      // تسجيل أرباح طلب الطوارئ في المحفظة قبل وبعد العمولة
       final net = req.totalAmount - req.commissionAmount;
-      final rate = req.totalAmount > 0 ? (req.commissionAmount / req.totalAmount) : 0.15;
+      final rate =
+          req.totalAmount > 0 ? (req.commissionAmount / req.totalAmount) : 0.15;
       await _db.from('wallet_transactions').insert({
         'provider_id': myId,
         'customer_id': req.userId,
@@ -195,13 +240,28 @@ class SupabaseService {
         'net_amount': net,
         'status': 'completed',
       });
+
+      // إضافة العمولة المستحقة لطلب الكاش على ذمة المزود
+      final me = await _db
+          .from('customers')
+          .select('pending_commission_debt')
+          .eq('id', myId)
+          .maybeSingle();
+      final currentDebt =
+          (me?['pending_commission_debt'] as num?)?.toDouble() ?? 0.0;
+      await _db.from('customers').update({
+        'pending_commission_debt':
+            double.parse((currentDebt + req.commissionAmount).toStringAsFixed(2)),
+      }).eq('id', myId);
     }
   }
 
   // ---------------- حجوزات الورشة ----------------
   Future<List<CustomerProfile>> fetchWorkshops() async {
     final rows = await _db.from('customers').select().eq('role', 'mechanic');
-    return rows.map<CustomerProfile>((r) => CustomerProfile.fromMap(r)).toList();
+    return rows
+        .map<CustomerProfile>((r) => CustomerProfile.fromMap(r))
+        .toList();
   }
 
   Future<void> createWorkshopAppointment({
@@ -284,7 +344,9 @@ class SupabaseService {
         .from('customers')
         .select()
         .inFilter('role', ['mechanic', 'towing']);
-    return rows.map<CustomerProfile>((r) => CustomerProfile.fromMap(r)).toList();
+    return rows
+        .map<CustomerProfile>((r) => CustomerProfile.fromMap(r))
+        .toList();
   }
 
   Future<List<Map<String, dynamic>>> fetchPendingSubscriptions() async {
@@ -301,11 +363,14 @@ class SupabaseService {
     required String planName,
     required double newCommissionRate,
   }) async {
-    await _db.from('subscription_requests').update({'status': 'approved'}).eq('id', requestId);
+    await _db
+        .from('subscription_requests')
+        .update({'status': 'approved'}).eq('id', requestId);
     await _db.from('customers').update({
       'subscription_plan': planName,
       'commission_rate': newCommissionRate,
-      'subscription_expires_at': DateTime.now().add(const Duration(days: 30)).toIso8601String(),
+      'subscription_expires_at':
+          DateTime.now().add(const Duration(days: 30)).toIso8601String(),
     }).eq('id', userId);
   }
 }
