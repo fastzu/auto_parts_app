@@ -73,18 +73,46 @@ class LiveProgressTracker {
 
   final ValueNotifier<double?> workshopDistanceKm =
       ValueNotifier<double?>(null);
+  final ValueNotifier<double> workshopGpsProgress =
+      ValueNotifier<double>(0.05);
   final ValueNotifier<double?> emergencyDistanceKm =
       ValueNotifier<double?>(null);
+  final ValueNotifier<double> emergencyGpsProgress =
+      ValueNotifier<double>(0.05);
 
+  final Map<String, double> _initialDistanceKm = {};
   String? _activeWorkshopApptId;
   String? _activeEmergencyReqId;
+  DateTime? _lastWorkshopDbSync;
+  DateTime? _lastEmergencyDbSync;
 
   // أقفال لمنع تكرار إشعار الوصول أكثر من مرة
   final Set<String> _arrivedWorkshopIds = {};
   final Set<String> _arrivedEmergencyIds = {};
   bool _markingWorkshop = false;
   bool _markingEmergency = false;
-  DateTime? _lastProviderGpsPush;
+
+  static double distanceKmBetween(
+    double lat1,
+    double lng1,
+    double lat2,
+    double lng2,
+  ) {
+    final meters = Geolocator.distanceBetween(lat1, lng1, lat2, lng2);
+    return double.parse((meters / 1000.0).toStringAsFixed(2));
+  }
+
+  /// يحسب نسبة التقدم المستمرة من 0.05 إلى 1.0 حسب المسافة الحالية مقارنة بالمسافة الأولية
+  double computeGpsProgress(String keyId, double currentKm) {
+    if (currentKm <= 0.15) return 1.0; // وصل ضمن 150 متر
+    final prevInit = _initialDistanceKm[keyId];
+    if (prevInit == null || currentKm > prevInit) {
+      _initialDistanceKm[keyId] = currentKm < 0.4 ? 0.4 : currentKm;
+    }
+    final initial = _initialDistanceKm[keyId]!;
+    final ratio = (initial - currentKm) / initial;
+    return ratio.clamp(0.05, 0.99);
+  }
 
   Future<bool> _hasPermission() async {
     try {
@@ -101,7 +129,7 @@ class LiveProgressTracker {
     }
   }
 
-  /// تتبع العميل في طريقه إلى الورشة + تحديث المسافة + Dynamic Island
+  /// تتبع العميل في طريقه إلى الورشة (تحديث كل 5 متر لحركة ناعمة جداً)
   Future<void> startTrackingToWorkshop({
     required String appointmentId,
     required double workshopLat,
@@ -117,44 +145,61 @@ class LiveProgressTracker {
 
     if (!await _hasPermission()) return;
 
+    void handlePosition(Position pos) async {
+      if (_arrivedWorkshopIds.contains(appointmentId) || _markingWorkshop) {
+        return;
+      }
+      final km = distanceKmBetween(
+        pos.latitude,
+        pos.longitude,
+        workshopLat,
+        workshopLng,
+      );
+      final smoothProgress = computeGpsProgress('appt_$appointmentId', km);
+
+      workshopDistanceKm.value = km;
+      workshopGpsProgress.value = smoothProgress;
+
+      // مزامنة موقع الزبون بنفس الصف (In-Place Update بدون سجل تاريخي)
+      final now = DateTime.now();
+      if (_lastWorkshopDbSync == null ||
+          now.difference(_lastWorkshopDbSync!).inSeconds >= 4) {
+        _lastWorkshopDbSync = now;
+        try {
+          await _db.from('workshop_appointments').update({
+            'customer_latitude': pos.latitude,
+            'customer_longitude': pos.longitude,
+          }).eq('id', appointmentId);
+        } catch (_) {}
+      }
+
+      await DynamicIslandService.instance.syncProgress(
+        keyId: 'appt_$appointmentId',
+        title: 'موعد الورشة',
+        statusText: km <= 0.15 ? 'وصلت إلى الورشة' : 'في الطريق إلى الورشة',
+        progress: smoothProgress,
+        etaOrDistance: km <= 0.15 ? 'وصلت ✓' : '${km.toStringAsFixed(1)} كم',
+      );
+
+      if (km <= 0.15) {
+        await markWorkshopArrived(
+          appointmentId: appointmentId,
+          workshopUserId: workshopUserId,
+        );
+      }
+    }
+
+    try {
+      final firstPos = await Geolocator.getCurrentPosition();
+      handlePosition(firstPos);
+    } catch (_) {}
+
     _workshopSub = Geolocator.getPositionStream(
       locationSettings: const LocationSettings(
-        accuracy: LocationAccuracy.high,
-        distanceFilter: 20,
+        accuracy: LocationAccuracy.bestForNavigation,
+        distanceFilter: 5,
       ),
-    ).listen(
-      (pos) async {
-        if (_arrivedWorkshopIds.contains(appointmentId) || _markingWorkshop) {
-          return;
-        }
-        final meters = Geolocator.distanceBetween(
-          pos.latitude,
-          pos.longitude,
-          workshopLat,
-          workshopLng,
-        );
-        final km = double.parse((meters / 1000).toStringAsFixed(1));
-        workshopDistanceKm.value = km;
-
-        await DynamicIslandService.instance.syncProgress(
-          keyId: 'appt_$appointmentId',
-          title: 'موعد الورشة',
-          statusText:
-              meters <= 150 ? 'وصلت إلى الورشة' : 'في الطريق إلى الورشة',
-          progress:
-              meters <= 150 ? 0.35 : (1.0 - (km / 20.0)).clamp(0.1, 0.3),
-          etaOrDistance: meters <= 150 ? 'وصلت ✓' : '$km كم',
-        );
-
-        if (meters <= 150) {
-          await markWorkshopArrived(
-            appointmentId: appointmentId,
-            workshopUserId: workshopUserId,
-          );
-        }
-      },
-      onError: (_) {},
-    );
+    ).listen(handlePosition, onError: (_) {});
   }
 
   Future<void> markWorkshopArrived({
@@ -171,6 +216,7 @@ class LiveProgressTracker {
       await _workshopSub?.cancel();
       _workshopSub = null;
       workshopDistanceKm.value = 0.0;
+      workshopGpsProgress.value = 1.0;
 
       final updated = await _db
           .from('workshop_appointments')
@@ -189,13 +235,12 @@ class LiveProgressTracker {
         );
       }
     } catch (_) {
-      // نبقي القفل مفعلاً خلال الجلسة لمنع تكرار الإشعار
     } finally {
       _markingWorkshop = false;
     }
   }
 
-  /// تتبع فني الطوارئ / سائق الونش وهو يقترب من العميل + تحديث موقعه الحي على الخريطة (UPDATE بنفس الصف بدون سجل تاريخي)
+  /// تتبع الميكانيكي / الونش في طريقه للعميل (بث GPS مستمر + تحديث موقع المزود الحي على الخريطة)
   Future<void> startTrackingEmergencyArrival({
     required String requestId,
     required String customerUserId,
@@ -214,23 +259,33 @@ class LiveProgressTracker {
 
     final providerId = _db.auth.currentUser?.id;
 
-    _emergencySub = Geolocator.getPositionStream(
-      locationSettings: const LocationSettings(
-        accuracy: LocationAccuracy.bestForNavigation,
-        distanceFilter: 10,
-      ),
-    ).listen(
-      (pos) async {
-        if (_arrivedEmergencyIds.contains(requestId) || _markingEmergency) {
-          return;
-        }
+    void handlePosition(Position pos) async {
+      if (_arrivedEmergencyIds.contains(requestId) || _markingEmergency) {
+        return;
+      }
+      final km = distanceKmBetween(
+        pos.latitude,
+        pos.longitude,
+        pickupLat,
+        pickupLng,
+      );
+      final smoothProgress = computeGpsProgress('emg_$requestId', km);
 
-        // تحديث موقع المزود الحي في صفه فقط (سياسة أوبر: لا يُحفظ سجل تاريخي للمواقع)
-        final now = DateTime.now();
-        if (providerId != null &&
-            (_lastProviderGpsPush == null ||
-                now.difference(_lastProviderGpsPush!).inSeconds >= 3)) {
-          _lastProviderGpsPush = now;
+      emergencyDistanceKm.value = km;
+      emergencyGpsProgress.value = smoothProgress;
+
+      // بث موقع الفني بنفس الصف (In-Place Update بدون سجل تاريخي) ليراه الزبون يتحرك حياً على الخريطة
+      final now = DateTime.now();
+      if (_lastEmergencyDbSync == null ||
+          now.difference(_lastEmergencyDbSync!).inSeconds >= 3) {
+        _lastEmergencyDbSync = now;
+        try {
+          await _db.from('mechanic_requests').update({
+            'latitude': pos.latitude,
+            'longitude': pos.longitude,
+          }).eq('id', requestId);
+        } catch (_) {}
+        if (providerId != null) {
           try {
             await _db.from('customers').update({
               'latitude': pos.latitude,
@@ -238,26 +293,28 @@ class LiveProgressTracker {
             }).eq('id', providerId);
           } catch (_) {}
         }
+      }
 
-        final meters = Geolocator.distanceBetween(
-          pos.latitude,
-          pos.longitude,
-          pickupLat,
-          pickupLng,
+      if (km <= 0.15) {
+        await markEmergencyArrived(
+          requestId: requestId,
+          customerUserId: customerUserId,
+          serviceType: serviceType,
         );
-        final km = double.parse((meters / 1000).toStringAsFixed(1));
-        emergencyDistanceKm.value = km;
+      }
+    }
 
-        if (meters <= 120) {
-          await markEmergencyArrived(
-            requestId: requestId,
-            customerUserId: customerUserId,
-            serviceType: serviceType,
-          );
-        }
-      },
-      onError: (_) {},
-    );
+    try {
+      final firstPos = await Geolocator.getCurrentPosition();
+      handlePosition(firstPos);
+    } catch (_) {}
+
+    _emergencySub = Geolocator.getPositionStream(
+      locationSettings: const LocationSettings(
+        accuracy: LocationAccuracy.bestForNavigation,
+        distanceFilter: 5,
+      ),
+    ).listen(handlePosition, onError: (_) {});
   }
 
   Future<void> markEmergencyArrived({
@@ -275,6 +332,7 @@ class LiveProgressTracker {
       await _emergencySub?.cancel();
       _emergencySub = null;
       emergencyDistanceKm.value = 0.0;
+      emergencyGpsProgress.value = 1.0;
 
       final updated = await _db
           .from('mechanic_requests')
