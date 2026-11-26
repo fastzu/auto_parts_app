@@ -1,9 +1,10 @@
 import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:url_launcher/url_launcher.dart';
+import '../../config/env_config.dart';
 import '../../models/car_parts_catalog_az.dart';
 import '../../models/db_models.dart';
+import '../../services/paytabs_payment_service.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/admob_native_banner.dart';
 import '../../widgets/animations.dart';
@@ -26,6 +27,53 @@ int computeSeoBoostTier(String? plan, String? expiresAt) {
     'provider_3m' => 1,
     _ => 0,
   };
+}
+
+/// يتحقق هل التاجر مشترك حالياً بأي باقة مدفوعة نشطة (شهرية / 3 أشهر / 6 أشهر / سنوية)
+bool isPaidTrustedSeller(String? plan, String? expiresAt) {
+  final normalized = (plan ?? '').trim().toLowerCase();
+  if (normalized.isEmpty || normalized == 'free') return false;
+  if (expiresAt != null && expiresAt.isNotEmpty) {
+    final exp = DateTime.tryParse(expiresAt);
+    if (exp != null && exp.isBefore(DateTime.now())) return false;
+  }
+  return true;
+}
+
+/// شارة "تاجر موثوق" الموحدة لبطاقات المنشورات وصفحة التاجر
+Widget buildTrustedMerchantBadge({bool compact = true}) {
+  return Container(
+    padding: EdgeInsets.symmetric(
+      horizontal: compact ? 6 : 8,
+      vertical: compact ? 2 : 3.5,
+    ),
+    decoration: BoxDecoration(
+      color: const Color(0xFFE3F2FD),
+      borderRadius: BorderRadius.circular(8),
+      border: Border.all(
+        color: const Color(0xFF1E88E5).withValues(alpha: 0.45),
+      ),
+    ),
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(
+          Icons.verified,
+          color: const Color(0xFF1565C0),
+          size: compact ? 11.5 : 14,
+        ),
+        const SizedBox(width: 3),
+        Text(
+          'تاجر موثوق',
+          style: TextStyle(
+            color: const Color(0xFF0D47A1),
+            fontSize: compact ? 9.5 : 11,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+      ],
+    ),
+  );
 }
 
 /// حساب أعلى خصم فعّال على منتج (خصم التاجر نفسه أو خصم الأدمن على الصنف أو للمستخدم المعين)
@@ -53,7 +101,6 @@ int computeSeoBoostTier(String? plan, String? expiresAt) {
     final pct = (d['discount_percent'] as int?) ?? 0;
     if (pct <= 0) continue;
 
-    // التحقق من المستخدم أو الفئة المستهدفة
     final targetUid = d['target_user_id'] as String?;
     final targetRole = (d['target_role'] as String?) ?? 'all';
     final roleMatches = targetUid != null
@@ -62,7 +109,6 @@ int computeSeoBoostTier(String? plan, String? expiresAt) {
             (viewerRole != null && targetRole == viewerRole));
     if (!roleMatches) continue;
 
-    // التحقق من الصنف المشمول بالخصم
     final targetCat = (d['target_category'] as String? ?? 'الكل').trim();
     final catMatches = targetCat.isEmpty ||
         targetCat == 'الكل' ||
@@ -275,6 +321,7 @@ class _LiveStoreHomeScreenState extends State<LiveStoreHomeScreen> {
       _loading = true;
       _hasMore = true;
     });
+    _sellerMeta.clear();
     await Future.wait([
       _fetchActiveDiscounts(),
       _fetchProductsPage(reset: true),
@@ -336,7 +383,6 @@ class _LiveStoreHomeScreenState extends State<LiveStoreHomeScreen> {
 
       final list = List<Map<String, dynamic>>.from(rows);
 
-      // فلتر سنة الصنع محلياً إن لزم
       final yearFiltered = (!_filterByCar || _selectedYear == 'جميع الموديلات')
           ? list
           : list.where((p) {
@@ -792,7 +838,7 @@ class _LiveStoreHomeScreenState extends State<LiveStoreHomeScreen> {
               ),
               SliverToBoxAdapter(
                 child: SizedBox(
-                  height: 245,
+                  height: 268,
                   child: bestSellers.isEmpty
                       ? const Center(
                           child: Text('لا توجد قطع حالياً مطابقة للبحث'))
@@ -803,7 +849,7 @@ class _LiveStoreHomeScreenState extends State<LiveStoreHomeScreen> {
                           separatorBuilder: (_, __) =>
                               const SizedBox(width: 12),
                           itemBuilder: (_, i) => SizedBox(
-                            width: 170,
+                            width: 174,
                             child: FadeSlideIn(
                               index: i,
                               child: _card(
@@ -813,10 +859,7 @@ class _LiveStoreHomeScreenState extends State<LiveStoreHomeScreen> {
                         ),
                 ),
               ),
-
-              // إعلان Google AdMob المنظّم (سيارات وتمويل) بمكان واحد مرتب بين القسمين
               const SliverToBoxAdapter(child: AdMobNativeBanner()),
-
               SliverToBoxAdapter(
                 child: Padding(
                   padding: const EdgeInsets.fromLTRB(16, 18, 16, 10),
@@ -857,7 +900,7 @@ class _LiveStoreHomeScreenState extends State<LiveStoreHomeScreen> {
                       maxCrossAxisExtent: 230,
                       mainAxisSpacing: 12,
                       crossAxisSpacing: 12,
-                      childAspectRatio: 0.69,
+                      childAspectRatio: 0.63,
                     ),
                     delegate: SliverChildBuilderDelegate(
                       (_, i) => FadeSlideIn(
@@ -866,7 +909,6 @@ class _LiveStoreHomeScreenState extends State<LiveStoreHomeScreen> {
                     ),
                   ),
                 ),
-
               if (_hasMore && _products.isNotEmpty)
                 SliverToBoxAdapter(
                   child: Padding(
@@ -1040,10 +1082,10 @@ class _LiveStoreHomeScreenState extends State<LiveStoreHomeScreen> {
     final seller = _sellerMeta[p['user_id']];
     final ratingAvg = ((seller?['rating_avg'] as num?) ?? 0).toDouble();
     final ratingCount = (seller?['rating_count'] as int?) ?? 0;
-    final boost = computeSeoBoostTier(
-      seller?['subscription_plan'] as String?,
-      seller?['subscription_expires_at'] as String?,
-    );
+    final plan = seller?['subscription_plan'] as String?;
+    final expAt = seller?['subscription_expires_at'] as String?;
+    final boost = computeSeoBoostTier(plan, expAt);
+    final isPaidTrusted = isPaidTrustedSeller(plan, expAt);
 
     final disc = computeEffectiveProductDiscount(
       product: p,
@@ -1074,8 +1116,10 @@ class _LiveStoreHomeScreenState extends State<LiveStoreHomeScreen> {
           border: Border.all(
             color: boost >= 2
                 ? AppColors.orange.withValues(alpha: 0.6)
-                : AppColors.border,
-            width: boost >= 2 ? 1.4 : 1,
+                : isPaidTrusted
+                    ? const Color(0xFF1E88E5).withValues(alpha: 0.45)
+                    : AppColors.border,
+            width: (boost >= 2 || isPaidTrusted) ? 1.3 : 1,
           ),
         ),
         child: Column(
@@ -1112,7 +1156,6 @@ class _LiveStoreHomeScreenState extends State<LiveStoreHomeScreen> {
                     ),
                   ),
                 ),
-                // شارة الحالة (أعلى اليمين)
                 Positioned(
                   top: 6,
                   right: 6,
@@ -1133,7 +1176,6 @@ class _LiveStoreHomeScreenState extends State<LiveStoreHomeScreen> {
                     ),
                   ),
                 ),
-                // شارة الخصم (أعلى اليسار — مكان مرتب بدون تداخل!)
                 if (disc.percent > 0)
                   Positioned(
                     top: 6,
@@ -1171,6 +1213,10 @@ class _LiveStoreHomeScreenState extends State<LiveStoreHomeScreen> {
               style:
                   const TextStyle(color: AppColors.textSecondary, fontSize: 11),
             ),
+            if (isPaidTrusted) ...[
+              const SizedBox(height: 4),
+              buildTrustedMerchantBadge(compact: true),
+            ],
             if (ratingCount > 0) ...[
               const SizedBox(height: 3),
               Row(
@@ -1267,6 +1313,7 @@ class _ProductDetailsScreenState extends State<ProductDetailsScreen> {
   CustomerProfile? _seller;
   double _sellerRatingAvg = 0;
   int _sellerRatingCount = 0;
+  bool _sellerIsPaidTrusted = false;
   bool _loadingSeller = true;
   bool _sending = false;
 
@@ -1300,19 +1347,16 @@ class _ProductDetailsScreenState extends State<ProductDetailsScreen> {
           _sellerRatingAvg =
               ((sellerMap?['rating_avg'] as num?) ?? 0).toDouble();
           _sellerRatingCount = (sellerMap?['rating_count'] as int?) ?? 0;
+          _sellerIsPaidTrusted = isPaidTrustedSeller(
+            sellerMap?['subscription_plan'] as String?,
+            sellerMap?['subscription_expires_at'] as String?,
+          );
           _loadingSeller = false;
         });
       }
     } catch (_) {
       if (mounted) setState(() => _loadingSeller = false);
     }
-  }
-
-  Future<void> _callSeller(String phone) async {
-    final cleaned = phone.trim();
-    if (cleaned.isEmpty) return;
-    final uri = Uri(scheme: 'tel', path: cleaned);
-    await launchUrl(uri, mode: LaunchMode.externalApplication);
   }
 
   Future<void> _sendMessage() async {
@@ -1487,34 +1531,45 @@ class _ProductDetailsScreenState extends State<ProductDetailsScreen> {
             ),
             child: Text((p['description'] as String?) ?? ''),
           ),
-          // تنبيه البيع والشراء المباشر بين العميل والتاجر (بدلاً من الشراء داخل التطبيق)
-          if (!isOwnProduct) ...[
+          if (EnvConfig.paymentsEnabled.value &&
+              !isOwnProduct &&
+              widget.viewerProfile != null) ...[
             const SizedBox(height: 14),
-            Container(
+            SizedBox(
               width: double.infinity,
-              padding: const EdgeInsets.all(14),
-              decoration: BoxDecoration(
-                color: AppColors.orangeLight,
-                borderRadius: BorderRadius.circular(14),
-                border:
-                    Border.all(color: AppColors.orange.withValues(alpha: 0.45)),
-              ),
-              child: const Row(
-                children: [
-                  Icon(Icons.handshake_outlined,
-                      color: AppColors.orange, size: 24),
-                  SizedBox(width: 10),
-                  Expanded(
-                    child: Text(
-                      'البيع والشراء يتم مباشرة بينك وبين التاجر — تواصل معه بالاتصال أو الدردشة المباشرة أدناه.',
-                      style: TextStyle(
-                        color: AppColors.navy,
-                        fontSize: 12.5,
-                        fontWeight: FontWeight.w700,
+              child: ElevatedButton.icon(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.orange,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14)),
+                ),
+                icon: const Icon(Icons.shopping_cart_checkout),
+                label: Text(
+                  'شراء ودفع آمن عبر التطبيق (${displayPrice.toStringAsFixed(2)} د.أ)',
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                ),
+                onPressed: () async {
+                  final ok = await PayTabsPaymentService().startPaymentFlow(
+                    context: context,
+                    baseAmount: displayPrice,
+                    title: 'شراء قطعة: ${p['title']}',
+                    orderType: 'ord',
+                    referenceId: p['id'] as String,
+                    email: widget.viewerProfile?.email,
+                    phone: widget.viewerProfile?.phone,
+                    name: widget.viewerProfile?.fullName,
+                  );
+                  if (ok && context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('تم إرسال طلب الشراء بنجاح! ✓'),
+                        backgroundColor: AppColors.success,
                       ),
-                    ),
-                  ),
-                ],
+                    );
+                  }
+                },
               ),
             ),
           ],
@@ -1591,7 +1646,10 @@ class _ProductDetailsScreenState extends State<ProductDetailsScreen> {
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Row(
+                                Wrap(
+                                  crossAxisAlignment: WrapCrossAlignment.center,
+                                  spacing: 8,
+                                  runSpacing: 4,
                                   children: [
                                     Text(
                                       _seller?.fullName ?? 'التاجر',
@@ -1599,13 +1657,11 @@ class _ProductDetailsScreenState extends State<ProductDetailsScreen> {
                                           fontWeight: FontWeight.bold,
                                           fontSize: 15),
                                     ),
-                                    if (_seller?.isTrustedMerchant == true) ...[
-                                      const SizedBox(width: 6),
-                                      const Icon(Icons.verified,
-                                          color: Colors.blue, size: 17),
-                                    ],
+                                    if (_sellerIsPaidTrusted)
+                                      buildTrustedMerchantBadge(compact: false),
                                   ],
                                 ),
+                                const SizedBox(height: 3),
                                 Row(
                                   children: [
                                     const Icon(Icons.star,
@@ -1642,28 +1698,6 @@ class _ProductDetailsScreenState extends State<ProductDetailsScreen> {
                       ),
                       const SizedBox(height: 12),
                       if (_seller != null) ...[
-                        if (!isOwnProduct &&
-                            (_seller!.phone ?? '').trim().isNotEmpty) ...[
-                          SizedBox(
-                            width: double.infinity,
-                            child: ElevatedButton.icon(
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: AppColors.success,
-                                foregroundColor: Colors.white,
-                                padding:
-                                    const EdgeInsets.symmetric(vertical: 12),
-                              ),
-                              onPressed: () => _callSeller(_seller!.phone!),
-                              icon: const Icon(Icons.call),
-                              label: Text(
-                                'اتصال مباشر بالتاجر (${_seller!.phone})',
-                                style: const TextStyle(
-                                    fontWeight: FontWeight.bold),
-                              ),
-                            ),
-                          ),
-                          const SizedBox(height: 8),
-                        ],
                         SizedBox(
                           width: double.infinity,
                           child: ElevatedButton.icon(
@@ -1785,6 +1819,7 @@ class _MerchantPublicProfileScreenState
   final _commentCtrl = TextEditingController();
   double _ratingAvg = 0;
   int _ratingCount = 0;
+  bool _sellerIsPaidTrusted = false;
   int _selectedStars = 5;
   bool _submittingRating = false;
   List<Map<String, dynamic>> _reviews = [];
@@ -1808,7 +1843,8 @@ class _MerchantPublicProfileScreenState
     try {
       final meta = await _db
           .from('customers')
-          .select('rating_avg, rating_count')
+          .select(
+              'rating_avg, rating_count, subscription_plan, subscription_expires_at')
           .eq('id', widget.seller.id)
           .maybeSingle();
       final list = await _db
@@ -1821,6 +1857,10 @@ class _MerchantPublicProfileScreenState
       setState(() {
         _ratingAvg = ((meta?['rating_avg'] as num?) ?? 0).toDouble();
         _ratingCount = (meta?['rating_count'] as int?) ?? 0;
+        _sellerIsPaidTrusted = isPaidTrustedSeller(
+          meta?['subscription_plan'] as String?,
+          meta?['subscription_expires_at'] as String?,
+        );
         _reviews = List<Map<String, dynamic>>.from(list);
       });
     } catch (_) {}
@@ -1921,7 +1961,10 @@ class _MerchantPublicProfileScreenState
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Row(
+                          Wrap(
+                            crossAxisAlignment: WrapCrossAlignment.center,
+                            spacing: 8,
+                            runSpacing: 4,
                             children: [
                               Text(
                                 seller.fullName ?? 'التاجر',
@@ -1931,11 +1974,36 @@ class _MerchantPublicProfileScreenState
                                   fontWeight: FontWeight.bold,
                                 ),
                               ),
-                              if (seller.isTrustedMerchant) ...[
-                                const SizedBox(width: 6),
-                                const Icon(Icons.verified,
-                                    color: Colors.lightBlueAccent, size: 18),
-                              ],
+                              if (_sellerIsPaidTrusted)
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 8, vertical: 3),
+                                  decoration: BoxDecoration(
+                                    color: Colors.lightBlueAccent
+                                        .withValues(alpha: 0.2),
+                                    borderRadius: BorderRadius.circular(8),
+                                    border: Border.all(
+                                        color: Colors.lightBlueAccent
+                                            .withValues(alpha: 0.7)),
+                                  ),
+                                  child: const Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Icon(Icons.verified,
+                                          color: Colors.lightBlueAccent,
+                                          size: 14),
+                                      SizedBox(width: 4),
+                                      Text(
+                                        'تاجر موثوق',
+                                        style: TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 11,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
                             ],
                           ),
                           Text('@${seller.username ?? ""}',
@@ -2002,8 +2070,6 @@ class _MerchantPublicProfileScreenState
               ],
             ),
           ),
-
-          // بطاقة التقييم التفاعلية
           const SizedBox(height: 14),
           Container(
             padding: const EdgeInsets.all(14),
@@ -2075,7 +2141,6 @@ class _MerchantPublicProfileScreenState
                     ],
                   ),
           ),
-
           if (_reviews.isNotEmpty) ...[
             const SizedBox(height: 14),
             const Text('آراء الزبائن',
@@ -2106,7 +2171,6 @@ class _MerchantPublicProfileScreenState
                   ),
                 ),
           ],
-
           const SizedBox(height: 18),
           const Text('جميع منشورات التاجر',
               style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
@@ -2136,7 +2200,7 @@ class _MerchantPublicProfileScreenState
                   maxCrossAxisExtent: 230,
                   mainAxisSpacing: 12,
                   crossAxisSpacing: 12,
-                  childAspectRatio: 0.74,
+                  childAspectRatio: 0.67,
                 ),
                 itemCount: items.length,
                 itemBuilder: (_, i) {
@@ -2160,7 +2224,11 @@ class _MerchantPublicProfileScreenState
                       decoration: BoxDecoration(
                         color: AppColors.surface,
                         borderRadius: BorderRadius.circular(16),
-                        border: Border.all(color: AppColors.border),
+                        border: Border.all(
+                          color: _sellerIsPaidTrusted
+                              ? const Color(0xFF1E88E5).withValues(alpha: 0.45)
+                              : AppColors.border,
+                        ),
                       ),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -2224,6 +2292,10 @@ class _MerchantPublicProfileScreenState
                             style: const TextStyle(
                                 color: AppColors.textSecondary, fontSize: 11),
                           ),
+                          if (_sellerIsPaidTrusted) ...[
+                            const SizedBox(height: 4),
+                            buildTrustedMerchantBadge(compact: true),
+                          ],
                           const Spacer(),
                           Text(
                             '${p['price']} د.أ',

@@ -6,11 +6,11 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../config/env_config.dart';
 import '../../models/db_models.dart';
-import '../../services/app_locale_service.dart';
 import '../../services/live_progress_tracker.dart';
 import '../../services/location_service.dart';
 import '../../services/notifications_service.dart';
 import '../../theme/app_theme.dart';
+import '../../utils/status_labels.dart';
 import '../../widgets/animations.dart';
 import '../mobile/add_product_screen.dart';
 import '../mobile/mobile_shell.dart';
@@ -42,7 +42,6 @@ class _WorkshopEmergencyDashboardState
   final _notifs = NotificationsService.instance;
   final _tracker = LiveProgressTracker.instance;
   final _locationService = LocationService();
-  final _loc = AppLocaleService.instance;
 
   late int _tab = widget.initialTab;
   late bool _isAvailable = widget.profile.isAvailable;
@@ -53,20 +52,18 @@ class _WorkshopEmergencyDashboardState
   final double _maxRadiusKm = 15.0;
   DashboardPeriod _period = DashboardPeriod.month1;
   DateTimeRange? _customRange;
-  final Set<String> _trackingEmergencyIds = {};
+  String? _trackingRequestId;
 
   List<({int id, String label})> get _menuItems {
     final list = <({int id, String label})>[
-      (id: 0, label: _loc.tr('نظرة عامة', 'Overview')),
-      (id: 1, label: _loc.tr('طلبات الطوارئ', 'Emergency Orders')),
-      (id: 2, label: _loc.tr('حجوزات الورشة', 'Appointments')),
-      (id: 3, label: _loc.tr('قطع الغيار والمخزون', 'Spare Parts')),
+      (id: 0, label: 'نظرة عامة'),
+      (id: 1, label: 'طلبات الطوارئ'),
+      (id: 2, label: 'حجوزات الورشة'),
+      (id: 3, label: 'قطع الغيار والمخزون'),
+      (id: 4, label: 'المحفظة المالية'),
     ];
     if (EnvConfig.paymentsEnabled.value) {
-      list.add((id: 4, label: _loc.tr('المحفظة المالية', 'Wallet')));
-    }
-    if (EnvConfig.subscriptionsEnabled.value) {
-      list.add((id: 5, label: _loc.tr('الاشتراك والباقة', 'Subscription')));
+      list.add((id: 5, label: 'الاشتراك والباقة'));
     }
     return list;
   }
@@ -93,10 +90,10 @@ class _WorkshopEmergencyDashboardState
         _myLat = res.coordinates.latitude;
         _myLng = res.coordinates.longitude;
       });
-      await _db.from('customers').update({
-        'latitude': _myLat,
-        'longitude': _myLng,
-      }).eq('id', widget.profile.id);
+      await _db
+          .from('customers')
+          .update({'latitude': _myLat, 'longitude': _myLng})
+          .eq('id', widget.profile.id);
     } catch (_) {}
   }
 
@@ -104,7 +101,8 @@ class _WorkshopEmergencyDashboardState
     setState(() => _isAvailable = val);
     await _db
         .from('customers')
-        .update({'is_available': val}).eq('id', widget.profile.id);
+        .update({'is_available': val})
+        .eq('id', widget.profile.id);
     widget.onRefreshProfile();
   }
 
@@ -126,24 +124,45 @@ class _WorkshopEmergencyDashboardState
 
   bool _isVisibleToMe(DbMechanicRequest r) {
     if (r.mechanicId == widget.profile.id) return true;
-    if (r.rejectedProviderIds.contains(widget.profile.id)) return false;
     if (!_isAvailable || r.status != 'pending') return false;
     if (r.broadcastAll) return true;
     final dist = _distanceToRequest(r);
     return dist == null || dist <= _maxRadiusKm;
   }
 
-  void _ensureLiveBroadcastForAccepted(DbMechanicRequest r) {
-    if (r.mechanicId != widget.profile.id ||
-        r.status != 'accepted' ||
-        r.progressStep != 'on_the_way' ||
-        r.userId == null ||
+  String _emergencyStatusLabel(String? status, String? progressStep) {
+    final st = (status ?? '').trim().toLowerCase();
+    final step = (progressStep ?? '').trim().toLowerCase();
+    if (st == 'cancelled' || step == 'cancelled') return 'ملغي';
+    if (st == 'completed' || step == 'completed') return 'مكتمل وتم الدفع ✓';
+    if (st == 'awaiting_payment' || step == 'awaiting_payment') {
+      return 'صدرت الفاتورة — بانتظار الدفع';
+    }
+    if (st == 'quoted' || step == 'quote_sent') {
+      return 'بانتظار موافقة العميل على العرض';
+    }
+    if (step == 'repairing') return 'جاري الإصلاح في موقع العميل';
+    if (step == 'towing') return 'جاري سحب السيارة إلى الوجهة';
+    if (step == 'arrived_at_pickup') return 'وصل الفني إلى موقع العميل ✓';
+    if (step == 'on_the_way' || st == 'accepted' || st == 'in_progress') {
+      return 'الفني في الطريق إلى العميل';
+    }
+    return StatusLabels.emergency(status, progressStep: progressStep);
+  }
+
+  void _ensureTrackingActive(DbMechanicRequest r) {
+    if (r.mechanicId != widget.profile.id) return;
+    final isEnRoute =
+        (r.status == 'accepted' || r.status == 'in_progress') &&
+        (r.progressStep == 'on_the_way' || r.progressStep.isEmpty);
+    if (!isEnRoute) return;
+    if (_trackingRequestId == r.id) return;
+    if (r.userId == null ||
         r.pickupLatitude == null ||
         r.pickupLongitude == null) {
       return;
     }
-    if (_trackingEmergencyIds.contains(r.id)) return;
-    _trackingEmergencyIds.add(r.id);
+    _trackingRequestId = r.id;
     _tracker.startTrackingEmergencyArrival(
       requestId: r.id,
       customerUserId: r.userId!,
@@ -177,11 +196,13 @@ class _WorkshopEmergencyDashboardState
     } else {
       Navigator.pushReplacement(
         context,
-        animatedRoute(LiveMobileShell(
-          profile: widget.profile,
-          onRefreshProfile: widget.onRefreshProfile,
-          onSignedOut: widget.onSignedOut,
-        )),
+        animatedRoute(
+          LiveMobileShell(
+            profile: widget.profile,
+            onRefreshProfile: widget.onRefreshProfile,
+            onSignedOut: widget.onSignedOut,
+          ),
+        ),
       );
     }
   }
@@ -190,9 +211,9 @@ class _WorkshopEmergencyDashboardState
   Widget build(BuildContext context) {
     final isWide = MediaQuery.of(context).size.width >= 850;
     final showPayments = EnvConfig.paymentsEnabled.value;
-    final showSubs = EnvConfig.subscriptionsEnabled.value;
-    if (!showPayments && _tab == 4) _tab = 0;
-    if (!showSubs && _tab == 5) _tab = 0;
+    if (!showPayments && _tab == 5) {
+      _tab = 0;
+    }
 
     return Scaffold(
       appBar: isWide
@@ -209,18 +230,18 @@ class _WorkshopEmergencyDashboardState
                 ),
               ),
               title: Text(
-                widget.profile.fullName ?? _loc.tr('لوحة الورشة', 'Workshop'),
+                widget.profile.fullName ?? 'لوحة الورشة',
                 style: const TextStyle(color: Colors.white, fontSize: 16),
               ),
               actions: [
                 IconButton(
-                  tooltip: _loc.tr('العودة للرئيسية', 'Home'),
-                  icon: const Icon(Icons.storefront, color: Colors.white),
+                  tooltip: 'العودة للرئيسية',
+                  icon: const Icon(Icons.grid_view_rounded, color: Colors.white),
                   onPressed: _goHome,
                 ),
                 const NotificationBellButton(iconColor: Colors.white),
                 IconButton(
-                  tooltip: _loc.tr('تسجيل الخروج', 'Sign Out'),
+                  tooltip: 'تسجيل الخروج',
                   icon: const Icon(Icons.logout, color: Colors.white),
                   onPressed: () async {
                     await _db.auth.signOut();
@@ -252,14 +273,8 @@ class _WorkshopEmergencyDashboardState
                           contentPadding: EdgeInsets.zero,
                           title: Text(
                             _isAvailable
-                                ? _loc.tr(
-                                    'حالة الورشة: متاح لاستقبال الطلبات والمواعيد',
-                                    'Workshop Status: Online & Available',
-                                  )
-                                : _loc.tr(
-                                    'حالة الورشة: غير متاح حالياً',
-                                    'Workshop Status: Offline',
-                                  ),
+                                ? 'متاح لاستقبال الطلبات والمواعيد'
+                                : 'غير متاح حالياً',
                             style: TextStyle(
                               fontWeight: FontWeight.bold,
                               fontSize: 13,
@@ -285,8 +300,11 @@ class _WorkshopEmergencyDashboardState
                       child: switch (_tab) {
                         1 => _buildEmergencyTab(),
                         2 => _buildAppointmentsTab(),
-                        3 => const MerchantProductsDashboard(),
-                        4 => _buildWalletTab(),
+                        3 => const MerchantProductsDashboard(embedded: true),
+                        4 => ProviderWalletView(
+                            profile: widget.profile,
+                            onRefreshProfile: widget.onRefreshProfile,
+                          ),
                         5 => ProviderSubscriptionsScreen(
                             currentPlanCode: widget.profile.subscriptionPlan,
                             onSubscribed: widget.onRefreshProfile,
@@ -306,114 +324,115 @@ class _WorkshopEmergencyDashboardState
 
   Widget _buildSidebar({required bool isDrawer}) {
     final items = _menuItems;
-    return Material(
+    return Container(
       color: AppColors.navy,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 28),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Expanded(
-                  child: Text(
-                    widget.profile.fullName ?? _loc.tr('اسم النشاط', 'Workshop'),
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                    ),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 28),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Expanded(
+                child: Text(
+                  widget.profile.fullName ?? 'اسم النشاط',
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
                   ),
                 ),
-                IconButton(
-                  icon: const Icon(Icons.logout, color: Colors.white, size: 20),
-                  onPressed: () async {
-                    await _db.auth.signOut();
-                    if (mounted) {
-                      Navigator.popUntil(context, (r) => r.isFirst);
-                    }
-                    widget.onSignedOut();
-                  },
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            ListTile(
-              contentPadding: EdgeInsets.zero,
-              leading: const Icon(Icons.storefront, color: Colors.white),
-              title: Text(
-                _loc.tr('العودة للرئيسية (المتجر)', 'Back to Store Home'),
-                style: const TextStyle(color: Colors.white, fontSize: 13),
               ),
-              onTap: () => _goHome(closeDrawerFirst: isDrawer),
+              IconButton(
+                icon: const Icon(Icons.logout, color: Colors.white, size: 20),
+                onPressed: () async {
+                  await _db.auth.signOut();
+                  if (mounted) Navigator.popUntil(context, (r) => r.isFirst);
+                  widget.onSignedOut();
+                },
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: const Icon(Icons.grid_view_rounded, color: Colors.white),
+            title: const Text(
+              'العودة للرئيسية (الاختصارات)',
+              style: TextStyle(color: Colors.white, fontSize: 13),
             ),
-            const Divider(color: Colors.white24),
-            const SizedBox(height: 12),
-            ...items.map((item) {
-              final active = _tab == item.id;
-              return Padding(
-                padding: const EdgeInsets.only(bottom: 8),
-                child: GestureDetector(
-                  onTap: () {
-                    setState(() => _tab = item.id);
-                    if (isDrawer) Navigator.pop(context);
-                  },
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 200),
-                    width: double.infinity,
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 16, vertical: 12),
-                    decoration: BoxDecoration(
-                      color: active ? AppColors.orange : Colors.transparent,
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Text(
-                      item.label,
-                      style: TextStyle(
-                        color: active ? Colors.white : Colors.white70,
-                        fontWeight:
-                            active ? FontWeight.bold : FontWeight.normal,
-                      ),
+            onTap: () => _goHome(closeDrawerFirst: isDrawer),
+          ),
+          const Divider(color: Colors.white24),
+          const SizedBox(height: 12),
+          ...items.map((item) {
+            final active = _tab == item.id;
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: GestureDetector(
+                onTap: () {
+                  setState(() => _tab = item.id);
+                  if (isDrawer) Navigator.pop(context);
+                },
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 200),
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 12,
+                  ),
+                  decoration: BoxDecoration(
+                    color: active ? AppColors.orange : Colors.transparent,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Text(
+                    item.label,
+                    style: TextStyle(
+                      color: active ? Colors.white : Colors.white70,
+                      fontWeight: active ? FontWeight.bold : FontWeight.normal,
                     ),
                   ),
                 ),
-              );
-            }),
-          ],
-        ),
+              ),
+            );
+          }),
+        ],
       ),
     );
   }
 
   Widget _buildOverviewTab(bool isWide) {
-    final showPayments = EnvConfig.paymentsEnabled.value;
     final showWinch = EnvConfig.winchEnabled.value;
 
     return StreamBuilder<List<Map<String, dynamic>>>(
       stream: _db
           .from('mechanic_requests')
           .stream(primaryKey: ['id'])
-          .order('created_at', ascending: false),
+          .order('created_at', ascending: false)
+          .limit(100),
       builder: (context, reqSnap) {
         final rawReqs = (reqSnap.data ?? [])
             .where((r) => _inPeriod(r['created_at'] as String?))
             .toList();
         final reqs = rawReqs
             .map(DbMechanicRequest.fromMap)
-            .where((r) =>
-                (showWinch || r.serviceType != 'winch') && _isVisibleToMe(r))
+            .where(
+              (r) =>
+                  (showWinch || r.serviceType != 'winch') && _isVisibleToMe(r),
+            )
             .toList();
-        final activeEmergencies =
-            reqs.where((r) => r.status != 'completed' && r.status != 'cancelled').length;
+        final activeEmergencies = reqs
+            .where((r) => r.status != 'completed' && r.status != 'cancelled')
+            .length;
 
         return StreamBuilder<List<Map<String, dynamic>>>(
           stream: _db
               .from('workshop_appointments')
               .stream(primaryKey: ['id'])
               .eq('workshop_id', widget.profile.id)
-              .order('created_at', ascending: false),
+              .order('created_at', ascending: false)
+              .limit(100),
           builder: (context, apptSnap) {
             final appts = (apptSnap.data ?? [])
                 .where((a) => _inPeriod(a['created_at'] as String?))
@@ -424,22 +443,10 @@ class _WorkshopEmergencyDashboardState
                 appts.where((a) => a['status'] == 'pending').length;
 
             final chartData = [
-              (
-                label: _loc.tr('طوارئ نشطة', 'Active SOS'),
-                value: activeEmergencies.toDouble()
-              ),
-              (
-                label: _loc.tr('كل المواعيد', 'All Bookings'),
-                value: appts.length.toDouble()
-              ),
-              (
-                label: _loc.tr('قيد الانتظار', 'Pending'),
-                value: pendingAppts.toDouble()
-              ),
-              (
-                label: _loc.tr('مكتملة', 'Completed'),
-                value: completedAppts.toDouble()
-              ),
+              (label: 'طوارئ نشطة', value: activeEmergencies.toDouble()),
+              (label: 'كل المواعيد', value: appts.length.toDouble()),
+              (label: 'قيد الانتظار', value: pendingAppts.toDouble()),
+              (label: 'مكتملة', value: completedAppts.toDouble()),
             ];
 
             return SingleChildScrollView(
@@ -450,10 +457,12 @@ class _WorkshopEmergencyDashboardState
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Text(
-                        _loc.tr('نظرة عامة', 'Overview'),
-                        style: const TextStyle(
-                            fontSize: 20, fontWeight: FontWeight.bold),
+                      const Text(
+                        'نظرة عامة',
+                        style: TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.bold,
+                        ),
                       ),
                       ElevatedButton.icon(
                         style: ElevatedButton.styleFrom(
@@ -461,9 +470,11 @@ class _WorkshopEmergencyDashboardState
                           foregroundColor: Colors.white,
                         ),
                         onPressed: () => Navigator.push(
-                            context, animatedRoute(const AddProductScreen())),
+                          context,
+                          animatedRoute(const AddProductScreen()),
+                        ),
                         icon: const Icon(Icons.add, size: 18),
-                        label: Text(_loc.tr('إضافة قطعة', 'Add Part')),
+                        label: const Text('إضافة قطعة'),
                       ),
                     ],
                   ),
@@ -478,34 +489,81 @@ class _WorkshopEmergencyDashboardState
                   ),
                   const SizedBox(height: 14),
                   GridView.count(
-                    crossAxisCount: isWide ? (showPayments ? 4 : 3) : 2,
+                    crossAxisCount: isWide ? 4 : 2,
                     shrinkWrap: true,
                     physics: const NeverScrollableScrollPhysics(),
                     crossAxisSpacing: 12,
                     mainAxisSpacing: 12,
                     childAspectRatio: isWide ? 1.75 : 1.3,
                     children: [
-                      _kpiCard(_loc.tr('طلبات طوارئ نشطة', 'Active SOS'),
-                          activeEmergencies, Icons.car_crash),
-                      _kpiCard(_loc.tr('حجوزات الورشة', 'Bookings'),
-                          appts.length, Icons.event_available),
-                      _kpiCard(_loc.tr('سعة الورشة القصوى', 'Max Capacity'),
-                          widget.profile.maxCarCapacity, Icons.garage),
-                      if (showPayments)
-                        _kpiCard(
-                          _loc.tr('رصيد المحفظة (د.أ)', 'Wallet (JOD)'),
-                          widget.profile.walletBalance.toInt(),
-                          Icons.account_balance_wallet,
-                        ),
+                      _kpiCard(
+                        'طلبات طوارئ نشطة',
+                        activeEmergencies,
+                        Icons.car_crash,
+                      ),
+                      _kpiCard(
+                        'حجوزات الورشة',
+                        appts.length,
+                        Icons.event_available,
+                      ),
+                      _kpiCard(
+                        'سعة الورشة القصوى',
+                        widget.profile.maxCarCapacity,
+                        Icons.garage,
+                      ),
+                      _kpiCard(
+                        'رصيد المحفظة (د.أ)',
+                        widget.profile.walletBalance.toInt(),
+                        Icons.account_balance_wallet,
+                      ),
                     ],
                   ),
                   const SizedBox(height: 16),
                   InteractiveAnimatedChart(
-                    title: _loc.tr(
-                      'إحصائيات الورشة والطوارئ التفاعلية',
-                      'Workshop & Emergency Analytics',
-                    ),
+                    title: 'إحصائيات الورشة والطوارئ التفاعلية',
                     data: chartData,
+                  ),
+                  const SizedBox(height: 16),
+                  _bottomCard(
+                    'أحدث مواعيد الورشة',
+                    appts.isEmpty
+                        ? [const Text('لا توجد مواعيد ضمن هذه الفترة')]
+                        : appts
+                              .take(4)
+                              .map(
+                                (a) => Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                    vertical: 6,
+                                  ),
+                                  child: Row(
+                                    mainAxisAlignment:
+                                        MainAxisAlignment.spaceBetween,
+                                    children: [
+                                      Text(
+                                        '${a['appointment_time']} · ${a['appointment_date']}',
+                                        style: const TextStyle(
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
+                                      Flexible(
+                                        child: Text(
+                                          StatusLabels.appointment(
+                                            a['status'] as String?,
+                                            progressStep:
+                                                a['progress_step'] as String?,
+                                          ),
+                                          style: const TextStyle(
+                                            color: AppColors.orange,
+                                            fontWeight: FontWeight.bold,
+                                            fontSize: 12,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              )
+                              .toList(),
                   ),
                 ],
               ),
@@ -534,8 +592,10 @@ class _WorkshopEmergencyDashboardState
             title,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style:
-                const TextStyle(color: AppColors.textSecondary, fontSize: 12),
+            style: const TextStyle(
+              color: AppColors.textSecondary,
+              fontSize: 12,
+            ),
           ),
           const SizedBox(height: 4),
           AnimatedCounter(
@@ -547,14 +607,37 @@ class _WorkshopEmergencyDashboardState
     );
   }
 
+  Widget _bottomCard(String title, List<Widget> children) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 12),
+          ...children,
+        ],
+      ),
+    );
+  }
+
   Widget _buildEmergencyTab() {
-    final showPayments = EnvConfig.paymentsEnabled.value;
     final showWinch = EnvConfig.winchEnabled.value;
     return StreamBuilder<List<Map<String, dynamic>>>(
       stream: _db
           .from('mechanic_requests')
           .stream(primaryKey: ['id'])
-          .order('created_at', ascending: false),
+          .order('created_at', ascending: false)
+          .limit(100),
       builder: (context, snap) {
         if (!snap.hasData) {
           return const Center(child: CircularProgressIndicator());
@@ -562,18 +645,21 @@ class _WorkshopEmergencyDashboardState
         final reqs = snap.data!
             .where((r) => _inPeriod(r['created_at'] as String?))
             .map(DbMechanicRequest.fromMap)
-            .where((r) =>
-                (r.serviceType != 'winch' ||
-                    (showWinch && widget.profile.hasTowing)) &&
-                _isVisibleToMe(r))
+            .where(
+              (r) =>
+                  (r.serviceType != 'winch' ||
+                      (showWinch && widget.profile.hasTowing)) &&
+                  _isVisibleToMe(r),
+            )
             .toList();
 
         if (reqs.isEmpty) {
           return Center(
-            child: Text(_isAvailable
-                ? _loc.tr('لا توجد طلبات طوارئ متاحة حالياً',
-                    'No emergency requests available')
-                : _loc.tr('أنت في وضع غير متاح', 'You are currently offline')),
+            child: Text(
+              _isAvailable
+                  ? 'لا توجد طلبات طوارئ متاحة حالياً'
+                  : 'أنت في وضع غير متاح',
+            ),
           );
         }
 
@@ -582,10 +668,29 @@ class _WorkshopEmergencyDashboardState
           itemCount: reqs.length,
           itemBuilder: (_, i) {
             final r = reqs[i];
-            _ensureLiveBroadcastForAccepted(r);
+            _ensureTrackingActive(r);
             final distKm = _distanceToRequest(r);
             final hasCoords =
                 r.pickupLatitude != null && r.pickupLongitude != null;
+            final statusText = _emergencyStatusLabel(r.status, r.progressStep);
+            final statusColor = StatusLabels.colorFor(
+              r.status,
+              progressStep: r.progressStep,
+            );
+            final isWinch = r.serviceType == 'winch';
+            final isMine = r.mechanicId == widget.profile.id;
+            final isQuoted =
+                isMine &&
+                (r.status == 'quoted' || r.progressStep == 'quote_sent');
+            final isActiveWork =
+                isMine &&
+                (r.status == 'accepted' || r.status == 'in_progress') &&
+                r.progressStep != 'awaiting_payment';
+            final isAwaitingPayment =
+                isMine &&
+                (r.status == 'awaiting_payment' ||
+                    r.progressStep == 'awaiting_payment' ||
+                    r.paymentStatus == 'invoiced');
 
             return Card(
               margin: const EdgeInsets.only(bottom: 14),
@@ -599,17 +704,18 @@ class _WorkshopEmergencyDashboardState
                       children: [
                         Expanded(
                           child: Text(
-                            '${r.serviceType == 'winch' ? _loc.tr('طلب ونش', 'Winch') : _loc.tr('ميكانيكي طوارئ', 'Roadside')} · ${r.carDetails}',
+                            '${isWinch ? 'طلب ونش' : 'ميكانيكي طوارئ'} · ${r.carDetails}',
                             style: const TextStyle(
-                                fontWeight: FontWeight.bold, fontSize: 15),
+                              fontWeight: FontWeight.bold,
+                              fontSize: 15,
+                            ),
                           ),
                         ),
                         if (distKm != null)
                           Chip(
                             backgroundColor: AppColors.orangeLight,
                             label: Text(
-                              _loc.tr('يبعد ${distKm.toStringAsFixed(1)} كم',
-                                  '${distKm.toStringAsFixed(1)} km away'),
+                              'يبعد ${distKm.toStringAsFixed(1)} كم',
                               style: const TextStyle(
                                 color: AppColors.orange,
                                 fontWeight: FontWeight.bold,
@@ -619,19 +725,35 @@ class _WorkshopEmergencyDashboardState
                           ),
                       ],
                     ),
-                    Text(
-                      '${_loc.tr("المشكلة", "Issue")}: ${r.description ?? "-"} · ${_loc.tr("الهاتف", "Phone")}: ${r.phone ?? "-"}',
+                    const SizedBox(height: 6),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: statusColor.withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Text(
+                        statusText,
+                        style: TextStyle(
+                          color: statusColor,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 12,
+                        ),
+                      ),
                     ),
+                    const SizedBox(height: 6),
                     Text(
-                      '${_loc.tr("العنوان", "Location")}: ${r.dropoffAddress ?? _loc.tr("موقع العميل", "Customer GPS")}',
-                      style: const TextStyle(
-                          fontSize: 12, color: AppColors.textSecondary),
+                      'المشكلة: ${r.description ?? "-"} · الهاتف: ${r.phone ?? "-"}',
                     ),
-                    if (r.quotedPrice > 0 || r.totalAmount > 0)
+                    Text('العنوان: ${r.dropoffAddress ?? "موقع العميل"}'),
+                    if (r.totalAmount > 0)
                       Padding(
                         padding: const EdgeInsets.only(top: 4),
                         child: Text(
-                          '${_loc.tr("عرض السعر / الفاتورة", "Quote / Invoice")}: ${(r.totalAmount > 0 ? r.totalAmount : r.quotedPrice).toStringAsFixed(2)} ${_loc.tr("د.أ", "JOD")}',
+                          'السعر المتفق عليه: ${r.totalAmount.toStringAsFixed(2)} د.أ',
                           style: const TextStyle(
                             fontWeight: FontWeight.bold,
                             color: AppColors.orange,
@@ -641,36 +763,40 @@ class _WorkshopEmergencyDashboardState
                     const SizedBox(height: 10),
                     if (hasCoords) ...[
                       SizedBox(
-                        height: 145,
+                        height: 140,
                         child: ClipRRect(
-                          borderRadius: BorderRadius.circular(14),
+                          borderRadius: BorderRadius.circular(12),
                           child: FlutterMap(
                             options: MapOptions(
-                              initialCenter:
-                                  LatLng(r.pickupLatitude!, r.pickupLongitude!),
+                              initialCenter: LatLng(
+                                r.pickupLatitude!,
+                                r.pickupLongitude!,
+                              ),
                               initialZoom: 14,
                             ),
                             children: [
                               TileLayer(
                                 urlTemplate:
-                                    'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}@2x.png',
-                                subdomains: const ['a', 'b', 'c', 'd'],
-                                userAgentPackageName: 'com.autoparts.ghiyarak',
-                                retinaMode: true,
+                                    'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                                userAgentPackageName: 'com.ghayarakjo.app',
                               ),
-                              MarkerLayer(markers: [
-                                Marker(
-                                  point: LatLng(
-                                      r.pickupLatitude!, r.pickupLongitude!),
-                                  width: 44,
-                                  height: 44,
-                                  child: const Icon(
-                                    Icons.location_on,
-                                    color: AppColors.orange,
-                                    size: 38,
+                              MarkerLayer(
+                                markers: [
+                                  Marker(
+                                    point: LatLng(
+                                      r.pickupLatitude!,
+                                      r.pickupLongitude!,
+                                    ),
+                                    width: 44,
+                                    height: 44,
+                                    child: const Icon(
+                                      Icons.location_on,
+                                      color: AppColors.orange,
+                                      size: 38,
+                                    ),
                                   ),
-                                ),
-                              ]),
+                                ],
+                              ),
                             ],
                           ),
                         ),
@@ -680,15 +806,19 @@ class _WorkshopEmergencyDashboardState
                         width: double.infinity,
                         child: OutlinedButton.icon(
                           style: OutlinedButton.styleFrom(
-                              side: const BorderSide(color: AppColors.navy)),
+                            side: const BorderSide(color: AppColors.navy),
+                          ),
                           onPressed: () => _openGpsNavigation(
-                              r.pickupLatitude!, r.pickupLongitude!),
-                          icon: const Icon(Icons.navigation,
-                              color: AppColors.navy),
-                          label: Text(
-                            _loc.tr('توجيه GPS لموقع العميل',
-                                'Navigate to Customer (GPS)'),
-                            style: const TextStyle(
+                            r.pickupLatitude!,
+                            r.pickupLongitude!,
+                          ),
+                          icon: const Icon(
+                            Icons.navigation,
+                            color: AppColors.navy,
+                          ),
+                          label: const Text(
+                            'توجيه GPS لموقع العميل',
+                            style: TextStyle(
                               color: AppColors.navy,
                               fontWeight: FontWeight.bold,
                             ),
@@ -704,105 +834,118 @@ class _WorkshopEmergencyDashboardState
                           style: ElevatedButton.styleFrom(
                             backgroundColor: AppColors.orange,
                             foregroundColor: Colors.white,
-                            padding: const EdgeInsets.symmetric(vertical: 12),
                           ),
                           onPressed: () => _sendEmergencyQuoteDialog(r),
-                          icon: const Icon(Icons.request_quote_rounded),
-                          label: Text(_loc.tr(
-                            'قبول وإرسال عرض سعر للزبون',
-                            'Accept & Send Price Quote',
-                          )),
+                          icon: const Icon(Icons.local_offer_outlined),
+                          label: const Text('إرسال عرض سعر للعميل'),
                         ),
                       ),
-                    if (r.status == 'quote_sent' &&
-                        r.mechanicId == widget.profile.id)
+                    if (isQuoted) ...[
                       Container(
                         width: double.infinity,
                         padding: const EdgeInsets.all(10),
                         decoration: BoxDecoration(
                           color: AppColors.orangeLight,
-                          borderRadius: BorderRadius.circular(12),
+                          borderRadius: BorderRadius.circular(10),
                         ),
                         child: Text(
-                          _loc.tr(
-                            'تم إرسال عرض السعر (${r.quotedPrice.toStringAsFixed(2)} د.أ) — بانتظار موافقة الزبون...',
-                            'Quote (${r.quotedPrice.toStringAsFixed(2)} JOD) sent — awaiting customer decision...',
-                          ),
+                          'تم إرسال عرض السعر (${r.totalAmount.toStringAsFixed(2)} د.أ) — بانتظار موافقة العميل قبل الانطلاق.',
                           style: const TextStyle(
-                            fontWeight: FontWeight.bold,
-                            fontSize: 12,
                             color: AppColors.navy,
+                            fontWeight: FontWeight.w600,
+                            fontSize: 12.5,
                           ),
                         ),
                       ),
-                    if (r.status == 'accepted' &&
-                        r.mechanicId == widget.profile.id)
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
+                      const SizedBox(height: 8),
+                      Row(
                         children: [
-                          if (r.progressStep == 'on_the_way')
-                            ElevatedButton(
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: AppColors.navy,
-                                foregroundColor: Colors.white,
-                              ),
-                              onPressed: () async {
-                                if (r.userId != null) {
-                                  await _tracker.markEmergencyArrived(
-                                    requestId: r.id,
-                                    customerUserId: r.userId!,
-                                    serviceType: r.serviceType,
-                                  );
-                                  if (mounted) {
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      SnackBar(
-                                        backgroundColor: AppColors.success,
-                                        content: Text(_loc.tr(
-                                          'تم تأكيد وصولك وإشعار العميل ✓',
-                                          'Arrival confirmed & customer notified ✓',
-                                        )),
-                                      ),
-                                    );
-                                  }
-                                }
-                              },
-                              child: Text(_loc.tr(
-                                  'تأكيد الوصول للعميل', 'Confirm Arrival')),
+                          Expanded(
+                            child: OutlinedButton(
+                              onPressed: () => _sendEmergencyQuoteDialog(r),
+                              child: const Text('تعديل العرض'),
                             ),
-                          if (r.progressStep != 'awaiting_payment')
-                            ElevatedButton.icon(
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: AppColors.orange,
-                                foregroundColor: Colors.white,
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: OutlinedButton(
+                              style: OutlinedButton.styleFrom(
+                                foregroundColor: Colors.red,
+                                side: const BorderSide(color: Colors.red),
                               ),
-                              onPressed: () =>
-                                  _issueEmergencyInvoiceDialog(r, showPayments),
-                              icon: const Icon(Icons.receipt_long, size: 17),
-                              label: Text(
-                                showPayments
-                                    ? _loc.tr('إصدار وتسليم الفاتورة',
-                                        'Issue Final Invoice')
-                                    : _loc.tr('إنهاء الطلب', 'Finish Job'),
-                              ),
-                            )
-                          else
-                            Chip(
-                              backgroundColor:
-                                  AppColors.success.withValues(alpha: 0.14),
-                              label: Text(
-                                _loc.tr(
-                                  'تم إصدار الفاتورة ✓ بانتظار دفع العميل',
-                                  'Invoice Issued ✓ Awaiting Payment',
-                                ),
-                                style: const TextStyle(
-                                  color: AppColors.success,
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 12,
-                                ),
-                              ),
+                              onPressed: () => _withdrawEmergencyQuote(r),
+                              child: const Text('سحب العرض'),
                             ),
+                          ),
                         ],
+                      ),
+                    ],
+                    if (isActiveWork) ...[
+                      if (r.progressStep == 'on_the_way' ||
+                          r.progressStep.isEmpty)
+                        SizedBox(
+                          width: double.infinity,
+                          child: ElevatedButton.icon(
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: AppColors.navy,
+                              foregroundColor: Colors.white,
+                            ),
+                            onPressed: () => _markEmergencyArrived(r),
+                            icon: const Icon(Icons.location_on_outlined),
+                            label: const Text('تأكيد الوصول لموقع العميل'),
+                          ),
+                        )
+                      else if (r.progressStep == 'arrived_at_pickup')
+                        SizedBox(
+                          width: double.infinity,
+                          child: ElevatedButton.icon(
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: AppColors.orange,
+                              foregroundColor: Colors.white,
+                            ),
+                            onPressed: () => _startEmergencyWork(r),
+                            icon: Icon(
+                              isWinch
+                                  ? Icons.local_shipping_outlined
+                                  : Icons.build_outlined,
+                            ),
+                            label: Text(
+                              isWinch ? 'بدء سحب السيارة' : 'بدء الإصلاح',
+                            ),
+                          ),
+                        )
+                      else
+                        SizedBox(
+                          width: double.infinity,
+                          child: ElevatedButton.icon(
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: AppColors.success,
+                              foregroundColor: Colors.white,
+                            ),
+                            onPressed: () => _finishEmergencyAndIssueInvoice(r),
+                            icon: const Icon(Icons.receipt_long_outlined),
+                            label: const Text(
+                              'إنهاء العمل وإصدار الفاتورة النهائية',
+                            ),
+                          ),
+                        ),
+                    ],
+                    if (isAwaitingPayment)
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: AppColors.navy.withValues(alpha: 0.08),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: Text(
+                          'صدرت الفاتورة بقيمة ${r.totalAmount.toStringAsFixed(2)} د.أ — بانتظار دفع العميل.',
+                          style: const TextStyle(
+                            color: AppColors.navy,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 12.5,
+                          ),
+                        ),
                       ),
                   ],
                 ),
@@ -814,282 +957,247 @@ class _WorkshopEmergencyDashboardState
     );
   }
 
-  /// إرسال عرض سعر للزبون بدل تسعيرة العداد
   Future<void> _sendEmergencyQuoteDialog(DbMechanicRequest r) async {
-    final priceCtrl = TextEditingController();
-    final notesCtrl = TextEditingController();
-    bool sending = false;
-
-    await showDialog(
+    final ctrl = TextEditingController(
+      text: r.totalAmount > 0 ? r.totalAmount.toStringAsFixed(2) : '',
+    );
+    await showDialog<void>(
       context: context,
-      barrierDismissible: false,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setS) => AlertDialog(
-          title: Text(_loc.tr('إرسال عرض سعر للزبون', 'Send Price Quote')),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: priceCtrl,
-                keyboardType:
-                    const TextInputType.numberWithOptions(decimal: true),
-                enabled: !sending,
-                decoration: InputDecoration(
-                  labelText: _loc.tr('السعر المقترح (د.أ)', 'Quoted Price (JOD)'),
-                  prefixIcon: const Icon(Icons.payments_outlined),
-                ),
-              ),
-              const SizedBox(height: 10),
-              TextField(
-                controller: notesCtrl,
-                enabled: !sending,
-                decoration: InputDecoration(
-                  labelText: _loc.tr(
-                    'ملاحظات / وقت الوصول المتوقع (اختياري)',
-                    'Notes / ETA (optional)',
-                  ),
-                ),
-              ),
-            ],
+      builder: (ctx) => AlertDialog(
+        title: const Text('إرسال عرض سعر للعميل'),
+        content: TextField(
+          controller: ctrl,
+          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          textInputAction: TextInputAction.done,
+          decoration: const InputDecoration(
+            labelText: 'قيمة العرض المقترح (د.أ)',
+            hintText: 'مثال: 20',
           ),
-          actions: [
-            TextButton(
-              onPressed: sending ? null : () => Navigator.pop(ctx),
-              child: Text(_loc.tr('إلغاء', 'Cancel')),
-            ),
-            ElevatedButton(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.orange,
-                foregroundColor: Colors.white,
-              ),
-              onPressed: sending
-                  ? null
-                  : () async {
-                      final price =
-                          double.tryParse(priceCtrl.text.trim()) ?? 0.0;
-                      if (price <= 0) {
-                        ScaffoldMessenger.of(ctx).showSnackBar(
-                          SnackBar(
-                            backgroundColor: Colors.red,
-                            content: Text(_loc.tr(
-                              'يرجى إدخال سعر صحيح أكبر من صفر',
-                              'Enter a valid price greater than 0',
-                            )),
-                          ),
-                        );
-                        return;
-                      }
-                      setS(() => sending = true);
-                      try {
-                        await _db.from('mechanic_requests').update({
-                          'status': 'quote_sent',
-                          'progress_step': 'pending',
-                          'mechanic_id': widget.profile.id,
-                          'quoted_price': price,
-                          'total_amount': price,
-                          'quote_notes': notesCtrl.text.trim(),
-                        }).eq('id', r.id);
-
-                        if (r.userId != null) {
-                          await _notifs.sendNotification(
-                            targetUserId: r.userId!,
-                            title: 'وصلك عرض سعر لطلب الطوارئ 💰',
-                            body:
-                                'قدّم ${widget.profile.fullName ?? "المزود"} عرض سعر بقيمة ${price.toStringAsFixed(2)} د.أ — افتح التطبيق للقبول أو الرفض.',
-                            type: 'quote_sent',
-                            referenceId: r.id,
-                          );
-                        }
-
-                        await _notifs.sendNotification(
-                          targetUserId: widget.profile.id,
-                          title: 'تم إرسال عرض السعر بنجاح ✓',
-                          body:
-                              'تم إرسال عرض بقيمة ${price.toStringAsFixed(2)} د.أ للزبون وبانتظار موافقته.',
-                          type: 'quote_sent_confirm',
-                          referenceId: r.id,
-                        );
-
-                        if (ctx.mounted) Navigator.pop(ctx);
-                        if (mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              backgroundColor: AppColors.success,
-                              content: Text(_loc.tr(
-                                'تم إرسال عرض السعر للزبون بنجاح ✓',
-                                'Price quote sent successfully ✓',
-                              )),
-                            ),
-                          );
-                        }
-                      } catch (e) {
-                        if (ctx.mounted) {
-                          setS(() => sending = false);
-                          ScaffoldMessenger.of(ctx).showSnackBar(
-                            SnackBar(
-                              backgroundColor: Colors.red,
-                              content: Text('$e'),
-                            ),
-                          );
-                        }
-                      }
-                    },
-              child: sending
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(
-                          color: Colors.white, strokeWidth: 2),
-                    )
-                  : Text(_loc.tr('إرسال العرض', 'Send Quote')),
-            ),
-          ],
         ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('إلغاء'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.orange,
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () async {
+              final amt = double.tryParse(ctrl.text.trim()) ?? 0.0;
+              if (amt <= 0) return;
+              try {
+                await _db
+                    .from('mechanic_requests')
+                    .update({
+                      'status': 'quoted',
+                      'progress_step': 'quote_sent',
+                      'mechanic_id': widget.profile.id,
+                      'total_amount': amt,
+                      'payment_status': 'unpaid',
+                    })
+                    .eq('id', r.id)
+                    .select('id');
+                if (r.userId != null) {
+                  await _notifs.sendNotification(
+                    targetUserId: r.userId!,
+                    title: 'وصلك عرض سعر جديد!',
+                    body:
+                        'عرض الفني مبلغ ${amt.toStringAsFixed(2)} د.أ لطلب الطوارئ — يمكنك القبول أو الرفض.',
+                    type: 'quote_received',
+                    referenceId: r.id,
+                  );
+                }
+                if (ctx.mounted) Navigator.pop(ctx);
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('تم إرسال عرض السعر بانتظار موافقة العميل ✓'),
+                      backgroundColor: AppColors.success,
+                    ),
+                  );
+                }
+              } catch (e) {
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('تعذر إرسال العرض: $e'),
+                      backgroundColor: Colors.red,
+                    ),
+                  );
+                }
+              }
+            },
+            child: const Text('إرسال العرض'),
+          ),
+        ],
       ),
     );
-    priceCtrl.dispose();
-    notesCtrl.dispose();
+    ctrl.dispose();
   }
 
-  /// إصدار فاتورة طلب الطوارئ مع قفل التحميل وإشعار فوري للزبون والميكانيكي
-  Future<void> _issueEmergencyInvoiceDialog(
-    DbMechanicRequest r,
-    bool showPayments,
-  ) async {
-    if (!showPayments) {
-      await _db.from('mechanic_requests').update({
-        'status': 'completed',
-        'progress_step': 'completed',
-      }).eq('id', r.id);
+  Future<void> _withdrawEmergencyQuote(DbMechanicRequest r) async {
+    try {
+      await _db
+          .from('mechanic_requests')
+          .update({
+            'status': 'pending',
+            'progress_step': 'pending',
+            'mechanic_id': null,
+            'total_amount': 0,
+            'payment_status': 'unpaid',
+          })
+          .eq('id', r.id)
+          .select('id');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('تم سحب العرض وإرجاع الطلب لقائمة الانتظار')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('خطأ: $e'), backgroundColor: Colors.red),
+        );
+      }
+    }
+  }
+
+  Future<void> _markEmergencyArrived(DbMechanicRequest r) async {
+    try {
+      await _db
+          .from('mechanic_requests')
+          .update({
+            'status': 'in_progress',
+            'progress_step': 'arrived_at_pickup',
+          })
+          .eq('id', r.id)
+          .select('id');
+      if (r.userId != null) {
+        await _tracker.markEmergencyArrived(
+          requestId: r.id,
+          customerUserId: r.userId!,
+          serviceType: r.serviceType,
+        );
+      }
+      _trackingRequestId = null;
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('تعذر التحديث: $e'), backgroundColor: Colors.red),
+        );
+      }
+    }
+  }
+
+  Future<void> _startEmergencyWork(DbMechanicRequest r) async {
+    final isWinch = r.serviceType == 'winch';
+    final nextStep = isWinch ? 'towing' : 'repairing';
+    try {
+      await _db
+          .from('mechanic_requests')
+          .update({'status': 'in_progress', 'progress_step': nextStep})
+          .eq('id', r.id)
+          .select('id');
       if (r.userId != null) {
         await _notifs.sendNotification(
           targetUserId: r.userId!,
-          title: 'تم إنهاء طلب الطوارئ بنجاح ✓',
-          body: 'شكراً لاستخدامك غيارك! يمكنك الآن تقييم مقدم الخدمة.',
-          type: 'order_completed',
+          title: isWinch ? 'بدأت عملية السحب' : 'بدأ الميكانيكي بالإصلاح',
+          body: isWinch
+              ? 'جاري سحب سيارتك الآن باتجاه الوجهة.'
+              : 'الميكانيكي يقوم الآن بإصلاح سيارتك في الموقع.',
+          type: 'order_update',
           referenceId: r.id,
         );
       }
+    } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            backgroundColor: AppColors.success,
-            content: Text(_loc.tr('تم إنهاء الطلب بنجاح ✓', 'Job completed ✓')),
-          ),
+          SnackBar(content: Text('تعذر التحديث: $e'), backgroundColor: Colors.red),
         );
       }
-      return;
     }
+  }
 
-    final initialAmt = r.totalAmount > 0 ? r.totalAmount : r.quotedPrice;
-    final amountCtrl = TextEditingController(
-      text: initialAmt > 0 ? initialAmt.toStringAsFixed(2) : '',
+  Future<void> _finishEmergencyAndIssueInvoice(DbMechanicRequest r) async {
+    final ctrl = TextEditingController(
+      text: r.totalAmount > 0 ? r.totalAmount.toStringAsFixed(2) : '',
     );
-    bool submitting = false;
-
-    await showDialog(
+    await showDialog<void>(
       context: context,
-      barrierDismissible: false,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setS) => AlertDialog(
-          title: Text(_loc.tr(
-            'إصدار فاتورة الطوارئ وإرسالها للزبون',
-            'Issue Emergency Invoice',
-          )),
-          content: TextField(
-            controller: amountCtrl,
-            enabled: !submitting,
-            keyboardType:
-                const TextInputType.numberWithOptions(decimal: true),
-            decoration: InputDecoration(
-              labelText: _loc.tr('المبلغ النهائي المطلوب (د.أ)',
-                  'Final Invoice Amount (JOD)'),
-            ),
+      builder: (ctx) => AlertDialog(
+        title: const Text('إنهاء العمل وإصدار الفاتورة النهائية'),
+        content: TextField(
+          controller: ctrl,
+          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          textInputAction: TextInputAction.done,
+          decoration: const InputDecoration(
+            labelText: 'قيمة الفاتورة النهائية (د.أ)',
           ),
-          actions: [
-            TextButton(
-              onPressed: submitting ? null : () => Navigator.pop(ctx),
-              child: Text(_loc.tr('إلغاء', 'Cancel')),
-            ),
-            ElevatedButton(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.orange,
-                foregroundColor: Colors.white,
-              ),
-              onPressed: submitting
-                  ? null
-                  : () async {
-                      final amt =
-                          double.tryParse(amountCtrl.text.trim()) ?? 0.0;
-                      if (amt <= 0) return;
-                      setS(() => submitting = true);
-                      try {
-                        await _db.from('mechanic_requests').update({
-                          'total_amount': amt,
-                          'progress_step': 'awaiting_payment',
-                          'invoice_issued_at':
-                              DateTime.now().toIso8601String(),
-                        }).eq('id', r.id);
-
-                        // إشعار فوري على هاتف الزبون
-                        if (r.userId != null) {
-                          await _notifs.sendNotification(
-                            targetUserId: r.userId!,
-                            title: 'تم إصدار الفاتورة — يرجى الدفع 🧾',
-                            body:
-                                'انتهت خدمة الطوارئ بقيمة ${amt.toStringAsFixed(2)} د.أ. يرجى إتمام الدفع الآن.',
-                            type: 'invoice_issued',
-                            referenceId: r.id,
-                          );
-                        }
-                        // إشعار تأكيد فوري على هاتف الميكانيكي
-                        await _notifs.sendNotification(
-                          targetUserId: widget.profile.id,
-                          title: 'تم إصدار الفاتورة بنجاح ✓',
-                          body:
-                              'تم إرسال فاتورة بقيمة ${amt.toStringAsFixed(2)} د.أ للزبون للدفع.',
-                          type: 'invoice_issued_confirm',
-                          referenceId: r.id,
-                        );
-
-                        if (ctx.mounted) Navigator.pop(ctx);
-                        if (mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              backgroundColor: AppColors.success,
-                              content: Text(_loc.tr(
-                                'تم إصدار الفاتورة بنجاح وإشعار الزبون للدفع ✓',
-                                'Invoice issued & customer notified ✓',
-                              )),
-                            ),
-                          );
-                        }
-                      } catch (e) {
-                        if (ctx.mounted) {
-                          setS(() => submitting = false);
-                          ScaffoldMessenger.of(ctx).showSnackBar(
-                            SnackBar(
-                              backgroundColor: Colors.red,
-                              content: Text('$e'),
-                            ),
-                          );
-                        }
-                      }
-                    },
-              child: submitting
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(
-                          color: Colors.white, strokeWidth: 2),
-                    )
-                  : Text(_loc.tr('إرسال الفاتورة الآن', 'Send Invoice')),
-            ),
-          ],
         ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('إلغاء'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.success,
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () async {
+              final finalAmt = double.tryParse(ctrl.text.trim()) ?? 0.0;
+              if (finalAmt <= 0) return;
+              try {
+                await _db
+                    .from('mechanic_requests')
+                    .update({
+                      'status': 'awaiting_payment',
+                      'progress_step': 'awaiting_payment',
+                      'total_amount': finalAmt,
+                      'payment_status': 'invoiced',
+                    })
+                    .eq('id', r.id)
+                    .select('id');
+                _tracker.stop();
+                _trackingRequestId = null;
+                if (r.userId != null) {
+                  await _notifs.sendNotification(
+                    targetUserId: r.userId!,
+                    title: 'انتهى العمل — صدرت الفاتورة النهائية',
+                    body:
+                        'قيمة الفاتورة ${finalAmt.toStringAsFixed(2)} د.أ — يرجى إتمام الدفع الآن.',
+                    type: 'invoice_issued',
+                    referenceId: r.id,
+                  );
+                }
+                if (ctx.mounted) Navigator.pop(ctx);
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('تم إصدار الفاتورة وإرسالها للعميل ✓'),
+                      backgroundColor: AppColors.success,
+                    ),
+                  );
+                }
+              } catch (e) {
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('خطأ: $e'),
+                      backgroundColor: Colors.red,
+                    ),
+                  );
+                }
+              }
+            },
+            child: const Text('إصدار الفاتورة'),
+          ),
+        ],
       ),
     );
-    amountCtrl.dispose();
+    ctrl.dispose();
   }
 
   Widget _buildAppointmentsTab() {
@@ -1099,17 +1207,15 @@ class _WorkshopEmergencyDashboardState
           .from('workshop_appointments')
           .stream(primaryKey: ['id'])
           .eq('workshop_id', widget.profile.id)
-          .order('created_at', ascending: false),
+          .order('created_at', ascending: false)
+          .limit(100),
       builder: (context, snap) {
         if (!snap.hasData) {
           return const Center(child: CircularProgressIndicator());
         }
         final list = snap.data!;
         if (list.isEmpty) {
-          return Center(
-            child: Text(_loc.tr('لا توجد مواعيد محجوزة حالياً',
-                'No workshop appointments yet')),
-          );
+          return const Center(child: Text('لا توجد مواعيد محجوزة حالياً'));
         }
         return ListView.builder(
           padding: const EdgeInsets.all(16),
@@ -1119,13 +1225,21 @@ class _WorkshopEmergencyDashboardState
             final date = a['appointment_date'] as String;
             final acceptedOnDate = list
                 .where(
-                    (x) => x['appointment_date'] == date && x['status'] == 'accepted')
+                  (x) =>
+                      x['appointment_date'] == date &&
+                      x['status'] == 'accepted',
+                )
                 .length;
             final isFull = acceptedOnDate >= widget.profile.maxCarCapacity;
-            final step = a['progress_step'] as String? ?? 'pending';
-            final invoiceIssued = step == 'awaiting_payment' ||
-                a['invoice_issued_at'] != null ||
-                a['payment_status'] == 'paid';
+            final statusStr = (a['status'] as String?) ?? '';
+            final stepStr = (a['progress_step'] as String?) ?? '';
+            final statusText = StatusLabels.appointment(
+              statusStr,
+              progressStep: stepStr,
+            );
+            final isAwaitingPay =
+                statusStr == 'awaiting_payment' ||
+                stepStr == 'awaiting_payment';
 
             return Card(
               margin: const EdgeInsets.only(bottom: 12),
@@ -1134,19 +1248,40 @@ class _WorkshopEmergencyDashboardState
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      '${a['appointment_date']} · ${a['appointment_time']}',
-                      style: const TextStyle(
-                          fontWeight: FontWeight.bold, fontSize: 15),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(
+                          '${a['appointment_date']} · ${a['appointment_time']}',
+                          style: const TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 15,
+                          ),
+                        ),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 4,
+                          ),
+                          decoration: BoxDecoration(
+                            color: AppColors.orangeLight,
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: Text(
+                            statusText,
+                            style: const TextStyle(
+                              color: AppColors.navy,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 11.5,
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
-                    Text(a['service_description'] ?? ''),
-                    Text(
-                      '${_loc.tr("الحالة", "Status")}: ${a['status']} | ${_loc.tr("المرحلة", "Step")}: $step',
-                      style: const TextStyle(
-                          color: AppColors.textSecondary, fontSize: 12),
-                    ),
+                    const SizedBox(height: 6),
+                    Text((a['service_description'] as String?) ?? ''),
                     const SizedBox(height: 10),
-                    if (a['status'] == 'pending')
+                    if (statusStr == 'pending')
                       Wrap(
                         spacing: 8,
                         runSpacing: 8,
@@ -1158,71 +1293,63 @@ class _WorkshopEmergencyDashboardState
                                 foregroundColor: Colors.white,
                               ),
                               onPressed: () => _acceptAppointment(a),
-                              child: Text(_loc.tr('قبول الموعد', 'Accept')),
+                              child: const Text('قبول الموعد'),
                             )
                           else
-                            Text(
-                              _loc.tr('الورشة ممتلئة لهذا اليوم!',
-                                  'Workshop full for this day!'),
-                              style: const TextStyle(
+                            const Text(
+                              'الورشة ممتلئة لهذا اليوم!',
+                              style: TextStyle(
                                 color: AppColors.orange,
                                 fontWeight: FontWeight.bold,
                               ),
                             ),
                           OutlinedButton(
                             onPressed: () => _proposeReschedule(a),
-                            child: Text(_loc.tr(
-                              'اقتراح موعد آخر',
-                              'Propose New Time',
-                            )),
+                            child: const Text('اقتراح موعد آخر'),
                           ),
                         ],
                       ),
-                    if (a['status'] == 'accepted') ...[
+                    if ((statusStr == 'accepted' ||
+                            statusStr == 'in_progress') &&
+                        !isAwaitingPay) ...[
                       const Divider(),
                       Wrap(
                         spacing: 6,
                         runSpacing: 6,
                         children: [
-                          _stepBtn(a, 'diagnosis', _loc.tr('فحص', 'Diagnosis')),
-                          _stepBtn(
-                              a, 'repairing', _loc.tr('قيد الإصلاح', 'Repair')),
-                          _stepBtn(
-                              a, 'testing', _loc.tr('فحص نهائي', 'Testing')),
-                          if (!invoiceIssued)
-                            ActionChip(
-                              backgroundColor: AppColors.orange,
-                              label: Text(
-                                showPayments
-                                    ? _loc.tr('جاهزة للتسليم + فاتورة',
-                                        'Car Ready + Issue Invoice')
-                                    : _loc.tr('جاهزة للتسليم', 'Car Ready'),
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                              onPressed: () => _finishAndBill(a),
-                            )
-                          else
-                            Chip(
-                              backgroundColor:
-                                  AppColors.success.withValues(alpha: 0.14),
-                              label: Text(
-                                _loc.tr(
-                                  'تم إصدار الفاتورة ✓ (${a['total_amount'] ?? 0} د.أ)',
-                                  'Invoice Issued ✓ (${a['total_amount'] ?? 0} JOD)',
-                                ),
-                                style: const TextStyle(
-                                  color: AppColors.success,
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 12,
-                                ),
-                              ),
+                          _stepBtn(a, 'diagnosis', 'فحص السيارة'),
+                          _stepBtn(a, 'repairing', 'قيد الإصلاح'),
+                          _stepBtn(a, 'testing', 'فحص نهائي'),
+                          ActionChip(
+                            backgroundColor: AppColors.orange,
+                            label: Text(
+                              showPayments
+                                  ? 'جاهزة للتسليم + فاتورة'
+                                  : 'جاهزة للتسليم',
+                              style: const TextStyle(color: Colors.white),
                             ),
+                            onPressed: () => _finishAndBill(a),
+                          ),
                         ],
                       ),
                     ],
+                    if (isAwaitingPay)
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: AppColors.navy.withValues(alpha: 0.08),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: Text(
+                          'صدرت الفاتورة بقيمة ${((a['total_amount'] as num?) ?? 0).toDouble().toStringAsFixed(2)} د.أ — بانتظار دفع الزبون.',
+                          style: const TextStyle(
+                            color: AppColors.navy,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 12.5,
+                          ),
+                        ),
+                      ),
                   ],
                 ),
               ),
@@ -1239,84 +1366,78 @@ class _WorkshopEmergencyDashboardState
       label: Text(label),
       selected: active,
       selectedColor: AppColors.navy,
-      labelStyle:
-          TextStyle(color: active ? Colors.white : AppColors.textPrimary),
+      labelStyle: TextStyle(
+        color: active ? Colors.white : AppColors.textPrimary,
+      ),
       onSelected: (_) async {
-        await _db
-            .from('workshop_appointments')
-            .update({'progress_step': stepKey}).eq('id', appt['id']);
-        // إشعار العميل بتحديث مرحلة صيانة سيارته
-        if (appt['user_id'] != null) {
-          await _notifs.sendNotification(
-            targetUserId: appt['user_id'],
-            title: 'تحديث حالة صيانة سيارتك 🔧',
-            body: 'المرحلة الحالية في الورشة: $label.',
-            type: 'workshop_step',
-            referenceId: appt['id'],
-          );
-        }
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              backgroundColor: AppColors.navy,
-              content: Text(_loc.tr(
-                'تم تحديث المرحلة إلى ($label) وإشعار العميل ✓',
-                'Updated step to ($label) & notified customer ✓',
-              )),
-            ),
-          );
+        try {
+          await _db
+              .from('workshop_appointments')
+              .update({'status': 'in_progress', 'progress_step': stepKey})
+              .eq('id', appt['id'])
+              .select('id');
+          if (appt['user_id'] != null) {
+            await _notifs.sendNotification(
+              targetUserId: appt['user_id'] as String,
+              title: 'تحديث حالة سيارتك في الورشة',
+              body: 'أصبحت سيارتك الآن في مرحلة: $label',
+              type: 'appointment_update',
+              referenceId: appt['id'] as String,
+            );
+          }
+        } catch (e) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('تعذر التحديث: $e'),
+                backgroundColor: Colors.red,
+              ),
+            );
+          }
         }
       },
     );
   }
 
   Future<void> _acceptAppointment(Map<String, dynamic> a) async {
-    try {
-      await _db.from('workshop_appointments').update({
-        'status': 'accepted',
-        'progress_step': 'on_the_way',
-      }).eq('id', a['id']);
-
-      await _notifs.sendNotification(
-        targetUserId: a['user_id'],
-        title: 'تم قبول موعد الورشة ✅',
-        body:
-            'موعدك مؤكد بتاريخ ${a['appointment_date']} الساعة ${a['appointment_time']}.',
-        type: 'order_accepted',
-        referenceId: a['id'],
-      );
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            backgroundColor: AppColors.success,
-            content: Text(_loc.tr(
-                'تم قبول الموعد وإشعار العميل ✓', 'Appointment accepted ✓')),
-          ),
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(backgroundColor: Colors.red, content: Text('$e')),
-        );
-      }
-    }
+    await _db
+        .from('workshop_appointments')
+        .update({'status': 'accepted', 'progress_step': 'on_the_way'})
+        .eq('id', a['id'])
+        .select('id');
+    await _notifs.sendNotification(
+      targetUserId: a['user_id'] as String,
+      title: 'تم قبول موعد الورشة',
+      body:
+          'موعدك مؤكد بتاريخ ${a['appointment_date']} الساعة ${a['appointment_time']}.',
+      type: 'order_accepted',
+      referenceId: a['id'] as String,
+    );
   }
 
   Future<void> _proposeReschedule(Map<String, dynamic> a) async {
     final hours = [
-      '08:00 ص', '09:00 ص', '10:00 ص', '11:00 ص',
-      '12:00 م', '01:00 م', '02:00 م', '03:00 م',
-      '04:00 م', '05:00 م', '06:00 م', '07:00 م',
+      '08:00 ص',
+      '09:00 ص',
+      '10:00 ص',
+      '11:00 ص',
+      '12:00 م',
+      '01:00 م',
+      '02:00 م',
+      '03:00 م',
+      '04:00 م',
+      '05:00 م',
+      '06:00 م',
+      '07:00 م',
     ];
     String chosenHour = hours.first;
     DateTime chosenDate = DateTime.now();
 
-    await showDialog(
+    await showDialog<void>(
       context: context,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setS) => AlertDialog(
-          title: Text(_loc.tr('اقتراح موعد بديل للزبون', 'Propose New Slot')),
+          title: const Text('اقتراح موعد بديل للزبون'),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -1331,7 +1452,8 @@ class _WorkshopEmergencyDashboardState
                   if (d != null) setS(() => chosenDate = d);
                 },
                 child: Text(
-                    '${_loc.tr("التاريخ", "Date")}: ${chosenDate.toString().split(' ').first}'),
+                  'التاريخ: ${chosenDate.toString().split(' ').first}',
+                ),
               ),
               DropdownButton<String>(
                 value: chosenHour,
@@ -1346,21 +1468,24 @@ class _WorkshopEmergencyDashboardState
             ElevatedButton(
               onPressed: () async {
                 final dateStr = chosenDate.toString().split(' ').first;
-                await _db.from('workshop_appointments').update({
-                  'status': 'reschedule_proposed',
-                  'proposed_date': dateStr,
-                  'proposed_time': chosenHour,
-                }).eq('id', a['id']);
+                await _db
+                    .from('workshop_appointments')
+                    .update({
+                      'status': 'reschedule_proposed',
+                      'proposed_date': dateStr,
+                      'proposed_time': chosenHour,
+                    })
+                    .eq('id', a['id']);
                 await _notifs.sendNotification(
-                  targetUserId: a['user_id'],
-                  title: 'تم اقتراح موعد بديل للورشة 📅',
+                  targetUserId: a['user_id'] as String,
+                  title: 'تم اقتراح موعد بديل للورشة',
                   body: 'تقترح الورشة موعداً جديداً: $dateStr الساعة $chosenHour.',
                   type: 'reschedule_proposed',
-                  referenceId: a['id'],
+                  referenceId: a['id'] as String,
                 );
                 if (ctx.mounted) Navigator.pop(ctx);
               },
-              child: Text(_loc.tr('إرسال الاقتراح', 'Send Proposal')),
+              child: const Text('إرسال الاقتراح'),
             ),
           ],
         ),
@@ -1368,237 +1493,72 @@ class _WorkshopEmergencyDashboardState
     );
   }
 
-  /// إنهاء الصيانة وإصدار الفاتورة مع قفل التحميل وتأكيد وإشعارات للهاتف (الزبون + الميكانيكي)
   Future<void> _finishAndBill(Map<String, dynamic> a) async {
     if (!EnvConfig.paymentsEnabled.value) {
-      await _db.from('workshop_appointments').update({
-        'status': 'completed',
-        'progress_step': 'completed',
-      }).eq('id', a['id']);
+      await _db
+          .from('workshop_appointments')
+          .update({'status': 'completed', 'progress_step': 'completed'})
+          .eq('id', a['id']);
       await _notifs.sendNotification(
-        targetUserId: a['user_id'],
-        title: 'سيارتك جاهزة للتسليم! 🚗',
+        targetUserId: a['user_id'] as String,
+        title: 'سيارتك جاهزة للتسليم!',
         body: 'انتهى تصليح السيارة في الورشة ويمكنك استلامها الآن.',
         type: 'car_ready',
-        referenceId: a['id'],
+        referenceId: a['id'] as String,
       );
-      await _notifs.sendNotification(
-        targetUserId: widget.profile.id,
-        title: 'تم إنهاء الطلب بنجاح ✓',
-        body: 'تم إشعار العميل بأن سيارته جاهزة للاستلام.',
-        type: 'car_ready_confirm',
-        referenceId: a['id'],
-      );
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            backgroundColor: AppColors.success,
-            content: Text(_loc.tr(
-              'تم تأكيد جاهزية السيارة وإرسال الإشعار للعميل ✓',
-              'Car marked ready & customer notified ✓',
-            )),
-          ),
-        );
-      }
       return;
     }
 
     final amountCtrl = TextEditingController();
-    bool submitting = false;
-
-    await showDialog(
+    await showDialog<void>(
       context: context,
-      barrierDismissible: false,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setS) => AlertDialog(
-          title: Text(_loc.tr(
-            'إنهاء الصيانة وإصدار الفاتورة',
-            'Finish Repair & Issue Invoice',
-          )),
-          content: TextField(
-            controller: amountCtrl,
-            enabled: !submitting,
-            keyboardType:
-                const TextInputType.numberWithOptions(decimal: true),
-            decoration: InputDecoration(
-              labelText:
-                  _loc.tr('أدخل المبلغ المطلوب (د.أ)', 'Invoice Amount (JOD)'),
-            ),
+      builder: (ctx) => AlertDialog(
+        title: const Text('إنهاء الصيانة وإصدار الفاتورة'),
+        content: TextField(
+          controller: amountCtrl,
+          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          textInputAction: TextInputAction.done,
+          decoration: const InputDecoration(
+            labelText: 'أدخل المبلغ المطلوب (د.أ)',
           ),
-          actions: [
-            TextButton(
-              onPressed: submitting ? null : () => Navigator.pop(ctx),
-              child: Text(_loc.tr('إلغاء', 'Cancel')),
-            ),
-            ElevatedButton(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.orange,
-                foregroundColor: Colors.white,
-              ),
-              onPressed: submitting
-                  ? null
-                  : () async {
-                      final amt =
-                          double.tryParse(amountCtrl.text.trim()) ?? 0.0;
-                      if (amt <= 0) {
-                        ScaffoldMessenger.of(ctx).showSnackBar(
-                          SnackBar(
-                            backgroundColor: Colors.red,
-                            content: Text(_loc.tr(
-                              'يرجى إدخال مبلغ صحيح أكبر من صفر',
-                              'Enter a valid invoice amount',
-                            )),
-                          ),
-                        );
-                        return;
-                      }
-                      setS(() => submitting = true);
-                      try {
-                        await _db.from('workshop_appointments').update({
-                          'total_amount': amt,
-                          'progress_step': 'awaiting_payment',
-                          'invoice_issued_at':
-                              DateTime.now().toIso8601String(),
-                        }).eq('id', a['id']);
-
-                        // إشعار فوري على هاتف الزبون
-                        await _notifs.sendNotification(
-                          targetUserId: a['user_id'],
-                          title: 'تم إصدار الفاتورة — يرجى الدفع 🧾',
-                          body:
-                              'سيارتك جاهزة للتسليم! قيمة الفاتورة ${amt.toStringAsFixed(2)} د.أ — يرجى إتمام الدفع الآن.',
-                          type: 'car_ready',
-                          referenceId: a['id'],
-                        );
-
-                        // إشعار تأكيد فوري على هاتف الميكانيكي
-                        await _notifs.sendNotification(
-                          targetUserId: widget.profile.id,
-                          title: 'تم إصدار الفاتورة بنجاح ✓',
-                          body:
-                              'تم إرسال فاتورة بقيمة ${amt.toStringAsFixed(2)} د.أ إلى العميل للدفع.',
-                          type: 'invoice_issued_confirm',
-                          referenceId: a['id'],
-                        );
-
-                        if (ctx.mounted) Navigator.pop(ctx);
-                        if (mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              backgroundColor: AppColors.success,
-                              content: Text(_loc.tr(
-                                'تم إصدار الفاتورة بنجاح وإرسال إشعار للزبون للدفع ✓',
-                                'Invoice issued successfully & customer notified ✓',
-                              )),
-                            ),
-                          );
-                        }
-                      } catch (e) {
-                        if (ctx.mounted) {
-                          setS(() => submitting = false);
-                          ScaffoldMessenger.of(ctx).showSnackBar(
-                            SnackBar(
-                              backgroundColor: Colors.red,
-                              content: Text('$e'),
-                            ),
-                          );
-                        }
-                      }
-                    },
-              child: submitting
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(
-                          color: Colors.white, strokeWidth: 2),
-                    )
-                  : Text(_loc.tr('إرسال الفاتورة للزبون', 'Send Invoice')),
-            ),
-          ],
         ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('إلغاء'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.orange,
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () async {
+              final amt = double.tryParse(amountCtrl.text.trim()) ?? 0.0;
+              if (amt <= 0) return;
+              await _db
+                  .from('workshop_appointments')
+                  .update({
+                    'status': 'awaiting_payment',
+                    'total_amount': amt,
+                    'progress_step': 'awaiting_payment',
+                    'payment_status': 'invoiced',
+                  })
+                  .eq('id', a['id']);
+              await _notifs.sendNotification(
+                targetUserId: a['user_id'] as String,
+                title: 'سيارتك جاهزة للتسليم!',
+                body:
+                    'انتهى تصليح السيارة، قيمة الفاتورة ${amt.toStringAsFixed(2)} د.أ.',
+                type: 'car_ready',
+                referenceId: a['id'] as String,
+              );
+              if (ctx.mounted) Navigator.pop(ctx);
+            },
+            child: const Text('إرسال الفاتورة للزبون'),
+          ),
+        ],
       ),
     );
     amountCtrl.dispose();
-  }
-
-  Widget _buildWalletTab() {
-    return StreamBuilder<List<Map<String, dynamic>>>(
-      stream: _db
-          .from('wallet_transactions')
-          .stream(primaryKey: ['id'])
-          .eq('provider_id', widget.profile.id)
-          .order('created_at', ascending: false),
-      builder: (context, snap) {
-        final txs = (snap.data ?? [])
-            .where((t) => _inPeriod(t['created_at'] as String?))
-            .map(DbWalletTransaction.fromMap)
-            .toList();
-        final gross = txs.fold(0.0, (s, t) => s + t.grossAmount);
-        final comm = txs.fold(0.0, (s, t) => s + t.commissionAmount);
-        final net = txs.fold(0.0, (s, t) => s + t.netAmount);
-        return ListView(
-          padding: const EdgeInsets.all(16),
-          children: [
-            DateRangeFilterBar(
-              period: _period,
-              customRange: _customRange,
-              onChanged: (p, r) => setState(() {
-                _period = p;
-                _customRange = r;
-              }),
-            ),
-            const SizedBox(height: 12),
-            Card(
-              color: AppColors.navy,
-              child: Padding(
-                padding: const EdgeInsets.all(18),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      _loc.tr('صافي الرصيد في المحفظة (بعد العمولة)',
-                          'Net Wallet Balance'),
-                      style: const TextStyle(color: Colors.white70),
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      '${net.toStringAsFixed(2)} ${_loc.tr("د.أ", "JOD")}',
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 26,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                    Text(
-                      '${_loc.tr("قبل العمولة", "Gross")}: ${gross.toStringAsFixed(2)} | ${_loc.tr("العمولات", "Fees")}: ${comm.toStringAsFixed(2)}',
-                      style:
-                          const TextStyle(color: Colors.white70, fontSize: 12),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            const SizedBox(height: 16),
-            ...txs.map((t) => Card(
-                  child: ListTile(
-                    title: Text('${t.transactionType} · ${t.paymentMethod}'),
-                    subtitle: Text(
-                      '${_loc.tr("الإجمالي", "Gross")}: ${t.grossAmount.toStringAsFixed(2)} | ${_loc.tr("العمولة", "Fee")}: -${t.commissionAmount.toStringAsFixed(2)}',
-                    ),
-                    trailing: Text(
-                      '+${t.netAmount.toStringAsFixed(2)} ${_loc.tr("د.أ", "JOD")}',
-                      style: const TextStyle(
-                        color: AppColors.success,
-                        fontWeight: FontWeight.bold,
-                        fontSize: 15,
-                      ),
-                    ),
-                  ),
-                )),
-          ],
-        );
-      },
-    );
   }
 }

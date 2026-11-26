@@ -317,7 +317,6 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
     required int maxLimit,
     required String currentPlanCode,
   }) async {
-    final showSubs = EnvConfig.subscriptionsEnabled.value;
     await showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -369,7 +368,7 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
             Text(
               _loc.tr(
                 'اشترك بإحدى باقات المزودين لزيادة عدد منشوراتك، وتقليل العمولة، وتصدر نتائج البحث في المتجر.',
-                'Upgrade your provider plan for more listings, lower commission, and higher search visibility.',
+                'Upgrade your provider plan to get more listings, lower commission, and higher search visibility.',
               ),
               textAlign: TextAlign.center,
               style: const TextStyle(
@@ -379,40 +378,37 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
               ),
             ),
             const SizedBox(height: 18),
-            if (showSubs)
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton.icon(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.orange,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14),
-                    ),
-                  ),
-                  onPressed: () {
-                    Navigator.pop(ctx);
-                    Navigator.push(
-                      context,
-                      animatedRoute(
-                        ProviderSubscriptionsScreen(
-                          currentPlanCode: currentPlanCode,
-                          onSubscribed: widget.onRefreshProfile,
-                        ),
-                      ),
-                    );
-                  },
-                  icon: const Icon(Icons.rocket_launch),
-                  label: Text(
-                    _loc.tr('استعراض الباقات والاشتراك الآن', 'View Plans'),
-                    style: const TextStyle(
-                      fontWeight: FontWeight.bold,
-                      fontSize: 15,
-                    ),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.orange,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
                   ),
                 ),
+                onPressed: () {
+                  Navigator.pop(ctx);
+                  Navigator.push(
+                    context,
+                    animatedRoute(
+                      ProviderSubscriptionsScreen(
+                        currentPlanCode: currentPlanCode,
+                        onSubscribed: widget.onRefreshProfile,
+                      ),
+                    ),
+                  );
+                },
+                icon: const Icon(Icons.rocket_launch),
+                label: Text(
+                  _loc.tr('استعراض الباقات والاشتراك الآن', 'View Plans'),
+                  style: const TextStyle(
+                      fontWeight: FontWeight.bold, fontSize: 15),
+                ),
               ),
+            ),
             const SizedBox(height: 8),
             TextButton(
               onPressed: () => Navigator.pop(ctx),
@@ -461,7 +457,8 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
                 controller: currentPassCtrl,
                 obscureText: true,
                 decoration: InputDecoration(
-                  labelText: _loc.tr('كلمة المرور الحالية', 'Current Password'),
+                  labelText:
+                      _loc.tr('كلمة المرور الحالية', 'Current Password'),
                 ),
               ),
               const SizedBox(height: 10),
@@ -517,7 +514,9 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
                       try {
                         final email = widget.profile?.email ??
                             _db.auth.currentUser?.email;
-                        if (email == null) throw Exception('Email unavailable');
+                        if (email == null) {
+                          throw Exception('Email unavailable');
+                        }
                         await _db.auth.signInWithPassword(
                           email: email,
                           password: currentPassCtrl.text,
@@ -605,6 +604,8 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
         ];
 
         final safeIndex = _index.clamp(0, pages.length - 1);
+        final bool isEmergencyTab = safeIndex == 2;
+        final bool showAddFab = canPublish && !isEmergencyTab;
 
         return Scaffold(
           key: _scaffoldKey,
@@ -619,53 +620,56 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
                   child: pages[safeIndex],
                 ),
               ),
-              Positioned(
-                left: 14,
-                bottom: 20,
-                child: BounceTap(
-                  onTap: () => showAiDiagnosticSheet(context,
-                      viewerProfile: widget.profile),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 14, vertical: 10),
-                    decoration: BoxDecoration(
-                      gradient: const LinearGradient(
-                        colors: [AppColors.navy, Color(0xFF1F2D3D)],
-                        begin: Alignment.topRight,
-                        end: Alignment.bottomLeft,
-                      ),
-                      borderRadius: BorderRadius.circular(28),
-                      border: Border.all(color: AppColors.orange, width: 1.5),
-                      boxShadow: [
-                        BoxShadow(
-                          color: AppColors.navy.withValues(alpha: 0.32),
-                          blurRadius: 12,
-                          offset: const Offset(0, 4),
+
+              // إخفاء زر فحص AI العائم في شاشة الطوارئ لمنع تغطية أزرار القبول/الرفض/الفاتورة
+              if (!isEmergencyTab)
+                Positioned(
+                  left: 14,
+                  bottom: 20,
+                  child: BounceTap(
+                    onTap: () => showAiDiagnosticSheet(context,
+                        viewerProfile: widget.profile),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 14, vertical: 10),
+                      decoration: BoxDecoration(
+                        gradient: const LinearGradient(
+                          colors: [AppColors.navy, Color(0xFF1F2D3D)],
+                          begin: Alignment.topRight,
+                          end: Alignment.bottomLeft,
                         ),
-                      ],
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const Icon(Icons.auto_awesome,
-                            color: AppColors.orange, size: 19),
-                        const SizedBox(width: 6),
-                        Text(
-                          _loc.tr('فحص AI', 'AI Check'),
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 13,
+                        borderRadius: BorderRadius.circular(28),
+                        border: Border.all(color: AppColors.orange, width: 1.5),
+                        boxShadow: [
+                          BoxShadow(
+                            color: AppColors.navy.withValues(alpha: 0.32),
+                            blurRadius: 12,
+                            offset: const Offset(0, 4),
                           ),
-                        ),
-                      ],
+                        ],
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(Icons.auto_awesome,
+                              color: AppColors.orange, size: 19),
+                          const SizedBox(width: 6),
+                          Text(
+                            _loc.tr('فحص AI', 'AI Check'),
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 13,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                 ),
-              ),
             ],
           ),
-          floatingActionButton: canPublish
+          floatingActionButton: showAddFab
               ? SizedBox(
                   width: 54,
                   height: 54,
@@ -699,9 +703,9 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
             elevation: 10,
             height: 66,
             padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
-            shape: canPublish ? const CircularNotchedRectangle() : null,
+            shape: showAddFab ? const CircularNotchedRectangle() : null,
             notchMargin: 7,
-            child: canPublish
+            child: showAddFab
                 ? Row(
                     children: [
                       Expanded(
@@ -760,7 +764,6 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
     final isProvider =
         role == 'merchant' || role == 'mechanic' || role == 'towing';
     final showPayments = EnvConfig.paymentsEnabled.value;
-    final showSubscriptions = EnvConfig.subscriptionsEnabled.value;
     final showWinch = EnvConfig.winchEnabled.value;
 
     final displayName = isLoggedIn
@@ -776,7 +779,6 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
       isAdmin: isAdmin,
       role: role,
       showPayments: showPayments,
-      showSubscriptions: showSubscriptions,
       showWinch: showWinch,
     );
 
@@ -1036,8 +1038,11 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
                         ],
                       ),
                     ),
-                    const Icon(Icons.arrow_forward_ios,
-                        color: Colors.white54, size: 16),
+                    const Icon(
+                      Icons.arrow_forward_ios,
+                      color: Colors.white54,
+                      size: 16,
+                    ),
                   ],
                 ),
               ),
@@ -1179,7 +1184,6 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
     required bool isAdmin,
     required String role,
     required bool showPayments,
-    required bool showSubscriptions,
     required bool showWinch,
   }) {
     void openChats() {
@@ -1210,8 +1214,10 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
       return [
         _ShortcutItem(
           title: _loc.tr('لوحة السوبر أدمن', 'Admin Panel'),
-          subtitle: _loc.tr('التسعيرات، الحسابات، الإعلانات والمالية',
-              'Pricing, accounts, ads & finance'),
+          subtitle: _loc.tr(
+            'التسعيرات، الحسابات، الإعلانات والمالية',
+            'Pricing, accounts, ads & finance',
+          ),
           icon: Icons.admin_panel_settings_outlined,
           iconColor: AppColors.orange,
           iconBg: AppColors.orange.withValues(alpha: 0.16),
@@ -1220,8 +1226,8 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
         ),
         _ShortcutItem(
           title: _loc.tr('قطع الغيار والمخزون', 'Parts & Inventory'),
-          subtitle: _loc.tr('إدارة القطع، الإخفاء والخصومات',
-              'Manage listings & discounts'),
+          subtitle: _loc.tr(
+              'إدارة القطع، الإخفاء والخصومات', 'Manage listings & discounts'),
           icon: Icons.inventory_2_outlined,
           iconColor: const Color(0xFF334155),
           iconBg: const Color(0xFFE2E8F0),
@@ -1269,28 +1275,27 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
       return [
         _ShortcutItem(
           title: _loc.tr('لوحة الورشة والطوارئ', 'Workshop Dashboard'),
-          subtitle: _loc.tr('استقبال المواعيد وطلبات الإنقاذ',
-              'Manage bookings & SOS'),
+          subtitle: _loc.tr(
+              'استقبال المواعيد وطلبات الإنقاذ', 'Manage bookings & SOS'),
           icon: Icons.build_circle_outlined,
           iconColor: AppColors.orange,
           iconBg: AppColors.orange.withValues(alpha: 0.16),
           highlighted: true,
           onTap: () => _openDashboardForRole(p),
         ),
-        if (showPayments)
-          _ShortcutItem(
-            title: _loc.tr('المحفظة والعمولات', 'Wallet & Payouts'),
-            subtitle: _loc.tr('سحب الأرباح ودفع عمولة التطبيق',
-                'Withdraw earnings & settle fees'),
-            icon: Icons.account_balance_wallet_outlined,
-            iconColor: const Color(0xFF0F766E),
-            iconBg: const Color(0xFFCCFBF1),
-            onTap: () => _openProviderWallet(p),
-          ),
+        _ShortcutItem(
+          title: _loc.tr('المحفظة والعمولات', 'Wallet & Payouts'),
+          subtitle: _loc.tr('سحب الأرباح ودفع عمولة التطبيق',
+              'Withdraw earnings & settle fees'),
+          icon: Icons.account_balance_wallet_outlined,
+          iconColor: const Color(0xFF0F766E),
+          iconBg: const Color(0xFFCCFBF1),
+          onTap: () => _openProviderWallet(p),
+        ),
         _ShortcutItem(
           title: _loc.tr('قطع الغيار والمخزون', 'Parts & Inventory'),
-          subtitle: _loc.tr('إدارة القطع، الإخفاء والخصومات',
-              'Manage parts & offers'),
+          subtitle: _loc.tr(
+              'إدارة القطع، الإخفاء والخصومات', 'Manage parts & offers'),
           icon: Icons.inventory_2_outlined,
           iconColor: const Color(0xFF334155),
           iconBg: const Color(0xFFE2E8F0),
@@ -1306,18 +1311,18 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
           onTap: _handleAddProductTap,
         ),
         _ShortcutItem(
-          title: showSubscriptions
+          title: showPayments
               ? _loc.tr('الباقات والاشتراكات', 'Subscription Plans')
               : _loc.tr('متجر قطع الغيار', 'Parts Store'),
-          subtitle: showSubscriptions
+          subtitle: showPayments
               ? _loc.tr('تصدر نتائج البحث وعمولة أقل', 'Lower commission')
               : _loc.tr('شراء قطع لسيارات الزبائن', 'Browse parts'),
-          icon: showSubscriptions
+          icon: showPayments
               ? Icons.workspace_premium_outlined
               : Icons.storefront_outlined,
           iconColor: const Color(0xFFD97706),
           iconBg: const Color(0xFFFEF3C7),
-          onTap: showSubscriptions
+          onTap: showPayments
               ? openProviderPlans
               : () => setState(() => _index = 1),
         ),
@@ -1338,24 +1343,23 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
       return [
         _ShortcutItem(
           title: _loc.tr('قطع الغيار والمخزون', 'My Inventory'),
-          subtitle: _loc.tr('إدارة القطع، الإخفاء والخصومات',
-              'Manage parts & discounts'),
+          subtitle: _loc.tr(
+              'إدارة القطع، الإخفاء والخصومات', 'Manage parts & discounts'),
           icon: Icons.inventory_2_outlined,
           iconColor: AppColors.orange,
           iconBg: AppColors.orange.withValues(alpha: 0.16),
           highlighted: true,
           onTap: () => _openDashboardForRole(p),
         ),
-        if (showPayments)
-          _ShortcutItem(
-            title: _loc.tr('محفظة التاجر والعمولات', 'Merchant Wallet'),
-            subtitle: _loc.tr('سحب الأرباح ودفع عمولة التطبيق',
-                'Withdraw earnings & settle fees'),
-            icon: Icons.account_balance_wallet_outlined,
-            iconColor: const Color(0xFF0F766E),
-            iconBg: const Color(0xFFCCFBF1),
-            onTap: () => _openProviderWallet(p),
-          ),
+        _ShortcutItem(
+          title: _loc.tr('محفظة التاجر والعمولات', 'Merchant Wallet'),
+          subtitle: _loc.tr('سحب الأرباح ودفع عمولة التطبيق',
+              'Withdraw earnings & settle fees'),
+          icon: Icons.account_balance_wallet_outlined,
+          iconColor: const Color(0xFF0F766E),
+          iconBg: const Color(0xFFCCFBF1),
+          onTap: () => _openProviderWallet(p),
+        ),
         _ShortcutItem(
           title: _loc.tr('إضافة قطعة غيار', 'Add Spare Part'),
           subtitle: _loc.tr('نشر قطعة جديدة في المتجر', 'List a new part'),
@@ -1373,18 +1377,18 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
           onTap: () => setState(() => _index = 1),
         ),
         _ShortcutItem(
-          title: showSubscriptions
+          title: showPayments
               ? _loc.tr('الباقات والاشتراكات', 'Subscription Plans')
               : _loc.tr('مواعيد الورش', 'Workshop Bookings'),
-          subtitle: showSubscriptions
+          subtitle: showPayments
               ? _loc.tr('زيادة حد المنشورات وتصدر البحث', 'Boost visibility')
               : _loc.tr('حجوزات ومواعيد الصيانة', 'Maintenance bookings'),
-          icon: showSubscriptions
+          icon: showPayments
               ? Icons.workspace_premium_outlined
               : Icons.event_note_outlined,
           iconColor: const Color(0xFFD97706),
           iconBg: const Color(0xFFFEF3C7),
-          onTap: showSubscriptions
+          onTap: showPayments
               ? openProviderPlans
               : () => setState(() => _index = 3),
         ),
@@ -1412,16 +1416,15 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
           highlighted: true,
           onTap: () => _openDashboardForRole(p),
         ),
-        if (showPayments)
-          _ShortcutItem(
-            title: _loc.tr('المحفظة والعمولات', 'Wallet & Payouts'),
-            subtitle: _loc.tr('سحب الأرباح ودفع عمولة التطبيق',
-                'Withdraw earnings & settle fees'),
-            icon: Icons.account_balance_wallet_outlined,
-            iconColor: const Color(0xFF0F766E),
-            iconBg: const Color(0xFFCCFBF1),
-            onTap: () => _openProviderWallet(p),
-          ),
+        _ShortcutItem(
+          title: _loc.tr('المحفظة والعمولات', 'Wallet & Payouts'),
+          subtitle: _loc.tr('سحب الأرباح ودفع عمولة التطبيق',
+              'Withdraw earnings & settle fees'),
+          icon: Icons.account_balance_wallet_outlined,
+          iconColor: const Color(0xFF0F766E),
+          iconBg: const Color(0xFFCCFBF1),
+          onTap: () => _openProviderWallet(p),
+        ),
         _ShortcutItem(
           title: _loc.tr('إضافة قطعة غيار', 'Add Spare Part'),
           subtitle: _loc.tr('نشر قطعة للبيع في المتجر', 'List a part'),
@@ -1439,18 +1442,18 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
           onTap: () => setState(() => _index = 1),
         ),
         _ShortcutItem(
-          title: showSubscriptions
+          title: showPayments
               ? _loc.tr('الباقات والاشتراكات', 'Plans')
               : _loc.tr('الدعم الفني', 'Support'),
-          subtitle: showSubscriptions
+          subtitle: showPayments
               ? _loc.tr('عمولة أقل وظهور مميز', 'Lower fees & boost')
               : _loc.tr('المساعدة على مدار الساعة', '24/7 help'),
-          icon: showSubscriptions
+          icon: showPayments
               ? Icons.workspace_premium_outlined
               : Icons.support_agent,
           iconColor: const Color(0xFFD97706),
           iconBg: const Color(0xFFFEF3C7),
-          onTap: showSubscriptions ? openProviderPlans : _openSupportScreen,
+          onTap: showPayments ? openProviderPlans : _openSupportScreen,
         ),
         _ShortcutItem(
           title: _loc.tr('الدردشات', 'Chats'),
@@ -1468,8 +1471,8 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
     return [
       _ShortcutItem(
         title: _loc.tr('متجر قطع الغيار', 'Parts Store'),
-        subtitle: _loc.tr('ابحث وتواصل مباشرة مع التجار',
-            'Search & contact merchants'),
+        subtitle: _loc.tr(
+            'ابحث وتواصل مباشرة مع التجار', 'Search & contact merchants'),
         icon: Icons.storefront_outlined,
         iconColor: AppColors.orange,
         iconBg: AppColors.orange.withValues(alpha: 0.16),
@@ -1480,8 +1483,7 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
         title: showWinch
             ? _loc.tr('طوارئ / ونش وميكانيكي', 'Emergency & Tow')
             : _loc.tr('ميكانيكي طوارئ', 'Emergency Mechanic'),
-        subtitle:
-            _loc.tr('مساعدة فورية على الطريق', 'Instant roadside rescue'),
+        subtitle: _loc.tr('مساعدة فورية على الطريق', 'Instant roadside rescue'),
         icon: Icons.car_crash_outlined,
         iconColor: const Color(0xFFDC2626),
         iconBg: const Color(0xFFFEE2E2),
@@ -1496,16 +1498,15 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
         iconBg: const Color(0xFFDCFCE7),
         onTap: () => setState(() => _index = 3),
       ),
-      if (showPayments)
-        _ShortcutItem(
-          title: _loc.tr('المدفوعات وسجل الدفعات', 'Payment History'),
-          subtitle:
-              _loc.tr('مراجعة فواتيرك وجميع مدفوعاتك', 'Review all invoices'),
-          icon: Icons.receipt_long_outlined,
-          iconColor: const Color(0xFF0F766E),
-          iconBg: const Color(0xFFCCFBF1),
-          onTap: () => _openCustomerPayments(p),
-        ),
+      _ShortcutItem(
+        title: _loc.tr('المدفوعات وسجل الدفعات', 'Payment History'),
+        subtitle:
+            _loc.tr('مراجعة فواتيرك وجميع مدفوعاتك', 'Review all invoices'),
+        icon: Icons.receipt_long_outlined,
+        iconColor: const Color(0xFF0F766E),
+        iconBg: const Color(0xFFCCFBF1),
+        onTap: () => _openCustomerPayments(p),
+      ),
       _ShortcutItem(
         title: _loc.tr('فحص الأعطال بالـ AI', 'AI Diagnostics'),
         subtitle:
@@ -1517,19 +1518,19 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
             showAiDiagnosticSheet(context, viewerProfile: widget.profile),
       ),
       _ShortcutItem(
-        title: showSubscriptions
+        title: showPayments
             ? _loc.tr('الباقات والاشتراكات', 'Membership Plans')
             : _loc.tr('الدعم الفني', 'Support'),
-        subtitle: showSubscriptions
+        subtitle: showPayments
             ? _loc.tr('مزايا وخصومات حصرية', 'Exclusive perks & 0% fee')
             : _loc.tr('فريق الدعم جاهز لمساعدتك', 'We are here to help'),
-        icon: showSubscriptions
+        icon: showPayments
             ? Icons.workspace_premium_outlined
             : Icons.support_agent,
         iconColor: const Color(0xFFD97706),
         iconBg: const Color(0xFFFEF3C7),
         onTap: () {
-          if (!showSubscriptions) {
+          if (!showPayments) {
             _openSupportScreen();
             return;
           }
@@ -1555,8 +1556,8 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
       ),
       _ShortcutItem(
         title: _loc.tr('الدردشات', 'Chats'),
-        subtitle: _loc.tr('محادثاتك مع التجار والورش',
-            'Messages with shops & mechanics'),
+        subtitle: _loc.tr(
+            'محادثاتك مع التجار والورش', 'Messages with shops & mechanics'),
         icon: Icons.chat_bubble_outline,
         iconColor: const Color(0xFF0284C7),
         iconBg: const Color(0xFFE0F2FE),
@@ -1573,7 +1574,6 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
     final isAdmin = p != null && (p.isAdmin || role == 'admin');
     final isProvider =
         role == 'merchant' || role == 'mechanic' || role == 'towing';
-    final showPayments = EnvConfig.paymentsEnabled.value;
     final showWinch = EnvConfig.winchEnabled.value;
     final hasDashboard = isLoggedIn &&
         (isAdmin ||
@@ -1616,21 +1616,52 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
                 ),
                 if (isLoggedIn) ...[
                   const SizedBox(height: 8),
-                  Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
-                    decoration: BoxDecoration(
-                      color: AppColors.orange,
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Text(
-                      _roleDisplayName(isAdmin ? 'admin' : role),
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 11,
-                        fontWeight: FontWeight.bold,
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 6,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 10, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: AppColors.orange,
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Text(
+                          _roleDisplayName(isAdmin ? 'admin' : role),
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
                       ),
-                    ),
+                      if (isProvider && p.ratingCount > 0)
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: Colors.amber.withValues(alpha: 0.2),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(Icons.star_rounded,
+                                  color: Colors.amber, size: 13),
+                              const SizedBox(width: 3),
+                              Text(
+                                '${p.ratingAvg.toStringAsFixed(1)} (${p.ratingCount})',
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                    ],
                   ),
                 ],
               ],
@@ -1701,20 +1732,24 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
           ),
           if (isLoggedIn && isProvider) ...[
             const Divider(),
-            if (showPayments)
-              ListTile(
-                leading: const Icon(Icons.account_balance_wallet_outlined,
-                    color: Color(0xFF0F766E)),
-                title: Text(
-                  _loc.tr('المحفظة المالية وسحب الأرباح', 'Wallet & Payouts'),
-                  style: const TextStyle(fontWeight: FontWeight.w700),
-                ),
-                trailing: const Icon(Icons.arrow_forward_ios, size: 14),
-                onTap: () {
-                  Navigator.pop(context);
-                  _openProviderWallet(p);
-                },
+            ListTile(
+              leading: const Icon(Icons.account_balance_wallet_outlined,
+                  color: Color(0xFF0F766E)),
+              title: Text(
+                _loc.tr('المحفظة المالية وسحب الأرباح', 'Wallet & Payouts'),
+                style: const TextStyle(fontWeight: FontWeight.w700),
               ),
+              subtitle: Text(
+                _loc.tr('الأرباح، سحب للبنك، وتسوية العمولة',
+                    'Withdraw to bank & settle fees'),
+                style: const TextStyle(fontSize: 11),
+              ),
+              trailing: const Icon(Icons.arrow_forward_ios, size: 14),
+              onTap: () {
+                Navigator.pop(context);
+                _openProviderWallet(p);
+              },
+            ),
             ListTile(
               leading:
                   const Icon(Icons.add_box_outlined, color: AppColors.orange),
@@ -1725,7 +1760,7 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
               },
             ),
           ],
-          if (isLoggedIn && showPayments && !isProvider && !isAdmin) ...[
+          if (isLoggedIn && !isProvider && !isAdmin) ...[
             const Divider(),
             ListTile(
               leading: const Icon(Icons.receipt_long_outlined,
@@ -1811,14 +1846,6 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
             },
           ),
           ListTile(
-            leading: const Icon(Icons.policy_outlined, color: AppColors.navy),
-            title: Text(_loc.tr('الشروط وسياسة الخصوصية', 'Terms & Privacy')),
-            onTap: () {
-              Navigator.pop(context);
-              showAppLegalPoliciesSheet(context);
-            },
-          ),
-          ListTile(
             leading: const Icon(Icons.support_agent, color: AppColors.orange),
             title: Text(_loc.tr('الدعم الفني والمساعدة', 'Support & Help')),
             onTap: () {
@@ -1897,13 +1924,18 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
           children: [
             const Icon(Icons.lock_outline, size: 52, color: AppColors.navy),
             const SizedBox(height: 12),
-            Text(msg, textAlign: TextAlign.center, style: const TextStyle(fontSize: 15)),
+            Text(
+              msg,
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 15),
+            ),
             const SizedBox(height: 16),
             ElevatedButton(
               style: ElevatedButton.styleFrom(
                 backgroundColor: AppColors.orange,
                 foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 14),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 28, vertical: 14),
               ),
               onPressed: () => Navigator.push(
                 context,
@@ -1912,8 +1944,7 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
                 ),
               ),
               child: Text(
-                _loc.tr('تسجيل الدخول / إنشاء حساب', 'Sign In / Sign Up'),
-              ),
+                  _loc.tr('تسجيل الدخول / إنشاء حساب', 'Sign In / Sign Up')),
             ),
           ],
         ),
@@ -1984,15 +2015,6 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
             const SizedBox(height: 16),
             Card(
               child: ListTile(
-                leading: const Icon(Icons.policy_outlined, color: AppColors.navy),
-                title: Text(_loc.tr('الشروط وسياسة الخصوصية', 'Terms & Privacy')),
-                trailing: const Icon(Icons.arrow_forward_ios, size: 16),
-                onTap: () => showAppLegalPoliciesSheet(context),
-              ),
-            ),
-            const SizedBox(height: 10),
-            Card(
-              child: ListTile(
                 leading:
                     const Icon(Icons.support_agent, color: AppColors.orange),
                 title: Text(_loc.tr('الدعم الفني والمساعدة', 'Support & Help')),
@@ -2006,7 +2028,6 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
     }
 
     final showPayments = EnvConfig.paymentsEnabled.value;
-    final showSubscriptions = EnvConfig.subscriptionsEnabled.value;
 
     return SafeArea(
       child: ListView(
@@ -2056,16 +2077,16 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
             child: ListTile(
               leading:
                   const Icon(Icons.badge_outlined, color: AppColors.orange),
-              title: Text(_loc.tr('البروفايل وإعدادات الحساب', 'My Profile')),
+              title: Text(_loc.tr('البروفايل (معلوماتي الشخصية)', 'My Profile')),
               subtitle: Text(_loc.tr(
-                'تعديل البيانات، موقع الورشة، الاسترجاع وحذف الحساب',
-                'Edit profile, workshop location, refund & delete account',
+                'عرض وتعديل الاسم، الهاتف، ومعلومات النشاط',
+                'View & edit name, phone and workshop info',
               )),
               trailing: const Icon(Icons.arrow_forward_ios, size: 16),
               onTap: () => _openUserProfile(p),
             ),
           ),
-          if (showPayments && isProvider) ...[
+          if (isProvider) ...[
             const SizedBox(height: 12),
             Card(
               child: ListTile(
@@ -2076,14 +2097,14 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
                   'Wallet & Bank Withdrawals',
                 )),
                 subtitle: Text(_loc.tr(
-                  'الأرباح، سحب للبنك (IBAN / CliQ)، وتسوية العمولة',
-                  'Earnings, IBAN/CliQ payouts & commissions',
+                  'الأرباح، سحب للبنك (IBAN)، وتسوية العمولة',
+                  'Earnings, IBAN payouts & commissions',
                 )),
                 trailing: const Icon(Icons.arrow_forward_ios, size: 16),
                 onTap: () => _openProviderWallet(p),
               ),
             ),
-          ] else if (showPayments && !isAdmin) ...[
+          ] else if (!isAdmin) ...[
             const SizedBox(height: 12),
             Card(
               child: ListTile(
@@ -2092,15 +2113,15 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
                 title: Text(
                     _loc.tr('المدفوعات وسجل الدفعات', 'Payment History')),
                 subtitle: Text(_loc.tr(
-                  'دفع الفواتير المستحقة ومراجعة السجل',
-                  'Pay due invoices & review receipts',
+                  'مراجعة جميع الفواتير والدفعات السابقة',
+                  'Review all invoices & receipts',
                 )),
                 trailing: const Icon(Icons.arrow_forward_ios, size: 16),
                 onTap: () => _openCustomerPayments(p),
               ),
             ),
           ],
-          if (showSubscriptions) ...[
+          if (showPayments) ...[
             const SizedBox(height: 12),
             Card(
               child: ListTile(
@@ -2144,16 +2165,6 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
               title: Text(_loc.tr('تغيير كلمة المرور', 'Change Password')),
               trailing: const Icon(Icons.arrow_forward_ios, size: 16),
               onTap: _showChangePasswordDialog,
-            ),
-          ),
-          const SizedBox(height: 12),
-          Card(
-            child: ListTile(
-              leading: const Icon(Icons.policy_outlined, color: AppColors.navy),
-              title: Text(_loc.tr('الشروط والسياسات وخصوصية التطبيق',
-                  'Terms, Refund & Privacy Policy')),
-              trailing: const Icon(Icons.arrow_forward_ios, size: 16),
-              onTap: () => showAppLegalPoliciesSheet(context),
             ),
           ),
           const SizedBox(height: 12),
@@ -2318,8 +2329,7 @@ class _ShellTopToastState extends State<_ShellTopToast>
                     ),
                   ),
                   IconButton(
-                    icon:
-                        const Icon(Icons.close, color: Colors.white, size: 18),
+                    icon: const Icon(Icons.close, color: Colors.white, size: 18),
                     onPressed: _dismiss,
                     padding: EdgeInsets.zero,
                     constraints: const BoxConstraints(),

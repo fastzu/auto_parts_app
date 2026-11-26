@@ -6,11 +6,11 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../config/env_config.dart';
 import '../../models/db_models.dart';
-import '../../services/app_locale_service.dart';
 import '../../services/live_progress_tracker.dart';
 import '../../services/location_service.dart';
 import '../../services/notifications_service.dart';
 import '../../theme/app_theme.dart';
+import '../../utils/status_labels.dart';
 import '../../widgets/animations.dart';
 import '../mobile/mobile_shell.dart';
 import 'provider_subscriptions_screen.dart';
@@ -38,7 +38,6 @@ class _TowingDashboardScreenState extends State<TowingDashboardScreen> {
   final _tracker = LiveProgressTracker.instance;
   final _notifs = NotificationsService.instance;
   final _locationService = LocationService();
-  final _loc = AppLocaleService.instance;
 
   late int _tab = widget.initialTab;
   late bool _isAvailable = widget.profile.isAvailable;
@@ -47,7 +46,7 @@ class _TowingDashboardScreenState extends State<TowingDashboardScreen> {
   final double _maxRadiusKm = 15.0;
   DashboardPeriod _period = DashboardPeriod.month1;
   DateTimeRange? _customRange;
-  final Set<String> _trackingWinchIds = {};
+  String? _trackingRequestId;
 
   @override
   void initState() {
@@ -71,10 +70,10 @@ class _TowingDashboardScreenState extends State<TowingDashboardScreen> {
         _myLat = res.coordinates.latitude;
         _myLng = res.coordinates.longitude;
       });
-      await _db.from('customers').update({
-        'latitude': _myLat,
-        'longitude': _myLng,
-      }).eq('id', widget.profile.id);
+      await _db
+          .from('customers')
+          .update({'latitude': _myLat, 'longitude': _myLng})
+          .eq('id', widget.profile.id);
     } catch (_) {}
   }
 
@@ -82,7 +81,8 @@ class _TowingDashboardScreenState extends State<TowingDashboardScreen> {
     setState(() => _isAvailable = val);
     await _db
         .from('customers')
-        .update({'is_available': val}).eq('id', widget.profile.id);
+        .update({'is_available': val})
+        .eq('id', widget.profile.id);
     widget.onRefreshProfile();
   }
 
@@ -104,24 +104,44 @@ class _TowingDashboardScreenState extends State<TowingDashboardScreen> {
 
   bool _isVisibleToMe(DbMechanicRequest r) {
     if (r.mechanicId == widget.profile.id) return true;
-    if (r.rejectedProviderIds.contains(widget.profile.id)) return false;
     if (!_isAvailable || r.status != 'pending') return false;
     if (r.broadcastAll) return true;
     final dist = _distanceTo(r);
     return dist == null || dist <= _maxRadiusKm;
   }
 
-  void _ensureLiveBroadcast(DbMechanicRequest o) {
-    if (o.mechanicId != widget.profile.id ||
-        o.status != 'accepted' ||
-        o.progressStep != 'on_the_way' ||
-        o.userId == null ||
+  String _winchStatusLabel(String? status, String? progressStep) {
+    final st = (status ?? '').trim().toLowerCase();
+    final step = (progressStep ?? '').trim().toLowerCase();
+    if (st == 'cancelled' || step == 'cancelled') return 'ملغي';
+    if (st == 'completed' || step == 'completed') return 'مكتمل وتم الدفع ✓';
+    if (st == 'awaiting_payment' || step == 'awaiting_payment') {
+      return 'صدرت الفاتورة — بانتظار الدفع';
+    }
+    if (st == 'quoted' || step == 'quote_sent') {
+      return 'بانتظار موافقة العميل على العرض';
+    }
+    if (step == 'towing') return 'جاري سحب السيارة إلى الوجهة';
+    if (step == 'arrived_at_pickup') return 'وصل الونش لموقع العميل ✓';
+    if (step == 'on_the_way' || st == 'accepted' || st == 'in_progress') {
+      return 'الونش في الطريق لموقع العميل';
+    }
+    return StatusLabels.emergency(status, progressStep: progressStep);
+  }
+
+  void _ensureTrackingActive(DbMechanicRequest o) {
+    if (o.mechanicId != widget.profile.id) return;
+    final isEnRoute =
+        (o.status == 'accepted' || o.status == 'in_progress') &&
+        (o.progressStep == 'on_the_way' || o.progressStep.isEmpty);
+    if (!isEnRoute) return;
+    if (_trackingRequestId == o.id) return;
+    if (o.userId == null ||
         o.pickupLatitude == null ||
         o.pickupLongitude == null) {
       return;
     }
-    if (_trackingWinchIds.contains(o.id)) return;
-    _trackingWinchIds.add(o.id);
+    _trackingRequestId = o.id;
     _tracker.startTrackingEmergencyArrival(
       requestId: o.id,
       customerUserId: o.userId!,
@@ -152,11 +172,13 @@ class _TowingDashboardScreenState extends State<TowingDashboardScreen> {
     } else {
       Navigator.pushReplacement(
         context,
-        animatedRoute(LiveMobileShell(
-          profile: widget.profile,
-          onRefreshProfile: widget.onRefreshProfile,
-          onSignedOut: widget.onSignedOut,
-        )),
+        animatedRoute(
+          LiveMobileShell(
+            profile: widget.profile,
+            onRefreshProfile: widget.onRefreshProfile,
+            onSignedOut: widget.onSignedOut,
+          ),
+        ),
       );
     }
   }
@@ -164,8 +186,6 @@ class _TowingDashboardScreenState extends State<TowingDashboardScreen> {
   @override
   Widget build(BuildContext context) {
     final showPayments = EnvConfig.paymentsEnabled.value;
-    final showSubs = EnvConfig.subscriptionsEnabled.value;
-    if (!showPayments) _tab = 0;
 
     return Scaffold(
       appBar: AppBar(
@@ -173,33 +193,35 @@ class _TowingDashboardScreenState extends State<TowingDashboardScreen> {
         foregroundColor: Colors.white,
         iconTheme: const IconThemeData(color: Colors.white),
         actionsIconTheme: const IconThemeData(color: Colors.white),
-        leading:
-            Navigator.canPop(context) ? const BackButton(color: Colors.white) : null,
+        leading: Navigator.canPop(context)
+            ? const BackButton(color: Colors.white)
+            : null,
         title: Text(
-          '${_loc.tr("ونش الطوارئ", "Towing Winch")} · ${widget.profile.fullName ?? ""}',
+          'ونش الطوارئ · ${widget.profile.fullName ?? ""}',
           style: const TextStyle(color: Colors.white, fontSize: 16),
         ),
         actions: [
           IconButton(
-            tooltip: _loc.tr('العودة للرئيسية', 'Home'),
-            icon: const Icon(Icons.storefront, color: Colors.white),
+            tooltip: 'العودة للرئيسية',
+            icon: const Icon(Icons.grid_view_rounded, color: Colors.white),
             onPressed: _goHome,
           ),
           const NotificationBellButton(iconColor: Colors.white),
-          if (showSubs)
+          if (showPayments)
             IconButton(
-              icon: const Icon(Icons.workspace_premium,
-                  color: AppColors.orange),
+              icon: const Icon(Icons.workspace_premium, color: AppColors.orange),
               onPressed: () => Navigator.push(
                 context,
-                animatedRoute(ProviderSubscriptionsScreen(
-                  currentPlanCode: widget.profile.subscriptionPlan,
-                  onSubscribed: widget.onRefreshProfile,
-                )),
+                animatedRoute(
+                  ProviderSubscriptionsScreen(
+                    currentPlanCode: widget.profile.subscriptionPlan,
+                    onSubscribed: widget.onRefreshProfile,
+                  ),
+                ),
               ),
             ),
           IconButton(
-            tooltip: _loc.tr('تسجيل الخروج', 'Sign Out'),
+            tooltip: 'تسجيل الخروج',
             icon: const Icon(Icons.logout, color: Colors.white),
             onPressed: () async {
               await _db.auth.signOut();
@@ -219,11 +241,7 @@ class _TowingDashboardScreenState extends State<TowingDashboardScreen> {
                 : Colors.red.withValues(alpha: 0.10),
             child: SwitchListTile(
               title: Text(
-                _isAvailable
-                    ? _loc.tr(
-                        'حالتي: متاح لاستقبال الطلبات', 'Status: Online')
-                    : _loc.tr(
-                        'حالتي: غير متاح حالياً', 'Status: Offline'),
+                _isAvailable ? 'متاح لاستقبال طلبات السحب' : 'غير متاح حالياً',
                 style: TextStyle(
                   fontWeight: FontWeight.bold,
                   color: _isAvailable ? AppColors.success : Colors.red,
@@ -236,37 +254,41 @@ class _TowingDashboardScreenState extends State<TowingDashboardScreen> {
             ),
           ),
           Expanded(
-            child: _tab == 0 ? _towingOrdersTab(showPayments) : _towingWalletTab(),
+            child: _tab == 0
+                ? _towingOrdersTab()
+                : ProviderWalletView(
+                    profile: widget.profile,
+                    onRefreshProfile: widget.onRefreshProfile,
+                  ),
           ),
         ],
       ),
-      bottomNavigationBar: showPayments
-          ? BottomNavigationBar(
-              currentIndex: _tab,
-              selectedItemColor: AppColors.orange,
-              onTap: (i) => setState(() => _tab = i),
-              items: [
-                BottomNavigationBarItem(
-                  icon: const Icon(Icons.local_shipping),
-                  label: _loc.tr('طلبات الونش', 'Winch Orders'),
-                ),
-                BottomNavigationBarItem(
-                  icon: const Icon(Icons.account_balance_wallet),
-                  label: _loc.tr('المحفظة', 'Wallet'),
-                ),
-              ],
-            )
-          : null,
+      bottomNavigationBar: BottomNavigationBar(
+        currentIndex: _tab,
+        selectedItemColor: AppColors.orange,
+        onTap: (i) => setState(() => _tab = i),
+        items: const [
+          BottomNavigationBarItem(
+            icon: Icon(Icons.local_shipping),
+            label: 'طلبات الونش',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.account_balance_wallet),
+            label: 'المحفظة المالية',
+          ),
+        ],
+      ),
     );
   }
 
-  Widget _towingOrdersTab(bool showPayments) {
+  Widget _towingOrdersTab() {
     return StreamBuilder<List<Map<String, dynamic>>>(
       stream: _db
           .from('mechanic_requests')
           .stream(primaryKey: ['id'])
           .eq('service_type', 'winch')
-          .order('created_at', ascending: false),
+          .order('created_at', ascending: false)
+          .limit(100),
       builder: (context, snap) {
         if (!snap.hasData) {
           return const Center(child: CircularProgressIndicator());
@@ -293,20 +315,11 @@ class _TowingDashboardScreenState extends State<TowingDashboardScreen> {
             ),
             const SizedBox(height: 12),
             InteractiveAnimatedChart(
-              title: _loc.tr('إحصائيات رحلات الونش', 'Towing Trips Analytics'),
+              title: 'إحصائيات رحلات الونش',
               data: [
-                (
-                  label: _loc.tr('كل الطلبات', 'Total'),
-                  value: orders.length.toDouble()
-                ),
-                (
-                  label: _loc.tr('بانتظار عرض سعر', 'Pending'),
-                  value: pendingCount.toDouble()
-                ),
-                (
-                  label: _loc.tr('مكتملة', 'Completed'),
-                  value: completedCount.toDouble()
-                ),
+                (label: 'كل الطلبات', value: orders.length.toDouble()),
+                (label: 'بانتظار عرض سعر', value: pendingCount.toDouble()),
+                (label: 'مكتملة', value: completedCount.toDouble()),
               ],
             ),
             const SizedBox(height: 14),
@@ -314,17 +327,38 @@ class _TowingDashboardScreenState extends State<TowingDashboardScreen> {
               Center(
                 child: Padding(
                   padding: const EdgeInsets.all(32),
-                  child: Text(_isAvailable
-                      ? _loc.tr('لا توجد طلبات ونش متاحة', 'No towing requests')
-                      : _loc.tr('أنت في وضع غير متاح', 'You are offline')),
+                  child: Text(
+                    _isAvailable
+                        ? 'لا توجد طلبات ونش متاحة'
+                        : 'أنت في وضع غير متاح',
+                  ),
                 ),
               )
             else
               ...orders.map((o) {
-                _ensureLiveBroadcast(o);
+                _ensureTrackingActive(o);
                 final d = _distanceTo(o);
                 final hasCoords =
                     o.pickupLatitude != null && o.pickupLongitude != null;
+                final statusText = _winchStatusLabel(o.status, o.progressStep);
+                final statusColor = StatusLabels.colorFor(
+                  o.status,
+                  progressStep: o.progressStep,
+                );
+                final isMine = o.mechanicId == widget.profile.id;
+                final isQuoted =
+                    isMine &&
+                    (o.status == 'quoted' || o.progressStep == 'quote_sent');
+                final isActiveWork =
+                    isMine &&
+                    (o.status == 'accepted' || o.status == 'in_progress') &&
+                    o.progressStep != 'awaiting_payment';
+                final isAwaitingPayment =
+                    isMine &&
+                    (o.status == 'awaiting_payment' ||
+                        o.progressStep == 'awaiting_payment' ||
+                        o.paymentStatus == 'invoiced');
+
                 return Card(
                   margin: const EdgeInsets.only(bottom: 14),
                   child: Padding(
@@ -337,17 +371,18 @@ class _TowingDashboardScreenState extends State<TowingDashboardScreen> {
                           children: [
                             Expanded(
                               child: Text(
-                                '${_loc.tr("طلب سحب", "Tow Order")} · ${o.carDetails}',
+                                'طلب سحب · ${o.carDetails}',
                                 style: const TextStyle(
-                                    fontWeight: FontWeight.bold, fontSize: 15),
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 15,
+                                ),
                               ),
                             ),
                             if (d != null)
                               Chip(
                                 backgroundColor: AppColors.orangeLight,
                                 label: Text(
-                                  _loc.tr('يبعد ${d.toStringAsFixed(1)} كم',
-                                      '${d.toStringAsFixed(1)} km'),
+                                  'يبعد ${d.toStringAsFixed(1)} كم',
                                   style: const TextStyle(
                                     color: AppColors.orange,
                                     fontWeight: FontWeight.bold,
@@ -357,56 +392,84 @@ class _TowingDashboardScreenState extends State<TowingDashboardScreen> {
                               ),
                           ],
                         ),
-                        Text(
-                          '${_loc.tr("المشكلة", "Issue")}: ${o.description ?? "-"} · ${_loc.tr("الهاتف", "Phone")}: ${o.phone ?? "-"}',
-                        ),
-                        Text(
-                          '${_loc.tr("الوجهة", "Dropoff")}: ${o.dropoffAddress ?? _loc.tr("محددة على الخريطة", "Map pin")}',
-                          style: const TextStyle(
-                              fontSize: 12, color: AppColors.textSecondary),
-                        ),
-                        if (o.quotedPrice > 0 || o.totalAmount > 0)
-                          Text(
-                            '${_loc.tr("عرض السعر / الفاتورة", "Quote / Invoice")}: ${(o.totalAmount > 0 ? o.totalAmount : o.quotedPrice).toStringAsFixed(2)} ${_loc.tr("د.أ", "JOD")}',
-                            style: const TextStyle(
+                        const SizedBox(height: 6),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 4,
+                          ),
+                          decoration: BoxDecoration(
+                            color: statusColor.withValues(alpha: 0.12),
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: Text(
+                            statusText,
+                            style: TextStyle(
+                              color: statusColor,
                               fontWeight: FontWeight.bold,
-                              color: AppColors.orange,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          'المشكلة: ${o.description ?? "-"} · الهاتف: ${o.phone ?? "-"}',
+                        ),
+                        Text(
+                          'الوجهة: ${o.dropoffAddress ?? "محددة على الخريطة"}',
+                          style: const TextStyle(
+                            fontSize: 12,
+                            color: AppColors.textSecondary,
+                          ),
+                        ),
+                        if (o.totalAmount > 0)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 4),
+                            child: Text(
+                              'السعر المتفق عليه: ${o.totalAmount.toStringAsFixed(2)} د.أ',
+                              style: const TextStyle(
+                                fontWeight: FontWeight.bold,
+                                color: AppColors.orange,
+                              ),
                             ),
                           ),
                         const SizedBox(height: 10),
                         if (hasCoords) ...[
                           SizedBox(
-                            height: 145,
+                            height: 140,
                             child: ClipRRect(
-                              borderRadius: BorderRadius.circular(14),
+                              borderRadius: BorderRadius.circular(12),
                               child: FlutterMap(
                                 options: MapOptions(
                                   initialCenter: LatLng(
-                                      o.pickupLatitude!, o.pickupLongitude!),
+                                    o.pickupLatitude!,
+                                    o.pickupLongitude!,
+                                  ),
                                   initialZoom: 14,
                                 ),
                                 children: [
                                   TileLayer(
                                     urlTemplate:
-                                        'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}@2x.png',
-                                    subdomains: const ['a', 'b', 'c', 'd'],
-                                    userAgentPackageName:
-                                        'com.autoparts.ghiyarak',
-                                    retinaMode: true,
+                                        'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                                    userAgentPackageName: 'com.ghayarakjo.app',
                                   ),
-                                  MarkerLayer(markers: [
-                                    Marker(
-                                      point: LatLng(o.pickupLatitude!,
-                                          o.pickupLongitude!),
-                                      width: 44,
-                                      height: 44,
-                                      child: const Icon(
-                                        Icons.location_on,
-                                        color: AppColors.orange,
-                                        size: 38,
+                                  MarkerLayer(
+                                    markers: [
+                                      Marker(
+                                        point: LatLng(
+                                          o.pickupLatitude!,
+                                          o.pickupLongitude!,
+                                        ),
+                                        width: 44,
+                                        height: 44,
+                                        child: const Icon(
+                                          Icons.location_on,
+                                          color: AppColors.orange,
+                                          size: 38,
+                                        ),
                                       ),
-                                    ),
-                                  ]),
+                                    ],
+                                  ),
                                 ],
                               ),
                             ),
@@ -416,16 +479,19 @@ class _TowingDashboardScreenState extends State<TowingDashboardScreen> {
                             width: double.infinity,
                             child: OutlinedButton.icon(
                               style: OutlinedButton.styleFrom(
-                                  side:
-                                      const BorderSide(color: AppColors.navy)),
+                                side: const BorderSide(color: AppColors.navy),
+                              ),
                               onPressed: () => _openGpsNav(
-                                  o.pickupLatitude!, o.pickupLongitude!),
-                              icon: const Icon(Icons.navigation,
-                                  color: AppColors.navy),
-                              label: Text(
-                                _loc.tr('توجيه GPS لموقع العميل',
-                                    'Navigate to Pickup'),
-                                style: const TextStyle(
+                                o.pickupLatitude!,
+                                o.pickupLongitude!,
+                              ),
+                              icon: const Icon(
+                                Icons.navigation,
+                                color: AppColors.navy,
+                              ),
+                              label: const Text(
+                                'توجيه GPS لموقع العميل',
+                                style: TextStyle(
                                   color: AppColors.navy,
                                   fontWeight: FontWeight.bold,
                                 ),
@@ -441,109 +507,112 @@ class _TowingDashboardScreenState extends State<TowingDashboardScreen> {
                               style: ElevatedButton.styleFrom(
                                 backgroundColor: AppColors.orange,
                                 foregroundColor: Colors.white,
-                                padding:
-                                    const EdgeInsets.symmetric(vertical: 12),
                               ),
-                              onPressed: () => _sendWinchQuoteDialog(o),
-                              icon: const Icon(Icons.request_quote_rounded),
-                              label: Text(_loc.tr(
-                                'قبول وإرسال عرض سعر للزبون',
-                                'Accept & Send Price Quote',
-                              )),
+                              onPressed: () => _sendQuoteDialog(o),
+                              icon: const Icon(Icons.local_offer_outlined),
+                              label: const Text('إرسال عرض سعر للعميل'),
                             ),
                           ),
-                        if (o.status == 'quote_sent' &&
-                            o.mechanicId == widget.profile.id)
+                        if (isQuoted) ...[
                           Container(
                             width: double.infinity,
                             padding: const EdgeInsets.all(10),
                             decoration: BoxDecoration(
                               color: AppColors.orangeLight,
-                              borderRadius: BorderRadius.circular(12),
+                              borderRadius: BorderRadius.circular(10),
                             ),
                             child: Text(
-                              _loc.tr(
-                                'تم إرسال عرض السعر (${o.quotedPrice.toStringAsFixed(2)} د.أ) — بانتظار موافقة الزبون...',
-                                'Quote sent (${o.quotedPrice.toStringAsFixed(2)} JOD) — awaiting customer...',
-                              ),
+                              'تم إرسال عرض السعر (${o.totalAmount.toStringAsFixed(2)} د.أ) — بانتظار موافقة العميل قبل الانطلاق.',
                               style: const TextStyle(
-                                fontWeight: FontWeight.bold,
-                                fontSize: 12,
                                 color: AppColors.navy,
+                                fontWeight: FontWeight.w600,
+                                fontSize: 12.5,
                               ),
                             ),
                           ),
-                        if (o.status == 'accepted' &&
-                            o.mechanicId == widget.profile.id)
-                          Wrap(
-                            spacing: 8,
-                            runSpacing: 8,
+                          const SizedBox(height: 8),
+                          Row(
                             children: [
-                              if (o.progressStep == 'on_the_way')
-                                ElevatedButton(
-                                  style: ElevatedButton.styleFrom(
-                                    backgroundColor: AppColors.navy,
-                                    foregroundColor: Colors.white,
-                                  ),
-                                  onPressed: () async {
-                                    if (o.userId != null) {
-                                      await _tracker.markEmergencyArrived(
-                                        requestId: o.id,
-                                        customerUserId: o.userId!,
-                                        serviceType: 'winch',
-                                      );
-                                      if (mounted) {
-                                        ScaffoldMessenger.of(context)
-                                            .showSnackBar(
-                                          SnackBar(
-                                            backgroundColor: AppColors.success,
-                                            content: Text(_loc.tr(
-                                              'تم تأكيد وصولك وإشعار الزبون ✓',
-                                              'Arrival confirmed & customer notified ✓',
-                                            )),
-                                          ),
-                                        );
-                                      }
-                                    }
-                                  },
-                                  child: Text(_loc.tr(
-                                      'تأكيد الوصول للعميل', 'Confirm Arrival')),
+                              Expanded(
+                                child: OutlinedButton(
+                                  onPressed: () => _sendQuoteDialog(o),
+                                  child: const Text('تعديل العرض'),
                                 ),
-                              if (o.progressStep != 'awaiting_payment')
-                                ElevatedButton.icon(
-                                  style: ElevatedButton.styleFrom(
-                                    backgroundColor: AppColors.success,
-                                    foregroundColor: Colors.white,
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: OutlinedButton(
+                                  style: OutlinedButton.styleFrom(
+                                    foregroundColor: Colors.red,
+                                    side: const BorderSide(color: Colors.red),
                                   ),
-                                  onPressed: () =>
-                                      _issueWinchInvoice(o, showPayments),
-                                  icon:
-                                      const Icon(Icons.receipt_long, size: 17),
-                                  label: Text(
-                                    showPayments
-                                        ? _loc.tr('إصدار وتسليم الفاتورة',
-                                            'Issue Final Invoice')
-                                        : _loc.tr('تأكيد التسليم والإنهاء',
-                                            'Complete Dropoff'),
-                                  ),
-                                )
-                              else
-                                Chip(
-                                  backgroundColor:
-                                      AppColors.success.withValues(alpha: 0.14),
-                                  label: Text(
-                                    _loc.tr(
-                                      'تم إصدار الفاتورة ✓ بانتظار دفع الزبون',
-                                      'Invoice Issued ✓ Awaiting Payment',
-                                    ),
-                                    style: const TextStyle(
-                                      color: AppColors.success,
-                                      fontWeight: FontWeight.bold,
-                                      fontSize: 12,
-                                    ),
-                                  ),
+                                  onPressed: () => _withdrawQuote(o),
+                                  child: const Text('سحب العرض'),
                                 ),
+                              ),
                             ],
+                          ),
+                        ],
+                        if (isActiveWork) ...[
+                          if (o.progressStep == 'on_the_way' ||
+                              o.progressStep.isEmpty)
+                            SizedBox(
+                              width: double.infinity,
+                              child: ElevatedButton.icon(
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: AppColors.navy,
+                                  foregroundColor: Colors.white,
+                                ),
+                                onPressed: () => _markArrived(o),
+                                icon: const Icon(Icons.location_on_outlined),
+                                label: const Text('تأكيد الوصول لموقع العميل'),
+                              ),
+                            )
+                          else if (o.progressStep == 'arrived_at_pickup')
+                            SizedBox(
+                              width: double.infinity,
+                              child: ElevatedButton.icon(
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: AppColors.orange,
+                                  foregroundColor: Colors.white,
+                                ),
+                                onPressed: () => _startTowing(o),
+                                icon: const Icon(Icons.local_shipping_outlined),
+                                label: const Text('بدء سحب السيارة'),
+                              ),
+                            )
+                          else
+                            SizedBox(
+                              width: double.infinity,
+                              child: ElevatedButton.icon(
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: AppColors.success,
+                                  foregroundColor: Colors.white,
+                                ),
+                                onPressed: () => _finishAndIssueInvoice(o),
+                                icon: const Icon(Icons.receipt_long_outlined),
+                                label: const Text(
+                                  'إنهاء السحب وإصدار الفاتورة النهائية',
+                                ),
+                              ),
+                            ),
+                        ],
+                        if (isAwaitingPayment)
+                          Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.all(10),
+                            decoration: BoxDecoration(
+                              color: AppColors.navy.withValues(alpha: 0.08),
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: Text(
+                              'صدرت الفاتورة بقيمة ${o.totalAmount.toStringAsFixed(2)} د.أ — بانتظار دفع العميل.',
+                              style: const TextStyle(
+                                color: AppColors.navy,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 12.5,
+                              ),
+                            ),
                           ),
                       ],
                     ),
@@ -556,330 +625,243 @@ class _TowingDashboardScreenState extends State<TowingDashboardScreen> {
     );
   }
 
-  Future<void> _sendWinchQuoteDialog(DbMechanicRequest o) async {
-    final priceCtrl = TextEditingController();
-    final notesCtrl = TextEditingController();
-    bool sending = false;
-
-    await showDialog(
+  Future<void> _sendQuoteDialog(DbMechanicRequest o) async {
+    final ctrl = TextEditingController(
+      text: o.totalAmount > 0 ? o.totalAmount.toStringAsFixed(2) : '',
+    );
+    await showDialog<void>(
       context: context,
-      barrierDismissible: false,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setS) => AlertDialog(
-          title: Text(_loc.tr('إرسال عرض سعر للسحب', 'Send Towing Quote')),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: priceCtrl,
-                enabled: !sending,
-                keyboardType:
-                    const TextInputType.numberWithOptions(decimal: true),
-                decoration: InputDecoration(
-                  labelText:
-                      _loc.tr('الأجرة المقترحة (د.أ)', 'Quoted Price (JOD)'),
-                ),
-              ),
-              const SizedBox(height: 10),
-              TextField(
-                controller: notesCtrl,
-                enabled: !sending,
-                decoration: InputDecoration(
-                  labelText: _loc.tr(
-                      'ملاحظات / وقت الوصول (اختياري)', 'Notes / ETA'),
-                ),
-              ),
-            ],
+      builder: (ctx) => AlertDialog(
+        title: const Text('إرسال عرض سعر للعميل'),
+        content: TextField(
+          controller: ctrl,
+          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          textInputAction: TextInputAction.done,
+          decoration: const InputDecoration(
+            labelText: 'أجرة السحب المقترحة (د.أ)',
+            hintText: 'مثال: 25',
           ),
-          actions: [
-            TextButton(
-              onPressed: sending ? null : () => Navigator.pop(ctx),
-              child: Text(_loc.tr('إلغاء', 'Cancel')),
-            ),
-            ElevatedButton(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.orange,
-                foregroundColor: Colors.white,
-              ),
-              onPressed: sending
-                  ? null
-                  : () async {
-                      final price =
-                          double.tryParse(priceCtrl.text.trim()) ?? 0.0;
-                      if (price <= 0) return;
-                      setS(() => sending = true);
-                      try {
-                        await _db.from('mechanic_requests').update({
-                          'status': 'quote_sent',
-                          'progress_step': 'pending',
-                          'mechanic_id': widget.profile.id,
-                          'quoted_price': price,
-                          'total_amount': price,
-                          'quote_notes': notesCtrl.text.trim(),
-                        }).eq('id', o.id);
-
-                        if (o.userId != null) {
-                          await _notifs.sendNotification(
-                            targetUserId: o.userId!,
-                            title: 'وصلك عرض سعر من ونش الطوارئ 🚚',
-                            body:
-                                'قدّم ${widget.profile.fullName ?? "سائق الونش"} عرض سعر بقيمة ${price.toStringAsFixed(2)} د.أ — افتح التطبيق للقبول أو الرفض.',
-                            type: 'quote_sent',
-                            referenceId: o.id,
-                          );
-                        }
-                        await _notifs.sendNotification(
-                          targetUserId: widget.profile.id,
-                          title: 'تم إرسال عرض السعر بنجاح ✓',
-                          body:
-                              'تم إرسال عرض بقيمة ${price.toStringAsFixed(2)} د.أ للزبون وبانتظار موافقته.',
-                          type: 'quote_sent_confirm',
-                          referenceId: o.id,
-                        );
-
-                        if (ctx.mounted) Navigator.pop(ctx);
-                        if (mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              backgroundColor: AppColors.success,
-                              content: Text(_loc.tr(
-                                'تم إرسال عرض السعر للزبون بنجاح ✓',
-                                'Quote sent successfully ✓',
-                              )),
-                            ),
-                          );
-                        }
-                      } catch (e) {
-                        if (ctx.mounted) {
-                          setS(() => sending = false);
-                          ScaffoldMessenger.of(ctx).showSnackBar(
-                            SnackBar(
-                                backgroundColor: Colors.red,
-                                content: Text('$e')),
-                          );
-                        }
-                      }
-                    },
-              child: sending
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(
-                          color: Colors.white, strokeWidth: 2),
-                    )
-                  : Text(_loc.tr('إرسال العرض', 'Send Quote')),
-            ),
-          ],
         ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('إلغاء'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.orange,
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () async {
+              final amt = double.tryParse(ctrl.text.trim()) ?? 0.0;
+              if (amt <= 0) return;
+              try {
+                await _db
+                    .from('mechanic_requests')
+                    .update({
+                      'status': 'quoted',
+                      'progress_step': 'quote_sent',
+                      'mechanic_id': widget.profile.id,
+                      'total_amount': amt,
+                      'payment_status': 'unpaid',
+                    })
+                    .eq('id', o.id)
+                    .select('id');
+                if (o.userId != null) {
+                  await _notifs.sendNotification(
+                    targetUserId: o.userId!,
+                    title: 'وصلك عرض سعر جديد للونش',
+                    body:
+                        'عرض سائق الونش أجرة ${amt.toStringAsFixed(2)} د.أ — يمكنك قبول العرض أو رفضه.',
+                    type: 'quote_received',
+                    referenceId: o.id,
+                  );
+                }
+                if (ctx.mounted) Navigator.pop(ctx);
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('تم إرسال عرض السعر بانتظار موافقة العميل ✓'),
+                      backgroundColor: AppColors.success,
+                    ),
+                  );
+                }
+              } catch (e) {
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('تعذر إرسال العرض: $e'),
+                      backgroundColor: Colors.red,
+                    ),
+                  );
+                }
+              }
+            },
+            child: const Text('إرسال العرض'),
+          ),
+        ],
       ),
     );
-    priceCtrl.dispose();
-    notesCtrl.dispose();
+    ctrl.dispose();
   }
 
-  Future<void> _issueWinchInvoice(
-    DbMechanicRequest o,
-    bool showPayments,
-  ) async {
-    if (!showPayments) {
-      await _db.from('mechanic_requests').update({
-        'status': 'completed',
-        'progress_step': 'completed',
-      }).eq('id', o.id);
+  Future<void> _withdrawQuote(DbMechanicRequest o) async {
+    try {
+      await _db
+          .from('mechanic_requests')
+          .update({
+            'status': 'pending',
+            'progress_step': 'pending',
+            'mechanic_id': null,
+            'total_amount': 0,
+            'payment_status': 'unpaid',
+          })
+          .eq('id', o.id)
+          .select('id');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('تم سحب عرض السعر وإرجاع الطلب للانتظار')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('خطأ: $e'), backgroundColor: Colors.red),
+        );
+      }
+    }
+  }
+
+  Future<void> _markArrived(DbMechanicRequest o) async {
+    try {
+      await _db
+          .from('mechanic_requests')
+          .update({
+            'status': 'in_progress',
+            'progress_step': 'arrived_at_pickup',
+          })
+          .eq('id', o.id)
+          .select('id');
+      if (o.userId != null) {
+        await _tracker.markEmergencyArrived(
+          requestId: o.id,
+          customerUserId: o.userId!,
+          serviceType: 'winch',
+        );
+      }
+      _trackingRequestId = null;
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('تعذر التحديث: $e'), backgroundColor: Colors.red),
+        );
+      }
+    }
+  }
+
+  Future<void> _startTowing(DbMechanicRequest o) async {
+    try {
+      await _db
+          .from('mechanic_requests')
+          .update({'status': 'in_progress', 'progress_step': 'towing'})
+          .eq('id', o.id)
+          .select('id');
       if (o.userId != null) {
         await _notifs.sendNotification(
           targetUserId: o.userId!,
-          title: 'تم تسليم السيارة بنجاح ✓',
-          body: 'انتهت رحلة الونش بنجاح! يمكنك الآن تقييم السائق.',
-          type: 'order_completed',
+          title: 'بدأت عملية سحب السيارة',
+          body: 'الونش يقوم الآن بسحب سيارتك باتجاه الوجهة المحددة.',
+          type: 'order_update',
           referenceId: o.id,
         );
       }
-      return;
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('تعذر التحديث: $e'), backgroundColor: Colors.red),
+        );
+      }
     }
-
-    final initialAmt = o.totalAmount > 0 ? o.totalAmount : o.quotedPrice;
-    final amountCtrl = TextEditingController(
-      text: initialAmt > 0 ? initialAmt.toStringAsFixed(2) : '',
-    );
-    bool submitting = false;
-
-    await showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setS) => AlertDialog(
-          title: Text(_loc.tr(
-            'إصدار فاتورة الونش وإرسالها للزبون',
-            'Issue Towing Invoice',
-          )),
-          content: TextField(
-            controller: amountCtrl,
-            enabled: !submitting,
-            keyboardType:
-                const TextInputType.numberWithOptions(decimal: true),
-            decoration: InputDecoration(
-              labelText:
-                  _loc.tr('المبلغ النهائي (د.أ)', 'Final Amount (JOD)'),
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: submitting ? null : () => Navigator.pop(ctx),
-              child: Text(_loc.tr('إلغاء', 'Cancel')),
-            ),
-            ElevatedButton(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.orange,
-                foregroundColor: Colors.white,
-              ),
-              onPressed: submitting
-                  ? null
-                  : () async {
-                      final amt =
-                          double.tryParse(amountCtrl.text.trim()) ?? 0.0;
-                      if (amt <= 0) return;
-                      setS(() => submitting = true);
-                      try {
-                        await _db.from('mechanic_requests').update({
-                          'total_amount': amt,
-                          'progress_step': 'awaiting_payment',
-                          'invoice_issued_at':
-                              DateTime.now().toIso8601String(),
-                        }).eq('id', o.id);
-
-                        if (o.userId != null) {
-                          await _notifs.sendNotification(
-                            targetUserId: o.userId!,
-                            title: 'تم إصدار فاتورة الونش — يرجى الدفع 🧾',
-                            body:
-                                'وصلت سيارتك بسلامة! قيمة الفاتورة ${amt.toStringAsFixed(2)} د.أ — يرجى إتمام الدفع الآن.',
-                            type: 'invoice_issued',
-                            referenceId: o.id,
-                          );
-                        }
-                        await _notifs.sendNotification(
-                          targetUserId: widget.profile.id,
-                          title: 'تم إصدار الفاتورة بنجاح ✓',
-                          body:
-                              'تم إرسال فاتورة بقيمة ${amt.toStringAsFixed(2)} د.أ للزبون للدفع.',
-                          type: 'invoice_issued_confirm',
-                          referenceId: o.id,
-                        );
-
-                        if (ctx.mounted) Navigator.pop(ctx);
-                        if (mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              backgroundColor: AppColors.success,
-                              content: Text(_loc.tr(
-                                'تم إصدار الفاتورة بنجاح وإشعار الزبون للدفع ✓',
-                                'Invoice issued & customer notified ✓',
-                              )),
-                            ),
-                          );
-                        }
-                      } catch (e) {
-                        if (ctx.mounted) {
-                          setS(() => submitting = false);
-                          ScaffoldMessenger.of(ctx).showSnackBar(
-                            SnackBar(
-                                backgroundColor: Colors.red,
-                                content: Text('$e')),
-                          );
-                        }
-                      }
-                    },
-              child: submitting
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(
-                          color: Colors.white, strokeWidth: 2),
-                    )
-                  : Text(_loc.tr('إرسال الفاتورة', 'Send Invoice')),
-            ),
-          ],
-        ),
-      ),
-    );
-    amountCtrl.dispose();
   }
 
-  Widget _towingWalletTab() {
-    return StreamBuilder<List<Map<String, dynamic>>>(
-      stream: _db
-          .from('wallet_transactions')
-          .stream(primaryKey: ['id'])
-          .eq('provider_id', widget.profile.id)
-          .order('created_at', ascending: false),
-      builder: (context, snap) {
-        final txs = (snap.data ?? [])
-            .where((t) => _inPeriod(t['created_at'] as String?))
-            .map(DbWalletTransaction.fromMap)
-            .toList();
-        final net = txs.fold(0.0, (s, t) => s + t.netAmount);
-        final gross = txs.fold(0.0, (s, t) => s + t.grossAmount);
-        final comm = txs.fold(0.0, (s, t) => s + t.commissionAmount);
-        return ListView(
-          padding: const EdgeInsets.all(16),
-          children: [
-            DateRangeFilterBar(
-              period: _period,
-              customRange: _customRange,
-              onChanged: (p, r) => setState(() {
-                _period = p;
-                _customRange = r;
-              }),
-            ),
-            const SizedBox(height: 12),
-            Container(
-              padding: const EdgeInsets.all(18),
-              decoration: BoxDecoration(
-                color: AppColors.navy,
-                borderRadius: BorderRadius.circular(16),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(_loc.tr('صافي محفظة الونش', 'Net Towing Wallet'),
-                      style: const TextStyle(color: Colors.white70)),
-                  Text(
-                    '${net.toStringAsFixed(2)} ${_loc.tr("د.أ", "JOD")}',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 26,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    '${_loc.tr("قبل العمولة", "Gross")}: ${gross.toStringAsFixed(2)} | ${_loc.tr("العمولة", "Fee")}: ${comm.toStringAsFixed(2)}',
-                    style: const TextStyle(color: Colors.white70, fontSize: 12),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 14),
-            ...txs.map((t) => Card(
-                  child: ListTile(
-                    title: Text(
-                        '${_loc.tr("رحلة ونش", "Trip")} #${t.referenceId?.substring(0, 6) ?? ""}'),
-                    subtitle: Text(
-                      '${_loc.tr("قبل العمولة", "Gross")}: ${t.grossAmount} · ${_loc.tr("العمولة", "Fee")}: -${t.commissionAmount.toStringAsFixed(2)}',
-                    ),
-                    trailing: Text(
-                      '+${t.netAmount.toStringAsFixed(2)} ${_loc.tr("د.أ", "JOD")}',
-                      style: const TextStyle(
-                        color: AppColors.success,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ),
-                )),
-          ],
-        );
-      },
+  Future<void> _finishAndIssueInvoice(DbMechanicRequest o) async {
+    final ctrl = TextEditingController(
+      text: o.totalAmount > 0 ? o.totalAmount.toStringAsFixed(2) : '',
     );
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('إنهاء السحب وإصدار الفاتورة النهائية'),
+        content: TextField(
+          controller: ctrl,
+          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          textInputAction: TextInputAction.done,
+          decoration: const InputDecoration(
+            labelText: 'قيمة الفاتورة النهائية (د.أ)',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('إلغاء'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.success,
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () async {
+              final finalAmt = double.tryParse(ctrl.text.trim()) ?? 0.0;
+              if (finalAmt <= 0) return;
+              try {
+                await _db
+                    .from('mechanic_requests')
+                    .update({
+                      'status': 'awaiting_payment',
+                      'progress_step': 'awaiting_payment',
+                      'total_amount': finalAmt,
+                      'payment_status': 'invoiced',
+                    })
+                    .eq('id', o.id)
+                    .select('id');
+                _tracker.stop();
+                _trackingRequestId = null;
+
+                if (o.userId != null) {
+                  await _notifs.sendNotification(
+                    targetUserId: o.userId!,
+                    title: 'انتهت رحلة الونش — صدرت الفاتورة',
+                    body:
+                        'قيمة الفاتورة النهائية ${finalAmt.toStringAsFixed(2)} د.أ، يرجى إتمام الدفع الآن.',
+                    type: 'invoice_issued',
+                    referenceId: o.id,
+                  );
+                }
+                if (ctx.mounted) Navigator.pop(ctx);
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('تم إصدار الفاتورة وإرسالها للعميل ✓'),
+                      backgroundColor: AppColors.success,
+                    ),
+                  );
+                }
+              } catch (e) {
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('خطأ: $e'),
+                      backgroundColor: Colors.red,
+                    ),
+                  );
+                }
+              }
+            },
+            child: const Text('إصدار الفاتورة'),
+          ),
+        ],
+      ),
+    );
+    ctrl.dispose();
   }
 }

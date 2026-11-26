@@ -1366,10 +1366,10 @@ packages:
     dependency: transitive
     description:
       name: vector_math
-      sha256: fa49e1674cb84acb900141714e6c6e1f9ae099827c24d141430ff6819db4e1bc
+      sha256: "92b9910f66ed1057fd4da7b040ae7c74cafacf885bdc81be496928d5049b032d"
       url: "https://pub.dev"
     source: hosted
-    version: "2.4.4"
+    version: "2.4.3"
   video_player:
     dependency: "direct main"
     description:
@@ -1390,10 +1390,10 @@ packages:
     dependency: transitive
     description:
       name: video_player_avfoundation
-      sha256: "5af728d811c218fdc100b7e89bcda789fe34d36d53a968912011bc2d7df14b46"
+      sha256: "69782f89ed334b6a316d87ded16b07816d18e4c0952b69a88a1b502afb45fe3b"
       url: "https://pub.dev"
     source: hosted
-    version: "2.12.4"
+    version: "2.12.5"
   video_player_platform_interface:
     dependency: transitive
     description:

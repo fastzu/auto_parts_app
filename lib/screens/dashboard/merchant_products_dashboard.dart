@@ -1,22 +1,57 @@
 import 'package:material_ui/material_ui.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import '../../models/db_models.dart';
+import '../../services/app_locale_service.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/animations.dart';
 import '../mobile/add_product_screen.dart';
+import '../mobile/wallet_and_payments_screens.dart';
 
 class MerchantProductsDashboard extends StatefulWidget {
   final bool embedded;
-  const MerchantProductsDashboard({super.key, this.embedded = false});
+  final CustomerProfile? profile;
+  const MerchantProductsDashboard({
+    super.key,
+    this.embedded = false,
+    this.profile,
+  });
 
   @override
-  State<MerchantProductsDashboard> createState() => _MerchantProductsDashboardState();
+  State<MerchantProductsDashboard> createState() =>
+      _MerchantProductsDashboardState();
 }
 
 class _MerchantProductsDashboardState extends State<MerchantProductsDashboard> {
   final _db = Supabase.instance.client;
+  final _loc = AppLocaleService.instance;
   DashboardPeriod _period = DashboardPeriod.month1;
   DateTimeRange? _customRange;
   final Set<String> _busyIds = {};
+  CustomerProfile? _loadedProfile;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadedProfile = widget.profile;
+    if (_loadedProfile == null) {
+      _loadProfile();
+    }
+  }
+
+  Future<void> _loadProfile() async {
+    final uid = _db.auth.currentUser?.id;
+    if (uid == null) return;
+    try {
+      final row = await _db
+          .from('customers')
+          .select()
+          .eq('id', uid)
+          .maybeSingle();
+      if (row != null && mounted) {
+        setState(() => _loadedProfile = CustomerProfile.fromMap(row));
+      }
+    } catch (_) {}
+  }
 
   Future<void> _toggleVisibility(Map<String, dynamic> p) async {
     final id = p['id'] as String;
@@ -50,7 +85,9 @@ class _MerchantProductsDashboardState extends State<MerchantProductsDashboard> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('تعذر تغيير حالة الإظهار: $e'), backgroundColor: Colors.red),
+          SnackBar(
+              content: Text('تعذر تغيير حالة الإظهار: $e'),
+              backgroundColor: Colors.red),
         );
       }
     } finally {
@@ -60,11 +97,13 @@ class _MerchantProductsDashboardState extends State<MerchantProductsDashboard> {
 
   Future<void> _editProductDialog(Map<String, dynamic> p) async {
     final currentPrice = ((p['price'] as num?) ?? 0).toDouble();
-    final currentOriginal = ((p['original_price'] as num?) ?? currentPrice).toDouble();
+    final currentOriginal =
+        ((p['original_price'] as num?) ?? currentPrice).toDouble();
     final currentDiscount = (p['discount_percent'] as int?) ?? 0;
 
     final priceCtrl = TextEditingController(
-      text: (currentDiscount > 0 ? currentOriginal : currentPrice).toStringAsFixed(2),
+      text: (currentDiscount > 0 ? currentOriginal : currentPrice)
+          .toStringAsFixed(2),
     );
     final discountCtrl = TextEditingController(text: '$currentDiscount');
     bool saving = false;
@@ -73,15 +112,18 @@ class _MerchantProductsDashboardState extends State<MerchantProductsDashboard> {
       context: context,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setD) {
-          final basePrice = double.tryParse(priceCtrl.text.trim()) ?? currentPrice;
-          final disc = (int.tryParse(discountCtrl.text.trim()) ?? 0).clamp(0, 90);
-          final finalPrice =
-              disc > 0 ? double.parse((basePrice * (1 - disc / 100)).toStringAsFixed(2)) : basePrice;
+          final basePrice =
+              double.tryParse(priceCtrl.text.trim()) ?? currentPrice;
+          final disc =
+              (int.tryParse(discountCtrl.text.trim()) ?? 0).clamp(0, 90);
+          final finalPrice = disc > 0
+              ? double.parse((basePrice * (1 - disc / 100)).toStringAsFixed(2))
+              : basePrice;
 
           return AlertDialog(
-            title: Text(
+            title: const Text(
               'تعديل السعر والخصم',
-              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
             ),
             content: Column(
               mainAxisSize: MainAxisSize.min,
@@ -89,19 +131,22 @@ class _MerchantProductsDashboardState extends State<MerchantProductsDashboard> {
               children: [
                 Text(
                   (p['title'] as String?) ?? '',
-                  style: const TextStyle(color: AppColors.textSecondary, fontSize: 13),
+                  style: const TextStyle(
+                      color: AppColors.textSecondary, fontSize: 13),
                 ),
                 const SizedBox(height: 12),
                 TextField(
                   controller: priceCtrl,
-                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                  keyboardType:
+                      const TextInputType.numberWithOptions(decimal: true),
                   textInputAction: TextInputAction.next,
                   onChanged: (_) => setD(() {}),
                   decoration: InputDecoration(
                     labelText: 'السعر الأصلي (د.أ)',
                     filled: true,
                     fillColor: AppColors.surface,
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                    border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12)),
                   ),
                 ),
                 const SizedBox(height: 10),
@@ -114,7 +159,8 @@ class _MerchantProductsDashboardState extends State<MerchantProductsDashboard> {
                     labelText: 'نسبة الخصم % (0 = بدون خصم)',
                     filled: true,
                     fillColor: AppColors.surface,
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                    border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12)),
                   ),
                 ),
                 const SizedBox(height: 10),
@@ -139,7 +185,9 @@ class _MerchantProductsDashboardState extends State<MerchantProductsDashboard> {
               ],
             ),
             actions: [
-              TextButton(onPressed: saving ? null : () => Navigator.pop(ctx), child: const Text('إلغاء')),
+              TextButton(
+                  onPressed: saving ? null : () => Navigator.pop(ctx),
+                  child: const Text('إلغاء')),
               ElevatedButton(
                 style: ElevatedButton.styleFrom(
                   backgroundColor: AppColors.orange,
@@ -176,7 +224,9 @@ class _MerchantProductsDashboardState extends State<MerchantProductsDashboard> {
                           setD(() => saving = false);
                           if (mounted) {
                             ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(content: Text('خطأ: $e'), backgroundColor: Colors.red),
+                              SnackBar(
+                                  content: Text('خطأ: $e'),
+                                  backgroundColor: Colors.red),
                             );
                           }
                         }
@@ -185,7 +235,8 @@ class _MerchantProductsDashboardState extends State<MerchantProductsDashboard> {
                     ? const SizedBox(
                         width: 18,
                         height: 18,
-                        child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
+                        child: CircularProgressIndicator(
+                            color: Colors.white, strokeWidth: 2),
                       )
                     : const Text('حفظ التعديل'),
               ),
@@ -205,9 +256,12 @@ class _MerchantProductsDashboardState extends State<MerchantProductsDashboard> {
         title: const Text('حذف المنشور'),
         content: Text('هل تريد حذف "${p['title']}" نهائياً؟'),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('إلغاء')),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('إلغاء')),
           ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
+            style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.red, foregroundColor: Colors.white),
             onPressed: () => Navigator.pop(ctx, true),
             child: const Text('حذف'),
           ),
@@ -219,7 +273,9 @@ class _MerchantProductsDashboardState extends State<MerchantProductsDashboard> {
       await _db.from('products').delete().eq('id', p['id']);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('تم حذف المنتج بنجاح'), backgroundColor: AppColors.navy),
+          const SnackBar(
+              content: Text('تم حذف المنتج بنجاح'),
+              backgroundColor: AppColors.navy),
         );
       }
     } catch (e) {
@@ -231,15 +287,10 @@ class _MerchantProductsDashboardState extends State<MerchantProductsDashboard> {
     }
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final uid = _db.auth.currentUser?.id;
-    if (uid == null) {
-      return const Center(child: Text('يرجى تسجيل الدخول'));
-    }
+  Widget _buildProductsBody(String uid) {
     final range = DateRangeFilterBar.resolveRange(_period, _customRange);
 
-    final body = StreamBuilder<List<Map<String, dynamic>>>(
+    return StreamBuilder<List<Map<String, dynamic>>>(
       stream: _db
           .from('products')
           .stream(primaryKey: ['id'])
@@ -254,17 +305,24 @@ class _MerchantProductsDashboardState extends State<MerchantProductsDashboard> {
         final items = snap.data!.where((p) {
           final dt = DateTime.tryParse((p['created_at'] as String?) ?? '');
           if (dt == null) return true;
-          return !dt.isBefore(range.start) && !dt.isAfter(range.end.add(const Duration(days: 1)));
+          return !dt.isBefore(range.start) &&
+              !dt.isAfter(range.end.add(const Duration(days: 1)));
         }).toList();
 
-        final totalViews = items.fold<int>(0, (s, p) => s + ((p['views_count'] as int?) ?? 0));
-        final totalClicks = items.fold<int>(0, (s, p) => s + ((p['clicks_count'] as int?) ?? 0));
-        final totalSales = items.fold<int>(0, (s, p) => s + ((p['sales_count'] as int?) ?? 0));
+        final totalViews =
+            items.fold<int>(0, (s, p) => s + ((p['views_count'] as int?) ?? 0));
+        final totalClicks = items.fold<int>(
+            0, (s, p) => s + ((p['clicks_count'] as int?) ?? 0));
+        final totalSales =
+            items.fold<int>(0, (s, p) => s + ((p['sales_count'] as int?) ?? 0));
 
         final chartData = items.take(6).map((p) {
           final title = (p['title'] as String? ?? '');
           final short = title.length > 8 ? title.substring(0, 8) : title;
-          return (label: short, value: ((p['views_count'] as int?) ?? 0).toDouble());
+          return (
+            label: short,
+            value: ((p['views_count'] as int?) ?? 0).toDouble()
+          );
         }).toList();
 
         return ListView(
@@ -278,15 +336,16 @@ class _MerchantProductsDashboardState extends State<MerchantProductsDashboard> {
                   children: [
                     const Text(
                       'قطع الغيار والمخزون',
-                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                      style:
+                          TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                     ),
                     ElevatedButton.icon(
                       style: ElevatedButton.styleFrom(
                         backgroundColor: AppColors.orange,
                         foregroundColor: Colors.white,
                       ),
-                      onPressed: () =>
-                          Navigator.push(context, animatedRoute(const AddProductScreen())),
+                      onPressed: () => Navigator.push(
+                          context, animatedRoute(const AddProductScreen())),
                       icon: const Icon(Icons.add, size: 18),
                       label: const Text('إضافة قطعة'),
                     ),
@@ -370,7 +429,9 @@ class _MerchantProductsDashboardState extends State<MerchantProductsDashboard> {
                                         )
                                       : null,
                                 ),
-                                child: imgs.isEmpty ? const Icon(Icons.settings_outlined) : null,
+                                child: imgs.isEmpty
+                                    ? const Icon(Icons.settings_outlined)
+                                    : null,
                               ),
                               const SizedBox(width: 12),
                               Expanded(
@@ -395,8 +456,10 @@ class _MerchantProductsDashboardState extends State<MerchantProductsDashboard> {
                                             padding: const EdgeInsets.symmetric(
                                                 horizontal: 7, vertical: 2),
                                             decoration: BoxDecoration(
-                                              color: Colors.orange.withValues(alpha: 0.16),
-                                              borderRadius: BorderRadius.circular(8),
+                                              color: Colors.orange
+                                                  .withValues(alpha: 0.16),
+                                              borderRadius:
+                                                  BorderRadius.circular(8),
                                             ),
                                             child: const Text(
                                               'مخفي',
@@ -414,7 +477,8 @@ class _MerchantProductsDashboardState extends State<MerchantProductsDashboard> {
                                                 horizontal: 7, vertical: 2),
                                             decoration: BoxDecoration(
                                               color: Colors.red,
-                                              borderRadius: BorderRadius.circular(8),
+                                              borderRadius:
+                                                  BorderRadius.circular(8),
                                             ),
                                             child: Text(
                                               '-$discount%',
@@ -445,8 +509,10 @@ class _MerchantProductsDashboardState extends State<MerchantProductsDashboard> {
                           Row(
                             mainAxisAlignment: MainAxisAlignment.spaceAround,
                             children: [
-                              _miniMetric(Icons.visibility_outlined, '$views مشاهدة'),
-                              _miniMetric(Icons.touch_app_outlined, '$clicks نقرة'),
+                              _miniMetric(
+                                  Icons.visibility_outlined, '$views مشاهدة'),
+                              _miniMetric(
+                                  Icons.touch_app_outlined, '$clicks نقرة'),
                               _miniMetric(Icons.sell_outlined, '$sales مبيعة'),
                             ],
                           ),
@@ -456,26 +522,38 @@ class _MerchantProductsDashboardState extends State<MerchantProductsDashboard> {
                               Expanded(
                                 child: OutlinedButton.icon(
                                   style: OutlinedButton.styleFrom(
-                                    foregroundColor: isHidden ? AppColors.success : Colors.orange,
+                                    foregroundColor: isHidden
+                                        ? AppColors.success
+                                        : Colors.orange,
                                     side: BorderSide(
-                                      color: isHidden ? AppColors.success : Colors.orange,
+                                      color: isHidden
+                                          ? AppColors.success
+                                          : Colors.orange,
                                     ),
-                                    padding: const EdgeInsets.symmetric(vertical: 8),
+                                    padding:
+                                        const EdgeInsets.symmetric(vertical: 8),
                                   ),
-                                  onPressed: isBusy ? null : () => _toggleVisibility(p),
+                                  onPressed: isBusy
+                                      ? null
+                                      : () => _toggleVisibility(p),
                                   icon: isBusy
                                       ? const SizedBox(
                                           width: 15,
                                           height: 15,
-                                          child: CircularProgressIndicator(strokeWidth: 2),
+                                          child: CircularProgressIndicator(
+                                              strokeWidth: 2),
                                         )
                                       : Icon(
-                                          isHidden ? Icons.visibility : Icons.visibility_off,
+                                          isHidden
+                                              ? Icons.visibility
+                                              : Icons.visibility_off,
                                           size: 17,
                                         ),
                                   label: Text(
                                     isHidden ? 'إظهار' : 'إخفاء',
-                                    style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+                                    style: const TextStyle(
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.bold),
                                   ),
                                 ),
                               ),
@@ -484,20 +562,25 @@ class _MerchantProductsDashboardState extends State<MerchantProductsDashboard> {
                                 child: OutlinedButton.icon(
                                   style: OutlinedButton.styleFrom(
                                     foregroundColor: AppColors.navy,
-                                    padding: const EdgeInsets.symmetric(vertical: 8),
+                                    padding:
+                                        const EdgeInsets.symmetric(vertical: 8),
                                   ),
                                   onPressed: () => _editProductDialog(p),
-                                  icon: const Icon(Icons.local_offer_outlined, size: 17),
+                                  icon: const Icon(Icons.local_offer_outlined,
+                                      size: 17),
                                   label: const Text(
                                     'السعر والخصم',
-                                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+                                    style: TextStyle(
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.bold),
                                   ),
                                 ),
                               ),
                               const SizedBox(width: 6),
                               IconButton(
                                 tooltip: 'حذف المنتج',
-                                icon: const Icon(Icons.delete_outline, color: Colors.red),
+                                icon: const Icon(Icons.delete_outline,
+                                    color: Colors.red),
                                 onPressed: () => _deleteProduct(p),
                               ),
                             ],
@@ -512,20 +595,60 @@ class _MerchantProductsDashboardState extends State<MerchantProductsDashboard> {
         );
       },
     );
+  }
 
-    if (widget.embedded) return body;
+  @override
+  Widget build(BuildContext context) {
+    final uid = _db.auth.currentUser?.id;
+    if (uid == null) {
+      return const Center(child: Text('يرجى تسجيل الدخول'));
+    }
 
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('داش بورد المنتجات والأداء'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.add_circle, color: AppColors.orange, size: 28),
-            onPressed: () => Navigator.push(context, animatedRoute(const AddProductScreen())),
+    if (widget.embedded) {
+      return _buildProductsBody(uid);
+    }
+
+    return DefaultTabController(
+      length: 2,
+      child: Scaffold(
+        appBar: AppBar(
+          title: Text(_loc.tr('لوحة تحكم التاجر', 'Merchant Dashboard')),
+          actions: [
+            IconButton(
+              icon: const Icon(Icons.add_circle,
+                  color: AppColors.orange, size: 28),
+              onPressed: () => Navigator.push(
+                  context, animatedRoute(const AddProductScreen())),
+            ),
+          ],
+          bottom: TabBar(
+            indicatorColor: AppColors.orange,
+            labelColor: AppColors.orange,
+            unselectedLabelColor: AppColors.textSecondary,
+            tabs: [
+              Tab(
+                icon: const Icon(Icons.inventory_2_outlined),
+                text: _loc.tr('المنتجات والأداء', 'Products & Stats'),
+              ),
+              Tab(
+                icon: const Icon(Icons.account_balance_wallet_outlined),
+                text: _loc.tr('المحفظة المالية', 'Wallet & Payouts'),
+              ),
+            ],
           ),
-        ],
+        ),
+        body: TabBarView(
+          children: [
+            _buildProductsBody(uid),
+            _loadedProfile == null
+                ? const Center(child: CircularProgressIndicator())
+                : ProviderWalletView(
+                    profile: _loadedProfile!,
+                    onRefreshProfile: _loadProfile,
+                  ),
+          ],
+        ),
       ),
-      body: body,
     );
   }
 
@@ -546,7 +669,9 @@ class _MerchantProductsDashboardState extends State<MerchantProductsDashboard> {
               value: val,
               style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
             ),
-            Text(label, style: const TextStyle(color: AppColors.textSecondary, fontSize: 10)),
+            Text(label,
+                style: const TextStyle(
+                    color: AppColors.textSecondary, fontSize: 10)),
           ],
         ),
       ),
@@ -558,7 +683,8 @@ class _MerchantProductsDashboardState extends State<MerchantProductsDashboard> {
       children: [
         Icon(icon, size: 15, color: AppColors.navy),
         const SizedBox(width: 4),
-        Text(text, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+        Text(text,
+            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
       ],
     );
   }
