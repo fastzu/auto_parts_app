@@ -9,6 +9,7 @@ import '../../models/db_models.dart';
 import '../../services/live_progress_tracker.dart';
 import '../../services/location_service.dart';
 import '../../services/notifications_service.dart';
+import '../../services/wallet_auth_service.dart';
 import '../../theme/app_theme.dart';
 import '../../utils/status_labels.dart';
 import '../../widgets/animations.dart';
@@ -47,6 +48,7 @@ class _TowingDashboardScreenState extends State<TowingDashboardScreen> {
   DashboardPeriod _period = DashboardPeriod.month1;
   DateTimeRange? _customRange;
   String? _trackingRequestId;
+  bool _walletUnlocked = false;
 
   @override
   void initState() {
@@ -84,6 +86,15 @@ class _TowingDashboardScreenState extends State<TowingDashboardScreen> {
         .update({'is_available': val})
         .eq('id', widget.profile.id);
     widget.onRefreshProfile();
+  }
+
+  Future<void> _onTabTap(int i) async {
+    if (i == 1 && !_walletUnlocked) {
+      final ok = await WalletAuthService.instance.authenticate(context);
+      if (!ok || !mounted) return;
+      _walletUnlocked = true;
+    }
+    setState(() => _tab = i);
   }
 
   double? _distanceTo(DbMechanicRequest r) {
@@ -124,9 +135,83 @@ class _TowingDashboardScreenState extends State<TowingDashboardScreen> {
     if (step == 'towing') return 'جاري سحب السيارة إلى الوجهة';
     if (step == 'arrived_at_pickup') return 'وصل الونش لموقع العميل ✓';
     if (step == 'on_the_way' || st == 'accepted' || st == 'in_progress') {
-      return 'الونش في الطريق لموقع العميل';
+      return 'في الطريق لموقع العميل';
     }
     return StatusLabels.emergency(status, progressStep: progressStep);
+  }
+
+  double _progressFor(DbMechanicRequest o) {
+    final st = o.status.toLowerCase();
+    final step = o.progressStep.toLowerCase();
+    if (st == 'completed' || step == 'completed') return 1.0;
+    if (st == 'awaiting_payment' ||
+        step == 'awaiting_payment' ||
+        o.paymentStatus == 'invoiced') {
+      return 0.88;
+    }
+    if (step == 'towing') return 0.72;
+    if (step == 'arrived_at_pickup') return 0.54;
+    if (step == 'on_the_way' || st == 'accepted' || st == 'in_progress') {
+      return 0.35;
+    }
+    if (st == 'quoted' || step == 'quote_sent') return 0.18;
+    return 0.0;
+  }
+
+  Widget _buildOrderProgressBar(DbMechanicRequest o) {
+    final val = _progressFor(o);
+    if (val <= 0) return const SizedBox.shrink();
+    final pct = (val * 100).round();
+    final label = _winchStatusLabel(o.status, o.progressStep);
+
+    return Container(
+      margin: const EdgeInsets.only(top: 8, bottom: 10),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: AppColors.navy,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Expanded(
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 12,
+                  ),
+                ),
+              ),
+              Text(
+                '$pct%',
+                style: const TextStyle(
+                  color: AppColors.orange,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 12,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(6),
+            child: LinearProgressIndicator(
+              value: val,
+              minHeight: 6,
+              backgroundColor: Colors.white24,
+              color: val >= 1.0 ? AppColors.success : AppColors.orange,
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   void _ensureTrackingActive(DbMechanicRequest o) {
@@ -266,7 +351,7 @@ class _TowingDashboardScreenState extends State<TowingDashboardScreen> {
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _tab,
         selectedItemColor: AppColors.orange,
-        onTap: (i) => setState(() => _tab = i),
+        onTap: _onTabTap,
         items: const [
           BottomNavigationBarItem(
             icon: Icon(Icons.local_shipping),
@@ -411,7 +496,8 @@ class _TowingDashboardScreenState extends State<TowingDashboardScreen> {
                             ),
                           ),
                         ),
-                        const SizedBox(height: 6),
+                        if (isMine) _buildOrderProgressBar(o),
+                        const SizedBox(height: 4),
                         Text(
                           'المشكلة: ${o.description ?? "-"} · الهاتف: ${o.phone ?? "-"}',
                         ),
@@ -426,7 +512,7 @@ class _TowingDashboardScreenState extends State<TowingDashboardScreen> {
                           Padding(
                             padding: const EdgeInsets.only(top: 4),
                             child: Text(
-                              'السعر المتفق عليه: ${o.totalAmount.toStringAsFixed(2)} د.أ',
+                              'السعر: ${o.totalAmount.toStringAsFixed(2)} د.أ',
                               style: const TextStyle(
                                 fontWeight: FontWeight.bold,
                                 color: AppColors.orange,
@@ -436,7 +522,7 @@ class _TowingDashboardScreenState extends State<TowingDashboardScreen> {
                         const SizedBox(height: 10),
                         if (hasCoords) ...[
                           SizedBox(
-                            height: 140,
+                            height: 145,
                             child: ClipRRect(
                               borderRadius: BorderRadius.circular(12),
                               child: FlutterMap(
@@ -445,14 +531,36 @@ class _TowingDashboardScreenState extends State<TowingDashboardScreen> {
                                     o.pickupLatitude!,
                                     o.pickupLongitude!,
                                   ),
-                                  initialZoom: 14,
+                                  initialZoom: 15.5,
                                 ),
                                 children: [
                                   TileLayer(
                                     urlTemplate:
-                                        'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                                        'https://{s}.google.com/vt/lyrs=m&hl=ar&x={x}&y={y}&z={z}',
+                                    subdomains: const [
+                                      'mt0',
+                                      'mt1',
+                                      'mt2',
+                                      'mt3',
+                                    ],
                                     userAgentPackageName: 'com.ghayarakjo.app',
                                   ),
+                                  if (_myLat != null && _myLng != null)
+                                    PolylineLayer(
+                                      polylines: [
+                                        Polyline(
+                                          points: [
+                                            LatLng(_myLat!, _myLng!),
+                                            LatLng(
+                                              o.pickupLatitude!,
+                                              o.pickupLongitude!,
+                                            ),
+                                          ],
+                                          color: AppColors.orange,
+                                          strokeWidth: 4,
+                                        ),
+                                      ],
+                                    ),
                                   MarkerLayer(
                                     markers: [
                                       Marker(
@@ -513,24 +621,7 @@ class _TowingDashboardScreenState extends State<TowingDashboardScreen> {
                               label: const Text('إرسال عرض سعر للعميل'),
                             ),
                           ),
-                        if (isQuoted) ...[
-                          Container(
-                            width: double.infinity,
-                            padding: const EdgeInsets.all(10),
-                            decoration: BoxDecoration(
-                              color: AppColors.orangeLight,
-                              borderRadius: BorderRadius.circular(10),
-                            ),
-                            child: Text(
-                              'تم إرسال عرض السعر (${o.totalAmount.toStringAsFixed(2)} د.أ) — بانتظار موافقة العميل قبل الانطلاق.',
-                              style: const TextStyle(
-                                color: AppColors.navy,
-                                fontWeight: FontWeight.w600,
-                                fontSize: 12.5,
-                              ),
-                            ),
-                          ),
-                          const SizedBox(height: 8),
+                        if (isQuoted)
                           Row(
                             children: [
                               Expanded(
@@ -552,7 +643,6 @@ class _TowingDashboardScreenState extends State<TowingDashboardScreen> {
                               ),
                             ],
                           ),
-                        ],
                         if (isActiveWork) ...[
                           if (o.progressStep == 'on_the_way' ||
                               o.progressStep.isEmpty)
@@ -598,20 +688,12 @@ class _TowingDashboardScreenState extends State<TowingDashboardScreen> {
                             ),
                         ],
                         if (isAwaitingPayment)
-                          Container(
-                            width: double.infinity,
-                            padding: const EdgeInsets.all(10),
-                            decoration: BoxDecoration(
-                              color: AppColors.navy.withValues(alpha: 0.08),
-                              borderRadius: BorderRadius.circular(10),
-                            ),
-                            child: Text(
-                              'صدرت الفاتورة بقيمة ${o.totalAmount.toStringAsFixed(2)} د.أ — بانتظار دفع العميل.',
-                              style: const TextStyle(
-                                color: AppColors.navy,
-                                fontWeight: FontWeight.bold,
-                                fontSize: 12.5,
-                              ),
+                          Text(
+                            'بانتظار دفع العميل (${o.totalAmount.toStringAsFixed(2)} د.أ)',
+                            style: const TextStyle(
+                              color: AppColors.navy,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 12.5,
                             ),
                           ),
                       ],
@@ -671,8 +753,7 @@ class _TowingDashboardScreenState extends State<TowingDashboardScreen> {
                   await _notifs.sendNotification(
                     targetUserId: o.userId!,
                     title: 'وصلك عرض سعر جديد للونش',
-                    body:
-                        'عرض سائق الونش أجرة ${amt.toStringAsFixed(2)} د.أ — يمكنك قبول العرض أو رفضه.',
+                    body: 'عرض سائق الونش أجرة ${amt.toStringAsFixed(2)} د.أ.',
                     type: 'quote_received',
                     referenceId: o.id,
                   );
@@ -681,7 +762,7 @@ class _TowingDashboardScreenState extends State<TowingDashboardScreen> {
                 if (mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
                     const SnackBar(
-                      content: Text('تم إرسال عرض السعر بانتظار موافقة العميل ✓'),
+                      content: Text('تم إرسال عرض السعر ✓'),
                       backgroundColor: AppColors.success,
                     ),
                   );
@@ -718,11 +799,6 @@ class _TowingDashboardScreenState extends State<TowingDashboardScreen> {
           })
           .eq('id', o.id)
           .select('id');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('تم سحب عرض السعر وإرجاع الطلب للانتظار')),
-        );
-      }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -830,9 +906,8 @@ class _TowingDashboardScreenState extends State<TowingDashboardScreen> {
                 if (o.userId != null) {
                   await _notifs.sendNotification(
                     targetUserId: o.userId!,
-                    title: 'انتهت رحلة الونش — صدرت الفاتورة',
-                    body:
-                        'قيمة الفاتورة النهائية ${finalAmt.toStringAsFixed(2)} د.أ، يرجى إتمام الدفع الآن.',
+                    title: 'صدرت الفاتورة النهائية',
+                    body: 'قيمة الفاتورة ${finalAmt.toStringAsFixed(2)} د.أ.',
                     type: 'invoice_issued',
                     referenceId: o.id,
                   );
@@ -841,7 +916,7 @@ class _TowingDashboardScreenState extends State<TowingDashboardScreen> {
                 if (mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
                     const SnackBar(
-                      content: Text('تم إصدار الفاتورة وإرسالها للعميل ✓'),
+                      content: Text('تم إصدار الفاتورة ✓'),
                       backgroundColor: AppColors.success,
                     ),
                   );

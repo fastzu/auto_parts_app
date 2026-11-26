@@ -9,6 +9,7 @@ import '../../models/db_models.dart';
 import '../../services/live_progress_tracker.dart';
 import '../../services/location_service.dart';
 import '../../services/notifications_service.dart';
+import '../../services/wallet_auth_service.dart';
 import '../../theme/app_theme.dart';
 import '../../utils/status_labels.dart';
 import '../../widgets/animations.dart';
@@ -53,6 +54,7 @@ class _WorkshopEmergencyDashboardState
   DashboardPeriod _period = DashboardPeriod.month1;
   DateTimeRange? _customRange;
   String? _trackingRequestId;
+  bool _walletUnlocked = false;
 
   List<({int id, String label})> get _menuItems {
     final list = <({int id, String label})>[
@@ -106,6 +108,16 @@ class _WorkshopEmergencyDashboardState
     widget.onRefreshProfile();
   }
 
+  Future<void> _selectTab(int id, {required bool isDrawer}) async {
+    if (id == 4 && !_walletUnlocked) {
+      final ok = await WalletAuthService.instance.authenticate(context);
+      if (!ok || !mounted) return;
+      _walletUnlocked = true;
+    }
+    setState(() => _tab = id);
+    if (isDrawer && mounted) Navigator.pop(context);
+  }
+
   double? _distanceToRequest(DbMechanicRequest r) {
     if (_myLat == null ||
         _myLng == null ||
@@ -145,9 +157,83 @@ class _WorkshopEmergencyDashboardState
     if (step == 'towing') return 'جاري سحب السيارة إلى الوجهة';
     if (step == 'arrived_at_pickup') return 'وصل الفني إلى موقع العميل ✓';
     if (step == 'on_the_way' || st == 'accepted' || st == 'in_progress') {
-      return 'الفني في الطريق إلى العميل';
+      return 'في الطريق إلى العميل';
     }
     return StatusLabels.emergency(status, progressStep: progressStep);
+  }
+
+  double _progressFor(DbMechanicRequest r) {
+    final st = r.status.toLowerCase();
+    final step = r.progressStep.toLowerCase();
+    if (st == 'completed' || step == 'completed') return 1.0;
+    if (st == 'awaiting_payment' ||
+        step == 'awaiting_payment' ||
+        r.paymentStatus == 'invoiced') {
+      return 0.88;
+    }
+    if (step == 'repairing' || step == 'towing') return 0.72;
+    if (step == 'arrived_at_pickup') return 0.54;
+    if (step == 'on_the_way' || st == 'accepted' || st == 'in_progress') {
+      return 0.35;
+    }
+    if (st == 'quoted' || step == 'quote_sent') return 0.18;
+    return 0.0;
+  }
+
+  Widget _buildOrderProgressBar(DbMechanicRequest r) {
+    final val = _progressFor(r);
+    if (val <= 0) return const SizedBox.shrink();
+    final pct = (val * 100).round();
+    final label = _emergencyStatusLabel(r.status, r.progressStep);
+
+    return Container(
+      margin: const EdgeInsets.only(top: 8, bottom: 10),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: AppColors.navy,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Expanded(
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 12,
+                  ),
+                ),
+              ),
+              Text(
+                '$pct%',
+                style: const TextStyle(
+                  color: AppColors.orange,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 12,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(6),
+            child: LinearProgressIndicator(
+              value: val,
+              minHeight: 6,
+              backgroundColor: Colors.white24,
+              color: val >= 1.0 ? AppColors.success : AppColors.orange,
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   void _ensureTrackingActive(DbMechanicRequest r) {
@@ -371,10 +457,7 @@ class _WorkshopEmergencyDashboardState
             return Padding(
               padding: const EdgeInsets.only(bottom: 8),
               child: GestureDetector(
-                onTap: () {
-                  setState(() => _tab = item.id);
-                  if (isDrawer) Navigator.pop(context);
-                },
+                onTap: () => _selectTab(item.id, isDrawer: isDrawer),
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 200),
                   width: double.infinity,
@@ -744,7 +827,8 @@ class _WorkshopEmergencyDashboardState
                         ),
                       ),
                     ),
-                    const SizedBox(height: 6),
+                    if (isMine) _buildOrderProgressBar(r),
+                    const SizedBox(height: 4),
                     Text(
                       'المشكلة: ${r.description ?? "-"} · الهاتف: ${r.phone ?? "-"}',
                     ),
@@ -753,7 +837,7 @@ class _WorkshopEmergencyDashboardState
                       Padding(
                         padding: const EdgeInsets.only(top: 4),
                         child: Text(
-                          'السعر المتفق عليه: ${r.totalAmount.toStringAsFixed(2)} د.أ',
+                          'السعر: ${r.totalAmount.toStringAsFixed(2)} د.أ',
                           style: const TextStyle(
                             fontWeight: FontWeight.bold,
                             color: AppColors.orange,
@@ -763,7 +847,7 @@ class _WorkshopEmergencyDashboardState
                     const SizedBox(height: 10),
                     if (hasCoords) ...[
                       SizedBox(
-                        height: 140,
+                        height: 145,
                         child: ClipRRect(
                           borderRadius: BorderRadius.circular(12),
                           child: FlutterMap(
@@ -772,14 +856,31 @@ class _WorkshopEmergencyDashboardState
                                 r.pickupLatitude!,
                                 r.pickupLongitude!,
                               ),
-                              initialZoom: 14,
+                              initialZoom: 15.5,
                             ),
                             children: [
                               TileLayer(
                                 urlTemplate:
-                                    'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                                    'https://{s}.google.com/vt/lyrs=m&hl=ar&x={x}&y={y}&z={z}',
+                                subdomains: const ['mt0', 'mt1', 'mt2', 'mt3'],
                                 userAgentPackageName: 'com.ghayarakjo.app',
                               ),
+                              if (_myLat != null && _myLng != null)
+                                PolylineLayer(
+                                  polylines: [
+                                    Polyline(
+                                      points: [
+                                        LatLng(_myLat!, _myLng!),
+                                        LatLng(
+                                          r.pickupLatitude!,
+                                          r.pickupLongitude!,
+                                        ),
+                                      ],
+                                      color: AppColors.orange,
+                                      strokeWidth: 4,
+                                    ),
+                                  ],
+                                ),
                               MarkerLayer(
                                 markers: [
                                   Marker(
@@ -840,24 +941,7 @@ class _WorkshopEmergencyDashboardState
                           label: const Text('إرسال عرض سعر للعميل'),
                         ),
                       ),
-                    if (isQuoted) ...[
-                      Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.all(10),
-                        decoration: BoxDecoration(
-                          color: AppColors.orangeLight,
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                        child: Text(
-                          'تم إرسال عرض السعر (${r.totalAmount.toStringAsFixed(2)} د.أ) — بانتظار موافقة العميل قبل الانطلاق.',
-                          style: const TextStyle(
-                            color: AppColors.navy,
-                            fontWeight: FontWeight.w600,
-                            fontSize: 12.5,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 8),
+                    if (isQuoted)
                       Row(
                         children: [
                           Expanded(
@@ -879,7 +963,6 @@ class _WorkshopEmergencyDashboardState
                           ),
                         ],
                       ),
-                    ],
                     if (isActiveWork) ...[
                       if (r.progressStep == 'on_the_way' ||
                           r.progressStep.isEmpty)
@@ -931,20 +1014,12 @@ class _WorkshopEmergencyDashboardState
                         ),
                     ],
                     if (isAwaitingPayment)
-                      Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.all(10),
-                        decoration: BoxDecoration(
-                          color: AppColors.navy.withValues(alpha: 0.08),
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                        child: Text(
-                          'صدرت الفاتورة بقيمة ${r.totalAmount.toStringAsFixed(2)} د.أ — بانتظار دفع العميل.',
-                          style: const TextStyle(
-                            color: AppColors.navy,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 12.5,
-                          ),
+                      Text(
+                        'بانتظار دفع العميل (${r.totalAmount.toStringAsFixed(2)} د.أ)',
+                        style: const TextStyle(
+                          color: AppColors.navy,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 12.5,
                         ),
                       ),
                   ],
@@ -1003,8 +1078,7 @@ class _WorkshopEmergencyDashboardState
                   await _notifs.sendNotification(
                     targetUserId: r.userId!,
                     title: 'وصلك عرض سعر جديد!',
-                    body:
-                        'عرض الفني مبلغ ${amt.toStringAsFixed(2)} د.أ لطلب الطوارئ — يمكنك القبول أو الرفض.',
+                    body: 'عرض الفني مبلغ ${amt.toStringAsFixed(2)} د.أ.',
                     type: 'quote_received',
                     referenceId: r.id,
                   );
@@ -1013,7 +1087,7 @@ class _WorkshopEmergencyDashboardState
                 if (mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
                     const SnackBar(
-                      content: Text('تم إرسال عرض السعر بانتظار موافقة العميل ✓'),
+                      content: Text('تم إرسال عرض السعر ✓'),
                       backgroundColor: AppColors.success,
                     ),
                   );
@@ -1050,11 +1124,6 @@ class _WorkshopEmergencyDashboardState
           })
           .eq('id', r.id)
           .select('id');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('تم سحب العرض وإرجاع الطلب لقائمة الانتظار')),
-        );
-      }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -1165,9 +1234,8 @@ class _WorkshopEmergencyDashboardState
                 if (r.userId != null) {
                   await _notifs.sendNotification(
                     targetUserId: r.userId!,
-                    title: 'انتهى العمل — صدرت الفاتورة النهائية',
-                    body:
-                        'قيمة الفاتورة ${finalAmt.toStringAsFixed(2)} د.أ — يرجى إتمام الدفع الآن.',
+                    title: 'صدرت الفاتورة النهائية',
+                    body: 'قيمة الفاتورة ${finalAmt.toStringAsFixed(2)} د.أ.',
                     type: 'invoice_issued',
                     referenceId: r.id,
                   );
@@ -1176,7 +1244,7 @@ class _WorkshopEmergencyDashboardState
                 if (mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
                     const SnackBar(
-                      content: Text('تم إصدار الفاتورة وإرسالها للعميل ✓'),
+                      content: Text('تم إصدار الفاتورة ✓'),
                       backgroundColor: AppColors.success,
                     ),
                   );
@@ -1334,20 +1402,12 @@ class _WorkshopEmergencyDashboardState
                       ),
                     ],
                     if (isAwaitingPay)
-                      Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.all(10),
-                        decoration: BoxDecoration(
-                          color: AppColors.navy.withValues(alpha: 0.08),
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                        child: Text(
-                          'صدرت الفاتورة بقيمة ${((a['total_amount'] as num?) ?? 0).toDouble().toStringAsFixed(2)} د.أ — بانتظار دفع الزبون.',
-                          style: const TextStyle(
-                            color: AppColors.navy,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 12.5,
-                          ),
+                      Text(
+                        'بانتظار دفع الزبون (${((a['total_amount'] as num?) ?? 0).toDouble().toStringAsFixed(2)} د.أ)',
+                        style: const TextStyle(
+                          color: AppColors.navy,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 12.5,
                         ),
                       ),
                   ],
