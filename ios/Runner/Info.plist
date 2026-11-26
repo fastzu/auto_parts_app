@@ -64,8 +64,6 @@
 		<string>للسماح بحفظ الصور عند الحاجة.</string>
 		<!-- روابط العودة لـ Google / Apple Sign-In و Dynamic Island -->
 		<key>CFBundleURLTypes</key>
-		<key>NSFaceIDUsageDescription</key>
-		<string>تأكيد هويتك عبر Face ID لفتح المحفظة المالية</string>
 		<array>
 			<dict>
 				<key>CFBundleTypeRole</key>
@@ -93,5 +91,7 @@
 		<false/>
 		<key>NSMicrophoneUsageDescription</key>
 		<string>نحتاج إلى الميكروفون لتسجيل صوت عطل السيارة وتشخيصه بالذكاء الاصطناعي.</string>
+		<key>NSFaceIDUsageDescription</key>
+		<string>تأكيد هويتك عبر Face ID لفتح المحفظة المالية</string>
 	</dict>
 </plist>
