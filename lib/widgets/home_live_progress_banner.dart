@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:material_ui/material_ui.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -5,6 +6,7 @@ import '../models/db_models.dart';
 import '../screens/mobile/workshop_checkout_screen.dart';
 import '../services/dynamic_island_service.dart';
 import '../services/live_progress_tracker.dart';
+import '../services/notifications_service.dart';
 import '../theme/app_theme.dart';
 import 'animations.dart';
 
@@ -20,9 +22,114 @@ class HomeLiveProgressBanner extends StatefulWidget {
 class _HomeLiveProgressBannerState extends State<HomeLiveProgressBanner> {
   final _db = Supabase.instance.client;
   final _tracker = LiveProgressTracker.instance;
+  final _notifs = NotificationsService.instance;
   final Set<String> _startedTracking = {};
   final Map<String, ({double? lat, double? lng, String address})>
       _workshopLocations = {};
+
+  List<Map<String, dynamic>> _customerAppts = [];
+  List<Map<String, dynamic>> _customerEmgs = [];
+  List<Map<String, dynamic>> _providerEmgs = [];
+  List<Map<String, dynamic>> _providerAppts = [];
+
+  StreamSubscription<List<Map<String, dynamic>>>? _custApptSub;
+  StreamSubscription<List<Map<String, dynamic>>>? _custEmgSub;
+  StreamSubscription<List<Map<String, dynamic>>>? _provEmgSub;
+  StreamSubscription<List<Map<String, dynamic>>>? _provApptSub;
+
+  @override
+  void initState() {
+    super.initState();
+    _bindStreams();
+  }
+
+  @override
+  void didUpdateWidget(covariant HomeLiveProgressBanner oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.viewerProfile?.id != widget.viewerProfile?.id ||
+        oldWidget.viewerProfile?.role != widget.viewerProfile?.role) {
+      _cancelStreams();
+      _bindStreams();
+    }
+  }
+
+  @override
+  void dispose() {
+    _cancelStreams();
+    super.dispose();
+  }
+
+  void _cancelStreams() {
+    _custApptSub?.cancel();
+    _custEmgSub?.cancel();
+    _provEmgSub?.cancel();
+    _provApptSub?.cancel();
+  }
+
+  void _bindStreams() {
+    final viewer = widget.viewerProfile;
+    final uid = viewer?.id;
+    if (uid == null || viewer == null) return;
+
+    final role = viewer.role.toLowerCase();
+    final isMechanicOrTowing = role == 'mechanic' || role == 'towing';
+    final isWorkshop = role == 'mechanic';
+
+    // 1) طلبات ومواعيد المستخدم كزبون
+    _custApptSub = _db
+        .from('workshop_appointments')
+        .stream(primaryKey: ['id'])
+        .eq('user_id', uid)
+        .order('created_at', ascending: false)
+        .listen(
+          (rows) {
+            if (mounted) setState(() => _customerAppts = rows);
+          },
+          onError: (_) {},
+        );
+
+    _custEmgSub = _db
+        .from('mechanic_requests')
+        .stream(primaryKey: ['id'])
+        .eq('user_id', uid)
+        .order('created_at', ascending: false)
+        .listen(
+          (rows) {
+            if (mounted) setState(() => _customerEmgs = rows);
+          },
+          onError: (_) {},
+        );
+
+    // 2) طلبات الطوارئ النشطة على حساب الميكانيكي / الونش
+    if (isMechanicOrTowing) {
+      _provEmgSub = _db
+          .from('mechanic_requests')
+          .stream(primaryKey: ['id'])
+          .eq('mechanic_id', uid)
+          .order('created_at', ascending: false)
+          .listen(
+            (rows) {
+              if (mounted) setState(() => _providerEmgs = rows);
+            },
+            onError: (_) {},
+          );
+    }
+
+    // 3) مواعيد الورشة النشطة على حساب الميكانيكي
+    if (isWorkshop) {
+      _provApptSub = _db
+          .from('workshop_appointments')
+          .stream(primaryKey: ['id'])
+          .eq('workshop_id', uid)
+          .order('created_at', ascending: false)
+          .listen(
+            (rows) {
+              if (mounted) setState(() => _providerAppts = rows);
+            },
+            onError: (_) {},
+          );
+    }
+  }
 
   Future<void> _ensureWorkshopGps(Map<String, dynamic> appt) async {
     final id = appt['id'] as String;
@@ -98,276 +205,385 @@ class _HomeLiveProgressBannerState extends State<HomeLiveProgressBanner> {
     };
   }
 
-  String _workshopStepLabel(String step) {
+  String _workshopStepLabel(String step, {bool isProvider = false}) {
     return switch (step) {
-      'on_the_way' => 'في الطريق إلى الورشة (GPS)',
+      'on_the_way' =>
+        isProvider ? 'العميل في طريقه إلى الورشة' : 'في الطريق إلى الورشة (GPS)',
       'arrived_at_workshop' => 'تم الوصول للورشة ✓',
       'diagnosis' => 'فحص السيارة وتشخيص العطل',
       'repairing' => 'جاري الإصلاح في الورشة',
       'testing' => 'الفحص والتجربة النهائية',
-      'awaiting_payment' => 'السيارة جاهزة — بانتظار دفع الفاتورة',
+      'awaiting_payment' => isProvider
+          ? 'بانتظار دفع العميل للفاتورة'
+          : 'السيارة جاهزة — بانتظار دفع الفاتورة',
       'completed' => 'مكتمل وتم التسليم ✓',
       _ => 'بانتظار تأكيد الورشة',
     };
   }
 
-  double _emergencyProgressValue(String step, String status) {
-    if (status == 'completed') return 1.0;
-    if (status == 'awaiting_payment' || step == 'awaiting_payment') return 0.95;
-    if (status == 'quoted' || step == 'quote_sent') return 0.28;
-    return switch (step) {
-      'pending' => 0.15,
-      'on_the_way' => 0.48,
-      'arrived_at_pickup' => 0.70,
-      'repairing' || 'towing' => 0.85,
-      'completed' => 1.0,
-      _ => 0.20,
-    };
+  double _emergencyProgressValue(String status, String step) {
+    if (status == 'completed' || step == 'completed') return 1.0;
+    if (status == 'awaiting_payment' || step == 'awaiting_payment') return 0.90;
+    if (step == 'arrived_at_pickup') return 0.75;
+    if (step == 'towing') return 0.80;
+    if (step == 'on_the_way' || status == 'accepted' || status == 'in_progress') {
+      return 0.55;
+    }
+    if (status == 'quoted' || step == 'quoted') return 0.30;
+    return 0.18;
   }
 
-  String _emergencyStepLabel(String step, String status, String serviceType) {
+  String _emergencyStepLabel(
+    String status,
+    String step,
+    String serviceType, {
+    bool isProvider = false,
+    double amount = 0,
+  }) {
     final isWinch = serviceType == 'winch';
+    if (status == 'completed' || step == 'completed') {
+      return 'تم إنهاء المساعدة الطارئة ✓';
+    }
     if (status == 'awaiting_payment' || step == 'awaiting_payment') {
-      return 'تم إنهاء العمل وإصدار الفاتورة — يرجى الدفع الآن';
+      return isProvider
+          ? 'تم إرسال الفاتورة (${amount.toStringAsFixed(2)} د.أ) — بانتظار دفع العميل'
+          : 'اكتمل العمل — يرجى دفع الفاتورة (${amount.toStringAsFixed(2)} د.أ)';
     }
-    if (status == 'quoted' || step == 'quote_sent') {
-      return 'وصلك عرض سعر جديد — افتح شاشة الطوارئ للقبول أو الرفض';
+    if (status == 'quoted' || step == 'quoted') {
+      return isProvider
+          ? 'تم إرسال السعر (${amount.toStringAsFixed(2)} د.أ) — بانتظار موافقة العميل'
+          : 'وصلك عرض سعر (${amount.toStringAsFixed(2)} د.أ) — بانتظار موافقتك';
     }
-    return switch (step) {
-      'pending' => isWinch
-          ? 'جاري البحث عن أقرب ونش طوارئ...'
-          : 'جاري البحث عن أقرب فني طوارئ...',
-      'on_the_way' => isWinch
-          ? 'ونش الطوارئ في طريقه إلى موقعك'
-          : 'الميكانيكي في طريقه إلى موقعك',
-      'arrived_at_pickup' => isWinch
-          ? 'وصل الونش إلى موقعك ✓'
-          : 'وصل الميكانيكي إلى موقعك ✓',
-      'repairing' => 'جاري إصلاح السيارة في موقعك...',
-      'towing' => 'جاري سحب السيارة إلى الوجهة...',
-      'completed' => 'تم إنهاء المساعدة الطارئة ✓',
-      _ => 'قيد المتابعة',
-    };
+    if (step == 'arrived_at_pickup') {
+      return isProvider
+          ? 'وصلت إلى موقع العميل ✓'
+          : (isWinch ? 'وصل الونش إلى موقعك ✓' : 'وصل الميكانيكي إلى موقعك ✓');
+    }
+    if (step == 'on_the_way' || status == 'accepted' || status == 'in_progress') {
+      return isProvider
+          ? 'أنت في الطريق إلى موقع العميل'
+          : (isWinch
+              ? 'ونش الطوارئ في طريقه إلى موقعك'
+              : 'الميكانيكي في طريقه إلى موقعك');
+    }
+    return isWinch
+        ? 'جاري البحث عن أقرب ونش طوارئ...'
+        : 'جاري البحث عن أقرب ميكانيكي طوارئ...';
+  }
+
+  bool _isActiveAppt(Map<String, dynamic> a) {
+    final status = (a['status'] as String?) ?? '';
+    final payStatus = (a['payment_status'] as String?) ?? 'unpaid';
+    final amount = (a['total_amount'] as num?)?.toDouble() ?? 0.0;
+    if (status == 'accepted' || status == 'reschedule_proposed') return true;
+    if (status == 'completed' && amount > 0 && payStatus != 'paid') return true;
+    return false;
+  }
+
+  bool _isActiveEmg(Map<String, dynamic> e) {
+    final status = (e['status'] as String?) ?? '';
+    final payStatus = (e['payment_status'] as String?) ?? 'unpaid';
+    final amount = (e['total_amount'] as num?)?.toDouble() ?? 0.0;
+    if (status != 'completed' && status != 'cancelled') return true;
+    if (status == 'completed' && amount > 0 && payStatus != 'paid') return true;
+    return false;
+  }
+
+  Future<void> _providerFinishEmergency(Map<String, dynamic> e) async {
+    final amount = (e['total_amount'] as num?)?.toDouble() ?? 0.0;
+    final id = e['id'] as String;
+    final userId = e['user_id'] as String?;
+
+    await _db.from('mechanic_requests').update({
+      'status': 'awaiting_payment',
+      'progress_step': 'awaiting_payment',
+      'payment_status': 'invoiced',
+    }).eq('id', id);
+
+    if (userId != null) {
+      await _notifs.sendNotification(
+        targetUserId: userId,
+        title: 'فاتورة الطوارئ جاهزة للدفع',
+        body: 'تم إنهاء العمل، قيمة الفاتورة ${amount.toStringAsFixed(2)} د.أ.',
+        type: 'invoice_ready',
+        referenceId: id,
+      );
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     final viewer = widget.viewerProfile;
-    final uid = viewer?.id;
-    if (uid == null || viewer == null) {
+    if (viewer == null) return const SizedBox.shrink();
+
+    final activeCustAppts = _customerAppts.where(_isActiveAppt).toList();
+    final activeCustEmgs = _customerEmgs.where(_isActiveEmg).toList();
+    final activeProvEmgs = _providerEmgs.where(_isActiveEmg).toList();
+    final activeProvAppts = _providerAppts.where(_isActiveAppt).toList();
+
+    if (activeCustAppts.isEmpty &&
+        activeCustEmgs.isEmpty &&
+        activeProvEmgs.isEmpty &&
+        activeProvAppts.isEmpty) {
       return const SizedBox.shrink();
     }
 
-    return StreamBuilder<List<Map<String, dynamic>>>(
-      stream: _db
-          .from('workshop_appointments')
-          .stream(primaryKey: ['id'])
-          .eq('user_id', uid)
-          .order('created_at', ascending: false),
-      builder: (_, apptSnap) {
-        return StreamBuilder<List<Map<String, dynamic>>>(
-          stream: _db
-              .from('mechanic_requests')
-              .stream(primaryKey: ['id'])
-              .eq('user_id', uid)
-              .order('created_at', ascending: false),
-          builder: (_, emgSnap) {
-            final activeAppts = (apptSnap.data ?? []).where((a) {
-              final status = (a['status'] as String?) ?? '';
-              final payStatus = (a['payment_status'] as String?) ?? 'unpaid';
-              final amount = (a['total_amount'] as num?)?.toDouble() ?? 0.0;
-              if (status == 'accepted' ||
-                  status == 'reschedule_proposed' ||
-                  status == 'awaiting_payment') {
-                return true;
-              }
-              if (status == 'completed' &&
-                  amount > 0 &&
-                  payStatus != 'paid') {
-                return true;
-              }
-              return false;
-            }).toList();
+    return Column(
+      children: [
+        // 1) بروجرس طلبات الطوارئ النشطة على حساب الميكانيكي / الونش
+        if (activeProvEmgs.isNotEmpty)
+          Builder(builder: (_) {
+            final e = activeProvEmgs.first;
+            final status = (e['status'] as String?) ?? 'pending';
+            final step = (e['progress_step'] as String?) ?? status;
+            final serviceType = (e['service_type'] as String?) ?? 'mechanic';
+            final amount = (e['total_amount'] as num?)?.toDouble() ?? 0.0;
+            final payStatus = (e['payment_status'] as String?) ?? 'unpaid';
+            final progress = _emergencyProgressValue(status, step);
+            final label = _emergencyStepLabel(
+              status,
+              step,
+              serviceType,
+              isProvider: true,
+              amount: amount,
+            );
+            final lat = (e['pickup_latitude'] as num?)?.toDouble() ??
+                (e['latitude'] as num?)?.toDouble();
+            final lng = (e['pickup_longitude'] as num?)?.toDouble() ??
+                (e['longitude'] as num?)?.toDouble();
 
-            final activeEmgs = (emgSnap.data ?? []).where((e) {
-              final status = (e['status'] as String?) ?? '';
-              final payStatus = (e['payment_status'] as String?) ?? 'unpaid';
-              final amount = (e['total_amount'] as num?)?.toDouble() ?? 0.0;
-              if (status == 'cancelled') return false;
-              if (status != 'completed') return true;
-              if (status == 'completed' &&
-                  amount > 0 &&
-                  payStatus != 'paid') {
-                return true;
-              }
-              return false;
-            }).toList();
+            DynamicIslandService.instance.syncProgress(
+              keyId: 'prov_emg_${e['id']}',
+              title: serviceType == 'winch' ? 'مهمة ونش نشطة' : 'مهمة طوارئ نشطة',
+              statusText: label,
+              progress: progress,
+              etaOrDistance: amount > 0 ? '${amount.toStringAsFixed(2)} د.أ' : '',
+            );
 
-            if (activeAppts.isEmpty && activeEmgs.isEmpty) {
-              return const SizedBox.shrink();
+            String? actionLabel;
+            VoidCallback? onAction;
+
+            if ((status == 'accepted' || status == 'in_progress') &&
+                step == 'on_the_way') {
+              actionLabel = 'تأكيد الوصول للعميل';
+              onAction = () {
+                final custId = e['user_id'] as String?;
+                if (custId != null) {
+                  _tracker.markEmergencyArrived(
+                    requestId: e['id'] as String,
+                    customerUserId: custId,
+                    serviceType: serviceType,
+                  );
+                } else {
+                  _db
+                      .from('mechanic_requests')
+                      .update({'progress_step': 'arrived_at_pickup'})
+                      .eq('id', e['id']);
+                }
+              };
+            } else if ((status == 'accepted' || status == 'in_progress') &&
+                step == 'arrived_at_pickup') {
+              actionLabel = 'إنهاء وإرسال الفاتورة';
+              onAction = () => _providerFinishEmergency(e);
             }
 
-            return Column(
-              children: [
-                if (activeAppts.isNotEmpty)
-                  Builder(builder: (_) {
-                    final a = activeAppts.first;
-                    final status = (a['status'] as String?) ?? '';
-                    final step = (a['progress_step'] as String?) ?? 'pending';
-                    final progress = _workshopProgressValue(step);
-                    final label = status == 'reschedule_proposed'
-                        ? 'اقترحت الورشة موعداً بديلاً'
-                        : _workshopStepLabel(step);
-                    final amount =
-                        (a['total_amount'] as num?)?.toDouble() ?? 0.0;
-                    final payStatus =
-                        (a['payment_status'] as String?) ?? 'unpaid';
-
-                    _ensureWorkshopGps(a);
-                    final wLoc = _workshopLocations[a['workshop_id']];
-
-                    DynamicIslandService.instance.syncProgress(
-                      keyId: 'appt_${a['id']}',
-                      title: 'صيانة الورشة',
-                      statusText: label,
-                      progress: progress,
-                      etaOrDistance: '${a['appointment_time'] ?? ""}',
-                    );
-
-                    final bool canPayWorkshop = payStatus != 'paid' &&
-                        payStatus != 'pending_verification' &&
-                        amount > 0 &&
-                        (step == 'awaiting_payment' ||
-                            status == 'awaiting_payment' ||
-                            status == 'completed' ||
-                            payStatus == 'invoiced');
-
-                    return ValueListenableBuilder<double?>(
-                      valueListenable: _tracker.workshopDistanceKm,
-                      builder: (_, km, __) {
-                        return _progressCard(
-                          headerIcon: Icons.build_circle,
-                          thumbIcon: Icons.build,
-                          title: 'حالة موعد الورشة (${a['appointment_date']})',
-                          statusText: (step == 'on_the_way' && km != null)
-                              ? '$label · متبقي $km كم'
-                              : label,
-                          progress: progress,
-                          paymentStatus: payStatus,
-                          payLabel: canPayWorkshop
-                              ? 'دفع الفاتورة (${amount.toStringAsFixed(2)} د.أ)'
-                              : null,
-                          onPayInvoice: canPayWorkshop
-                              ? () => Navigator.push(
-                                    context,
-                                    animatedRoute(
-                                      WorkshopCheckoutScreen(
-                                        appointment:
-                                            DbWorkshopAppointment.fromMap(a),
-                                        customerProfile: viewer,
-                                        onPaymentCompleted: () {
-                                          if (mounted) setState(() {});
-                                        },
-                                      ),
-                                    ),
-                                  )
-                              : null,
-                          actionLabel: step == 'on_the_way'
-                              ? 'تأكيد وصولي للورشة'
-                              : null,
-                          onAction: step == 'on_the_way' &&
-                                  a['workshop_id'] != null
-                              ? () => _tracker.markWorkshopArrived(
-                                    appointmentId: a['id'],
-                                    workshopUserId: a['workshop_id'],
-                                  )
-                              : null,
-                          onOpenMaps: () => _openInGoogleMaps(
-                            lat: wLoc?.lat,
-                            lng: wLoc?.lng,
-                            addressQuery: wLoc?.address,
-                          ),
-                        );
-                      },
-                    );
-                  }),
-                if (activeEmgs.isNotEmpty)
-                  Builder(builder: (_) {
-                    final e = activeEmgs.first;
-                    final status = (e['status'] as String?) ?? 'pending';
-                    final step = (e['progress_step'] as String?) ?? 'pending';
-                    final serviceType =
-                        (e['service_type'] as String?) ?? 'winch';
-                    final progress = _emergencyProgressValue(step, status);
-                    final label = _emergencyStepLabel(step, status, serviceType);
-                    final lat = (e['pickup_latitude'] as num?)?.toDouble();
-                    final lng = (e['pickup_longitude'] as num?)?.toDouble();
-                    final amount =
-                        (e['total_amount'] as num?)?.toDouble() ?? 0.0;
-                    final payStatus =
-                        (e['payment_status'] as String?) ?? 'unpaid';
-                    final hasProvider =
-                        (e['mechanic_id'] as String?)?.isNotEmpty == true;
-
-                    DynamicIslandService.instance.syncProgress(
-                      keyId: 'emg_${e['id']}',
-                      title: 'طوارئ غيارك',
-                      statusText: label,
-                      progress: progress,
-                      etaOrDistance: (e['estimated_time'] as String?) ?? '',
-                    );
-
-                    // لا يظهر زر دفع الفاتورة أبداً إلا بعد إنهاء العمل وإصدار الفاتورة
-                    final bool canPayEmergency = payStatus != 'paid' &&
-                        payStatus != 'pending_verification' &&
-                        hasProvider &&
-                        amount > 0 &&
-                        (status == 'awaiting_payment' ||
-                            step == 'awaiting_payment' ||
-                            payStatus == 'invoiced' ||
-                            status == 'completed');
-
-                    return _progressCard(
-                      headerIcon: serviceType == 'winch'
-                          ? Icons.local_shipping
-                          : Icons.car_crash,
-                      thumbIcon: serviceType == 'winch'
-                          ? Icons.local_shipping
-                          : Icons.build,
-                      title:
-                          'طلب الطوارئ المباشر (${e['description'] ?? ""})',
-                      statusText: label,
-                      progress: progress,
-                      paymentStatus: payStatus,
-                      payLabel: canPayEmergency
-                          ? 'دفع الفاتورة (${amount.toStringAsFixed(2)} د.أ)'
-                          : null,
-                      onPayInvoice: canPayEmergency
-                          ? () => Navigator.push(
-                                context,
-                                animatedRoute(
-                                  EmergencyCheckoutScreen(
-                                    request: DbMechanicRequest.fromMap(e),
-                                    customerProfile: viewer,
-                                    onPaymentCompleted: () {
-                                      if (mounted) setState(() {});
-                                    },
-                                  ),
-                                ),
-                              )
-                          : null,
-                      onOpenMaps: () => _openInGoogleMaps(
+            return _progressCard(
+              headerIcon: serviceType == 'winch'
+                  ? Icons.local_shipping
+                  : Icons.build_circle,
+              thumbIcon: serviceType == 'winch'
+                  ? Icons.local_shipping
+                  : Icons.build,
+              title:
+                  'مهمة نشطة: ${(e['car_details'] as String?)?.isNotEmpty == true ? e['car_details'] : (e['description'] ?? "طلب طوارئ")}',
+              statusText: label,
+              progress: progress,
+              paymentStatus: payStatus,
+              actionLabel: actionLabel,
+              onAction: onAction,
+              onOpenMaps: (lat != null && lng != null)
+                  ? () => _openInGoogleMaps(
                         lat: lat,
                         lng: lng,
                         addressQuery: e['dropoff_address'] as String?,
-                      ),
-                    );
-                  }),
-              ],
+                      )
+                  : null,
             );
-          },
-        );
-      },
+          }),
+
+        // 2) بروجرس مواعيد الورشة النشطة على حساب الميكانيكي
+        if (activeProvAppts.isNotEmpty)
+          Builder(builder: (_) {
+            final a = activeProvAppts.first;
+            final step = (a['progress_step'] as String?) ?? 'pending';
+            final progress = _workshopProgressValue(step);
+            final label = _workshopStepLabel(step, isProvider: true);
+            final payStatus = (a['payment_status'] as String?) ?? 'unpaid';
+
+            return _progressCard(
+              headerIcon: Icons.build_circle,
+              thumbIcon: Icons.build,
+              title:
+                  'موعد ورشة نشط (${a['appointment_date']} · ${a['appointment_time'] ?? ""})',
+              statusText: label,
+              progress: progress,
+              paymentStatus: payStatus,
+            );
+          }),
+
+        // 3) بروجرس مواعيد الورشة على حساب الزبون
+        if (activeCustAppts.isNotEmpty)
+          Builder(builder: (_) {
+            final a = activeCustAppts.first;
+            final step = (a['progress_step'] as String?) ?? 'pending';
+            final progress = _workshopProgressValue(step);
+            final label = a['status'] == 'reschedule_proposed'
+                ? 'اقترحت الورشة موعداً بديلاً'
+                : _workshopStepLabel(step);
+            final amount = (a['total_amount'] as num?)?.toDouble() ?? 0.0;
+            final payStatus = (a['payment_status'] as String?) ?? 'unpaid';
+
+            _ensureWorkshopGps(a);
+            final wLoc = _workshopLocations[a['workshop_id']];
+
+            DynamicIslandService.instance.syncProgress(
+              keyId: 'appt_${a['id']}',
+              title: 'صيانة الورشة',
+              statusText: label,
+              progress: progress,
+              etaOrDistance: '${a['appointment_time'] ?? ""}',
+            );
+
+            final bool canPayWorkshop = payStatus != 'paid' &&
+                payStatus != 'pending_verification' &&
+                (step == 'awaiting_payment' ||
+                    (a['status'] == 'completed' && amount > 0) ||
+                    amount > 0);
+
+            return ValueListenableBuilder<double?>(
+              valueListenable: _tracker.workshopDistanceKm,
+              builder: (_, km, __) {
+                return _progressCard(
+                  headerIcon: Icons.build_circle,
+                  thumbIcon: Icons.build,
+                  title: 'حالة موعد الورشة (${a['appointment_date']})',
+                  statusText: (step == 'on_the_way' && km != null)
+                      ? '$label · متبقي $km كم'
+                      : label,
+                  progress: progress,
+                  paymentStatus: payStatus,
+                  payLabel: canPayWorkshop
+                      ? (amount > 0
+                          ? 'دفع الفاتورة (${amount.toStringAsFixed(2)} د.أ)'
+                          : 'دفع فاتورة الورشة')
+                      : null,
+                  onPayInvoice: canPayWorkshop
+                      ? () => Navigator.push(
+                            context,
+                            animatedRoute(
+                              WorkshopCheckoutScreen(
+                                appointment: DbWorkshopAppointment.fromMap(a),
+                                customerProfile: viewer,
+                                onPaymentCompleted: () {
+                                  if (mounted) setState(() {});
+                                },
+                              ),
+                            ),
+                          )
+                      : null,
+                  actionLabel:
+                      step == 'on_the_way' ? 'تأكيد وصولي للورشة' : null,
+                  onAction: step == 'on_the_way' && a['workshop_id'] != null
+                      ? () => _tracker.markWorkshopArrived(
+                            appointmentId: a['id'],
+                            workshopUserId: a['workshop_id'],
+                          )
+                      : null,
+                  onOpenMaps: () => _openInGoogleMaps(
+                    lat: wLoc?.lat,
+                    lng: wLoc?.lng,
+                    addressQuery: wLoc?.address,
+                  ),
+                );
+              },
+            );
+          }),
+
+        // 4) بروجرس طلبات الطوارئ على حساب الزبون
+        if (activeCustEmgs.isNotEmpty)
+          Builder(builder: (_) {
+            final e = activeCustEmgs.first;
+            final status = (e['status'] as String?) ?? 'pending';
+            final step = (e['progress_step'] as String?) ?? status;
+            final serviceType = (e['service_type'] as String?) ?? 'winch';
+            final amount = (e['total_amount'] as num?)?.toDouble() ?? 0.0;
+            final payStatus = (e['payment_status'] as String?) ?? 'unpaid';
+            final progress = _emergencyProgressValue(status, step);
+            final label = _emergencyStepLabel(
+              status,
+              step,
+              serviceType,
+              amount: amount,
+            );
+            final lat = (e['pickup_latitude'] as num?)?.toDouble() ??
+                (e['latitude'] as num?)?.toDouble();
+            final lng = (e['pickup_longitude'] as num?)?.toDouble() ??
+                (e['longitude'] as num?)?.toDouble();
+
+            DynamicIslandService.instance.syncProgress(
+              keyId: 'emg_${e['id']}',
+              title: 'طوارئ غيارك',
+              statusText: label,
+              progress: progress,
+              etaOrDistance: (e['estimated_time'] as String?) ?? '',
+            );
+
+            final bool canPayEmergency = payStatus != 'paid' &&
+                payStatus != 'pending_verification' &&
+                (status == 'awaiting_payment' ||
+                    step == 'awaiting_payment' ||
+                    payStatus == 'invoiced' ||
+                    (status == 'completed' && amount > 0));
+
+            return _progressCard(
+              headerIcon: serviceType == 'winch'
+                  ? Icons.local_shipping
+                  : Icons.car_crash,
+              thumbIcon:
+                  serviceType == 'winch' ? Icons.local_shipping : Icons.build,
+              title: 'طلب الطوارئ المباشر (${e['description'] ?? ""})',
+              statusText: label,
+              progress: progress,
+              paymentStatus: payStatus,
+              payLabel: canPayEmergency
+                  ? (amount > 0
+                      ? 'دفع الفاتورة (${amount.toStringAsFixed(2)} د.أ)'
+                      : 'دفع فاتورة الطوارئ')
+                  : null,
+              onPayInvoice: canPayEmergency
+                  ? () => Navigator.push(
+                        context,
+                        animatedRoute(
+                          EmergencyCheckoutScreen(
+                            request: DbMechanicRequest.fromMap(e),
+                            customerProfile: viewer,
+                            onPaymentCompleted: () {
+                              if (mounted) setState(() {});
+                            },
+                          ),
+                        ),
+                      )
+                  : null,
+              onOpenMaps: (lat != null && lng != null)
+                  ? () => _openInGoogleMaps(
+                        lat: lat,
+                        lng: lng,
+                        addressQuery: e['dropoff_address'] as String?,
+                      )
+                  : null,
+            );
+          }),
+      ],
     );
   }
 
@@ -583,15 +799,22 @@ class _HomeLiveProgressBannerState extends State<HomeLiveProgressBanner> {
                     ),
                   ),
                 if (actionLabel != null && onAction != null)
-                  TextButton(
-                    style: TextButton.styleFrom(
-                      backgroundColor: Colors.white12,
+                  ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.success,
                       foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 8,
+                      ),
                     ),
                     onPressed: onAction,
                     child: Text(
                       actionLabel,
-                      style: const TextStyle(fontSize: 12),
+                      style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
                   ),
               ],

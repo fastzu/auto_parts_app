@@ -51,6 +51,7 @@ class _EmergencyScreenState extends State<EmergencyScreen>
   Map<String, dynamic>? _providerInfo;
   StreamSubscription<List<Map<String, dynamic>>>? _providerLocationSub;
 
+  LatLng? _lastRawProviderLatLng;
   LatLng? _providerLatLng;
   LatLng? _animFromLatLng;
   LatLng? _animToLatLng;
@@ -62,7 +63,6 @@ class _EmergencyScreenState extends State<EmergencyScreen>
   LatLng? _lastRouteTo;
   bool _fetchingRoute = false;
 
-  // منع عودة الطلب المدفوع أو طلب قديم للبحث تلقائياً
   final Set<String> _completedIds = {};
 
   final List<String> _problems = const [
@@ -72,6 +72,27 @@ class _EmergencyScreenState extends State<EmergencyScreen>
     'وقود',
     'حادث',
   ];
+
+  bool _isValidCoord(double? lat, double? lng) {
+    if (lat == null || lng == null) return false;
+    if (!lat.isFinite || !lng.isFinite) return false;
+    if (lat == 0.0 && lng == 0.0) return false;
+    return lat.abs() <= 85.0 && lng.abs() <= 180.0;
+  }
+
+  bool _isSafePolyline(List<LatLng> pts) {
+    if (pts.length < 2) return false;
+    for (final p in pts) {
+      if (!_isValidCoord(p.latitude, p.longitude)) return false;
+    }
+    final distMeters = Geolocator.distanceBetween(
+      pts.first.latitude,
+      pts.first.longitude,
+      pts.last.latitude,
+      pts.last.longitude,
+    );
+    return distMeters.isFinite && distMeters <= 500000;
+  }
 
   @override
   void initState() {
@@ -107,6 +128,10 @@ class _EmergencyScreenState extends State<EmergencyScreen>
     try {
       final res = await _locationService.getCurrentLocation();
       if (!mounted) return;
+      if (!_isValidCoord(res.coordinates.latitude, res.coordinates.longitude)) {
+        setState(() => _loadingGps = false);
+        return;
+      }
       final dist =
           _locationService.calculateDistanceKm(res.coordinates, _dropoffLatLng);
       setState(() {
@@ -123,6 +148,7 @@ class _EmergencyScreenState extends State<EmergencyScreen>
 
   Future<void> _onMapTap(LatLng latLng, bool hasActiveReq) async {
     if (hasActiveReq) return;
+    if (!_isValidCoord(latLng.latitude, latLng.longitude)) return;
     FocusScope.of(context).unfocus();
     final addr = await _locationService.getAddressFromLatLng(latLng);
     if (!mounted) return;
@@ -146,6 +172,7 @@ class _EmergencyScreenState extends State<EmergencyScreen>
     if (providerId == null || providerId.isEmpty) {
       if (_loadedProviderId != null) {
         _loadedProviderId = null;
+        _lastRawProviderLatLng = null;
         _providerLocationSub?.cancel();
         _providerLocationSub = null;
         WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -162,11 +189,10 @@ class _EmergencyScreenState extends State<EmergencyScreen>
       return;
     }
 
-    // تحديث موقع السيارة من حقول الطلب مباشرة إن وُجدت
     final reqLat = (req['latitude'] as num?)?.toDouble();
     final reqLng = (req['longitude'] as num?)?.toDouble();
-    if (reqLat != null && reqLng != null) {
-      _updateProviderPosition(LatLng(reqLat, reqLng), req);
+    if (_isValidCoord(reqLat, reqLng)) {
+      _updateProviderPosition(LatLng(reqLat!, reqLng!), req);
     }
 
     if (_loadedProviderId == providerId) return;
@@ -185,29 +211,37 @@ class _EmergencyScreenState extends State<EmergencyScreen>
           (row['workshop_latitude'] as num?)?.toDouble();
       final lng = (row['longitude'] as num?)?.toDouble() ??
           (row['workshop_longitude'] as num?)?.toDouble();
-      if (lat != null && lng != null) {
-        _updateProviderPosition(LatLng(lat, lng), req);
+      if (_isValidCoord(lat, lng)) {
+        _updateProviderPosition(LatLng(lat!, lng!), req);
       }
     });
   }
 
   void _updateProviderPosition(LatLng nextPos, Map<String, dynamic> req) {
-    final prev = _providerLatLng;
-    if (prev != null) {
-      final movedMeters = Geolocator.distanceBetween(
-        prev.latitude,
-        prev.longitude,
+    if (!_isValidCoord(nextPos.latitude, nextPos.longitude)) return;
+
+    // مقارنة مع آخر إحداثي خام وصل من القاعدة لمنع إعادة التشغيل اللانهائية
+    final lastRaw = _lastRawProviderLatLng;
+    if (lastRaw != null) {
+      final rawDelta = Geolocator.distanceBetween(
+        lastRaw.latitude,
+        lastRaw.longitude,
         nextPos.latitude,
         nextPos.longitude,
       );
-      if (movedMeters < 2.0) {
+      if (rawDelta < 2.0) {
         _maybeFetchRoute(nextPos, req);
         return;
       }
-      final bearing = _computeBearingRad(prev, nextPos);
+    }
+    _lastRawProviderLatLng = nextPos;
+
+    final startPos = _providerLatLng;
+    if (startPos != null) {
+      final bearing = _computeBearingRad(startPos, nextPos);
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
-        _animFromLatLng = prev;
+        _animFromLatLng = startPos;
         _animToLatLng = nextPos;
         _providerBearingRad = bearing;
         _carMoveCtrl.forward(from: 0.0);
@@ -228,20 +262,21 @@ class _EmergencyScreenState extends State<EmergencyScreen>
     final y = math.sin(dLng) * math.cos(lat2);
     final x = math.cos(lat1) * math.sin(lat2) -
         math.sin(lat1) * math.cos(lat2) * math.cos(dLng);
-    return math.atan2(y, x);
+    final angle = math.atan2(y, x);
+    return angle.isFinite ? angle : 0.0;
   }
 
   LatLng _routeTargetFor(Map<String, dynamic> req) {
     final step = ((req['progress_step'] as String?) ?? '').toLowerCase();
     final dropLat = (req['dropoff_latitude'] as num?)?.toDouble();
     final dropLng = (req['dropoff_longitude'] as num?)?.toDouble();
-    if (step == 'towing' && dropLat != null && dropLng != null) {
-      return LatLng(dropLat, dropLng);
+    if (step == 'towing' && _isValidCoord(dropLat, dropLng)) {
+      return LatLng(dropLat!, dropLng!);
     }
     final pickLat = (req['pickup_latitude'] as num?)?.toDouble();
     final pickLng = (req['pickup_longitude'] as num?)?.toDouble();
-    if (pickLat != null && pickLng != null) {
-      return LatLng(pickLat, pickLng);
+    if (_isValidCoord(pickLat, pickLng)) {
+      return LatLng(pickLat!, pickLng!);
     }
     return _pickupLatLng;
   }
@@ -252,7 +287,22 @@ class _EmergencyScreenState extends State<EmergencyScreen>
     if (_fetchingRoute) return;
 
     final to = _routeTargetFor(req);
-    if (_lastRouteFrom != null && _lastRouteTo != null && _routePoints.isNotEmpty) {
+    if (!_isValidCoord(from.latitude, from.longitude) ||
+        !_isValidCoord(to.latitude, to.longitude)) {
+      return;
+    }
+
+    final spanMeters = Geolocator.distanceBetween(
+      from.latitude,
+      from.longitude,
+      to.latitude,
+      to.longitude,
+    );
+    if (!spanMeters.isFinite || spanMeters < 5 || spanMeters > 500000) return;
+
+    if (_lastRouteFrom != null &&
+        _lastRouteTo != null &&
+        _routePoints.isNotEmpty) {
       final dFrom = Geolocator.distanceBetween(
         _lastRouteFrom!.latitude,
         _lastRouteFrom!.longitude,
@@ -280,11 +330,18 @@ class _EmergencyScreenState extends State<EmergencyScreen>
         final decoded = jsonDecode(resp.body) as Map<String, dynamic>;
         final routes = decoded['routes'] as List<dynamic>?;
         if (routes != null && routes.isNotEmpty) {
-          final coords = (routes.first['geometry']['coordinates'] as List<dynamic>);
+          final coords =
+              routes.first['geometry']['coordinates'] as List<dynamic>;
           final pts = coords
-              .map((c) => LatLng((c[1] as num).toDouble(), (c[0] as num).toDouble()))
+              .map(
+                (c) => LatLng(
+                  (c[1] as num).toDouble(),
+                  (c[0] as num).toDouble(),
+                ),
+              )
+              .where((p) => _isValidCoord(p.latitude, p.longitude))
               .toList();
-          if (mounted && pts.length >= 2) {
+          if (mounted && _isSafePolyline(pts)) {
             setState(() {
               _routePoints = pts;
               _lastRouteFrom = from;
@@ -294,7 +351,7 @@ class _EmergencyScreenState extends State<EmergencyScreen>
           }
         }
       }
-      if (mounted) {
+      if (mounted && _isSafePolyline([from, to])) {
         setState(() {
           _routePoints = [from, to];
           _lastRouteFrom = from;
@@ -302,7 +359,7 @@ class _EmergencyScreenState extends State<EmergencyScreen>
         });
       }
     } catch (_) {
-      if (mounted && _routePoints.isEmpty) {
+      if (mounted && _routePoints.isEmpty && _isSafePolyline([from, to])) {
         setState(() => _routePoints = [from, to]);
       }
     } finally {
@@ -326,7 +383,6 @@ class _EmergencyScreenState extends State<EmergencyScreen>
     final useWinch = EnvConfig.winchEnabled.value && _serviceType == 'winch';
     setState(() => _submitting = true);
     try {
-      // إلغاء أي طلب pending قديم عالق لنفس المستخدم قبل إنشاء الطلب الجديد
       await _db
           .from('mechanic_requests')
           .update({'status': 'cancelled', 'progress_step': 'cancelled'})
@@ -421,6 +477,7 @@ class _EmergencyScreenState extends State<EmergencyScreen>
       }
       if (mounted) {
         setState(() {
+          _lastRawProviderLatLng = null;
           _providerLatLng = null;
           _routePoints = [];
           _lastRouteFrom = null;
@@ -446,6 +503,7 @@ class _EmergencyScreenState extends State<EmergencyScreen>
       }).eq('id', id);
       if (mounted) {
         setState(() {
+          _lastRawProviderLatLng = null;
           _providerLatLng = null;
           _routePoints = [];
           _lastRouteFrom = null;
@@ -505,7 +563,6 @@ class _EmergencyScreenState extends State<EmergencyScreen>
               .order('created_at', ascending: false)
               .limit(5),
           builder: (context, snap) {
-            // نفحص أحدث طلب فقط — إذا اكتمل ودُفع أو أُلغي نرجع للوضع الطبيعي بدون استعادة أي طلب قديم
             Map<String, dynamic>? req;
             final rows = snap.data ?? const [];
             if (rows.isNotEmpty) {
@@ -543,29 +600,36 @@ class _EmergencyScreenState extends State<EmergencyScreen>
                 (status == 'awaiting_payment' ||
                     step == 'awaiting_payment' ||
                     payStatus == 'invoiced' ||
-                    (status == 'completed' && amtGreaterZero(amount) && payStatus != 'paid'));
+                    (status == 'completed' && amount > 0 && payStatus != 'paid'));
             final isInProgress = req != null &&
                 !isSearching &&
                 !isQuoteReceived &&
                 !isAwaitingPayment;
 
-            final activePickup = req != null &&
-                    req['pickup_latitude'] != null &&
-                    req['pickup_longitude'] != null
-                ? LatLng(
-                    (req['pickup_latitude'] as num).toDouble(),
-                    (req['pickup_longitude'] as num).toDouble(),
-                  )
+            final pickLat = (req?['pickup_latitude'] as num?)?.toDouble();
+            final pickLng = (req?['pickup_longitude'] as num?)?.toDouble();
+            final activePickup = _isValidCoord(pickLat, pickLng)
+                ? LatLng(pickLat!, pickLng!)
                 : _pickupLatLng;
+
+            final dropLat = (req?['dropoff_latitude'] as num?)?.toDouble();
+            final dropLng = (req?['dropoff_longitude'] as num?)?.toDouble();
+            final activeDropoff = _isValidCoord(dropLat, dropLng)
+                ? LatLng(dropLat!, dropLng!)
+                : _dropoffLatLng;
 
             final isWinchActive = req != null
                 ? req['service_type'] == 'winch'
                 : (showWinch && _serviceType == 'winch');
 
-            // حساب المسافة والزمن التقديري بين المزود وموقع العميل
             double? providerDistKm;
             int? providerEtaMin;
-            if ((isInProgress || isQuoteReceived) && _providerLatLng != null) {
+            if ((isInProgress || isQuoteReceived) &&
+                _providerLatLng != null &&
+                _isValidCoord(
+                  _providerLatLng!.latitude,
+                  _providerLatLng!.longitude,
+                )) {
               providerDistKm = Geolocator.distanceBetween(
                     _providerLatLng!.latitude,
                     _providerLatLng!.longitude,
@@ -576,15 +640,28 @@ class _EmergencyScreenState extends State<EmergencyScreen>
               providerEtaMin = (providerDistKm * 2.2).round().clamp(1, 60);
             }
 
+            final showRouteLine =
+                isInProgress && _isSafePolyline(_routePoints);
+            final showWinchPreviewLine = req == null &&
+                isWinchActive &&
+                _isSafePolyline([_pickupLatLng, _dropoffLatLng]);
+
             return Stack(
               children: [
-                // 1) الخريطة بأسماء المحلات والأماكن بالعربية
                 Positioned.fill(
                   child: FlutterMap(
                     mapController: _mapController,
                     options: MapOptions(
                       initialCenter: activePickup,
                       initialZoom: 15.5,
+                      minZoom: 3.0,
+                      maxZoom: 18.0,
+                      cameraConstraint: CameraConstraint.contain(
+                        bounds: LatLngBounds(
+                          const LatLng(-85.0, -180.0),
+                          const LatLng(85.0, 180.0),
+                        ),
+                      ),
                       onTap: (_, latLng) => _onMapTap(latLng, req != null),
                     ),
                     children: [
@@ -593,8 +670,9 @@ class _EmergencyScreenState extends State<EmergencyScreen>
                             'https://{s}.google.com/vt/lyrs=m&hl=ar&x={x}&y={y}&z={z}',
                         subdomains: const ['mt0', 'mt1', 'mt2', 'mt3'],
                         userAgentPackageName: 'com.ghayarakjo.app',
+                        maxNativeZoom: 18,
                       ),
-                      if (isInProgress && _routePoints.length >= 2)
+                      if (showRouteLine)
                         PolylineLayer(
                           polylines: [
                             Polyline(
@@ -609,7 +687,7 @@ class _EmergencyScreenState extends State<EmergencyScreen>
                             ),
                           ],
                         )
-                      else if (req == null && isWinchActive)
+                      else if (showWinchPreviewLine)
                         PolylineLayer(
                           polylines: [
                             Polyline(
@@ -621,24 +699,15 @@ class _EmergencyScreenState extends State<EmergencyScreen>
                         ),
                       MarkerLayer(
                         markers: [
-                          // نقطة العميل
                           Marker(
                             point: activePickup,
                             width: 48,
                             height: 48,
                             child: const PulsingPin(color: AppColors.orange),
                           ),
-                          // نقطة الوجهة في حالة الونش
                           if (isWinchActive)
                             Marker(
-                              point: (req != null &&
-                                      req['dropoff_latitude'] != null &&
-                                      req['dropoff_longitude'] != null)
-                                  ? LatLng(
-                                      (req['dropoff_latitude'] as num).toDouble(),
-                                      (req['dropoff_longitude'] as num).toDouble(),
-                                    )
-                                  : _dropoffLatLng,
+                              point: activeDropoff,
                               width: 38,
                               height: 38,
                               child: const Icon(
@@ -647,9 +716,12 @@ class _EmergencyScreenState extends State<EmergencyScreen>
                                 size: 32,
                               ),
                             ),
-                          // سيارة 2D صغيرة بدون ملامح تتحرك وتدور حسب GPS المزود
                           if ((isInProgress || isQuoteReceived) &&
-                              _providerLatLng != null)
+                              _providerLatLng != null &&
+                              _isValidCoord(
+                                _providerLatLng!.latitude,
+                                _providerLatLng!.longitude,
+                              ))
                             Marker(
                               point: _providerLatLng!,
                               width: 36,
@@ -667,7 +739,7 @@ class _EmergencyScreenState extends State<EmergencyScreen>
                   ),
                 ),
 
-                // 2) الشريط العلوي وزر تحديد الموقع
+                // الشريط العلوي وزر تحديد الموقع
                 Positioned(
                   top: MediaQuery.of(context).padding.top + 10,
                   left: 14,
@@ -749,7 +821,7 @@ class _EmergencyScreenState extends State<EmergencyScreen>
                   ),
                 ),
 
-                // 3) اللوحة السفلية حسب حالة الطلب
+                // اللوحة السفلية حسب حالة الطلب
                 Align(
                   alignment: Alignment.bottomCenter,
                   child: Container(
@@ -812,8 +884,6 @@ class _EmergencyScreenState extends State<EmergencyScreen>
       },
     );
   }
-
-  bool amtGreaterZero(double v) => v > 0;
 
   Widget _buildNewRequestForm(bool showWinch, bool isWinch) {
     return Column(
@@ -1020,7 +1090,6 @@ class _EmergencyScreenState extends State<EmergencyScreen>
                 style: const TextStyle(color: Colors.white70, fontSize: 12.5),
               ),
               const SizedBox(height: 14),
-              // خط متحرك يمين وشمال
               const _HorizontalPingPongLine(),
             ],
           ),
@@ -1342,6 +1411,7 @@ class _EmergencyScreenState extends State<EmergencyScreen>
               if (paid == true && mounted) {
                 setState(() {
                   _completedIds.add(reqId);
+                  _lastRawProviderLatLng = null;
                   _providerLatLng = null;
                   _routePoints = [];
                   _lastRouteFrom = null;
@@ -1386,7 +1456,6 @@ class _EmergencyScreenState extends State<EmergencyScreen>
   }
 }
 
-/// خط بحث أفقي يتحرك يميناً ويساراً بسلاسة
 class _HorizontalPingPongLine extends StatefulWidget {
   const _HorizontalPingPongLine();
 
@@ -1447,7 +1516,6 @@ class _HorizontalPingPongLineState extends State<_HorizontalPingPongLine>
   }
 }
 
-/// سيارة 2D صغيرة مسطحة بدون ملامح (ستايل Petra Ride)
 class _Minimal2DCarMarker extends StatelessWidget {
   final bool isWinch;
   const _Minimal2DCarMarker({required this.isWinch});
@@ -1474,7 +1542,6 @@ class _Minimal2DCarPainter extends CustomPainter {
     final w = size.width;
     final h = size.height;
 
-    // ظل ناعم خفيف أسفل السيارة
     final shadowPaint = Paint()
       ..color = Colors.black.withValues(alpha: 0.25)
       ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 3.0);
@@ -1486,7 +1553,6 @@ class _Minimal2DCarPainter extends CustomPainter {
       shadowPaint,
     );
 
-    // جسم السيارة المسطح بدون تفاصيل أو ملامح
     final bodyPaint = Paint()..color = bodyColor;
     final bodyRect = RRect.fromRectAndRadius(
       Rect.fromLTWH(1, 1, w - 2, h - 2),
@@ -1494,14 +1560,12 @@ class _Minimal2DCarPainter extends CustomPainter {
     );
     canvas.drawRRect(bodyRect, bodyPaint);
 
-    // حدود بيضاء رفيعة جداً لوضوح السيارة فوق الشوارع
     final borderPaint = Paint()
       ..color = Colors.white
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.4;
     canvas.drawRRect(bodyRect, borderPaint);
 
-    // زجاج أمامي بسيط يوضح اتجاه الحركة فقط
     final glassPaint = Paint()..color = Colors.white.withValues(alpha: 0.85);
     canvas.drawRRect(
       RRect.fromRectAndRadius(
@@ -1511,7 +1575,6 @@ class _Minimal2DCarPainter extends CustomPainter {
       glassPaint,
     );
 
-    // زجاج خلفي بسيط
     canvas.drawRRect(
       RRect.fromRectAndRadius(
         Rect.fromLTWH(w * 0.26, h * 0.68, w * 0.48, h * 0.13),

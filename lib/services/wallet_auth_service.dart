@@ -8,31 +8,72 @@ class WalletAuthService {
 
   final LocalAuthentication _auth = LocalAuthentication();
 
-  Future<bool> authenticate(BuildContext context) async {
+  Future<bool> authenticate([Object? contextOrReason]) async {
     if (kIsWeb) return true;
+    final platform = defaultTargetPlatform;
+    if (platform != TargetPlatform.iOS && platform != TargetPlatform.android) {
+      return true;
+    }
+
+    final String reason =
+        (contextOrReason is String && contextOrReason.trim().isNotEmpty)
+            ? contextOrReason
+            : 'تأكيد الهوية عبر Face ID أو البصمة لفتح المحفظة';
+
     try {
       final isSupported = await _auth.isDeviceSupported();
-      final canCheck = await _auth.canCheckBiometrics;
-      if (!isSupported && !canCheck) return true;
+      final canCheckBiometrics = await _auth.canCheckBiometrics;
+      if (!isSupported && !canCheckBiometrics) {
+        return true;
+      }
 
-      final didAuthenticate = await _auth.authenticate(
-        localizedReason: 'التحقق بالبصمة أو الوجه أو رمز القفل لفتح المحفظة',
+      final availableBiometrics = await _auth.getAvailableBiometrics();
+      final hasBiometrics = availableBiometrics.isNotEmpty;
+
+      // 1) تشغيل Face ID / Touch ID / البصمة أولاً
+      if (hasBiometrics) {
+        try {
+          final bioOk = await _auth.authenticate(
+            localizedReason: reason,
+            biometricOnly: true,
+            persistAcrossBackgrounding: true,
+          );
+          if (bioOk) return true;
+        } on LocalAuthException catch (e) {
+          if (e.code == LocalAuthExceptionCode.userCanceled ||
+              e.code == LocalAuthExceptionCode.systemCanceled) {
+            return false;
+          }
+        } catch (_) {}
+      }
+
+      // 2) خيار Passcode كبديل عند الحاجة
+      return await _auth.authenticate(
+        localizedReason: 'أدخل رمز قفل الجهاز لفتح المحفظة المالية',
         biometricOnly: false,
         persistAcrossBackgrounding: true,
       );
-      return didAuthenticate;
-    } on LocalAuthException {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('تعذر التحقق من قفل الجهاز'),
-            backgroundColor: Colors.red,
-          ),
-        );
+    } on LocalAuthException catch (e) {
+      if (e.code == LocalAuthExceptionCode.userCanceled ||
+          e.code == LocalAuthExceptionCode.systemCanceled) {
+        return false;
       }
       return false;
     } catch (_) {
       return false;
     }
+  }
+
+  Future<bool> authenticateForWallet(BuildContext context) async {
+    final ok = await authenticate();
+    if (!ok && context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('يجب تأكيد الهوية لفتح المحفظة المالية'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+    return ok;
   }
 }
