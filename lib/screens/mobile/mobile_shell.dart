@@ -589,9 +589,8 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
         final isProvider =
             isMerchant || role == 'mechanic' || role == 'towing';
         final canPublish = isProvider || isAdmin;
-        final isLoggedIn = p != null;
         final showWinch = EnvConfig.winchEnabled.value;
-        final hasDashboard = isLoggedIn &&
+        final hasDashboard = p != null &&
             (isAdmin ||
                 role == 'mechanic' ||
                 role == 'merchant' ||
@@ -606,13 +605,13 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
               onOpenDrawer: () => _scaffoldKey.currentState?.openDrawer(),
             ),
           ),
-          isLoggedIn
+          p != null
               ? EmergencyScreen(profile: p)
               : _loginRequiredView(_loc.tr(
                   'لطلب مساعدة طارئة يرجى تسجيل الدخول',
                   'Please sign in to request roadside emergency help',
                 )),
-          isLoggedIn
+          p != null
               ? _responsivePageWrapper(
                   maxWidth: 860,
                   child: CustomerAppointmentsScreen(
@@ -830,7 +829,6 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
     required bool isProvider,
     required bool isAdmin,
   }) {
-    final isLoggedIn = p != null;
     final role = p?.role ?? 'guest';
 
     Widget railItem({
@@ -965,7 +963,7 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
                     padding: EdgeInsets.symmetric(horizontal: 16, vertical: 10),
                     child: Divider(height: 1),
                   ),
-                  if (hasDashboard)
+                  if (hasDashboard && p != null)
                     Padding(
                       padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
                       child: ListTile(
@@ -987,7 +985,7 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
                         onTap: () => _openDashboardForRole(p),
                       ),
                     ),
-                  if (isLoggedIn && isProvider)
+                  if (p != null && isProvider)
                     Padding(
                       padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
                       child: ListTile(
@@ -1093,7 +1091,7 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
                     ),
                     onTap: _openSupportScreen,
                   ),
-                  if (!isLoggedIn)
+                  if (p == null)
                     ListTile(
                       dense: true,
                       shape: RoundedRectangleBorder(
@@ -1142,7 +1140,6 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
 
   Widget _shortcutsHomeTab({required bool isDesktop}) {
     final p = widget.profile;
-    final isLoggedIn = p != null;
     final role = p?.role ?? 'user';
     final isAdmin = p != null && (p.isAdmin || role == 'admin');
     final isProvider =
@@ -1150,7 +1147,7 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
     final showPayments = EnvConfig.paymentsEnabled.value;
     final showWinch = EnvConfig.winchEnabled.value;
 
-    final displayName = isLoggedIn
+    final displayName = p != null
         ? (p.username?.isNotEmpty == true
             ? p.username!
             : (p.fullName?.isNotEmpty == true
@@ -1249,7 +1246,7 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
           IconButton(
             tooltip: _loc.tr('الدردشات', 'Chats'),
             icon: Badge(
-              isLabelVisible: isLoggedIn && _unreadMessagesCount > 0,
+              isLabelVisible: p != null && _unreadMessagesCount > 0,
               backgroundColor: Colors.red,
               label: Text(
                 _unreadMessagesCount > 99 ? '99+' : '$_unreadMessagesCount',
@@ -1263,7 +1260,7 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
                   color: AppColors.navy, size: 23),
             ),
             onPressed: () {
-              if (!isLoggedIn) {
+              if (p == null) {
                 Navigator.push(
                   context,
                   animatedRoute(
@@ -1276,7 +1273,7 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
             },
           ),
           // زر الإشعارات
-          if (isLoggedIn)
+          if (p != null)
             const NotificationBellButton(iconColor: AppColors.navy)
           else
             IconButton(
@@ -1377,7 +1374,7 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
                                     child: Text(
                                       _roleDisplayName(isAdmin
                                           ? 'admin'
-                                          : (isLoggedIn ? role : 'guest')),
+                                          : (p != null ? role : 'guest')),
                                       style: const TextStyle(
                                         color: Colors.white,
                                         fontSize: 11.5,
@@ -1385,7 +1382,7 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
                                       ),
                                     ),
                                   ),
-                                  if (isLoggedIn &&
+                                  if (p != null &&
                                       (p.isTrustedMerchant || isAdmin))
                                     Container(
                                       padding: const EdgeInsets.symmetric(
@@ -1412,7 +1409,7 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
                                         ],
                                       ),
                                     ),
-                                  if (isLoggedIn && isProvider)
+                                  if (p != null && isProvider)
                                     Container(
                                       padding: const EdgeInsets.symmetric(
                                           horizontal: 10, vertical: 4),
@@ -1462,7 +1459,7 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
                 const SizedBox(height: 12),
                 const HomeAdBanner(),
 
-                if (isLoggedIn) ...[
+                if (p != null) ...[
                   const SizedBox(height: 12),
                   HomeLiveProgressBanner(viewerProfile: p),
                 ],
@@ -2003,13 +2000,12 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
 
   Widget _buildRoleBasedDrawer() {
     final p = widget.profile;
-    final isLoggedIn = p != null;
     final role = p?.role ?? 'guest';
     final isAdmin = p != null && (p.isAdmin || role == 'admin');
     final isProvider =
         role == 'merchant' || role == 'mechanic' || role == 'towing';
     final showWinch = EnvConfig.winchEnabled.value;
-    final hasDashboard = isLoggedIn &&
+    final hasDashboard = p != null &&
         (isAdmin ||
             role == 'mechanic' ||
             role == 'merchant' ||
@@ -2042,13 +2038,13 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
                 ),
                 const SizedBox(height: 10),
                 Text(
-                  isLoggedIn
+                  p != null
                       ? '${p.fullName ?? ""} · @${p.username ?? ""}'
                       : _loc.tr('مرحباً بك في غيارك (تصفح كزائر)',
                           'Welcome to Ghiyarak (Guest)'),
                   style: const TextStyle(color: Colors.white70, fontSize: 13),
                 ),
-                if (isLoggedIn) ...[
+                if (p != null) ...[
                   const SizedBox(height: 8),
                   Wrap(
                     spacing: 8,
@@ -2164,7 +2160,7 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
               setState(() => _index = 3);
             },
           ),
-          if (isLoggedIn && isProvider) ...[
+          if (p != null && isProvider) ...[
             const Divider(),
             ListTile(
               leading: const Icon(Icons.account_balance_wallet_outlined,
@@ -2194,7 +2190,7 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
               },
             ),
           ],
-          if (isLoggedIn && !isProvider && !isAdmin) ...[
+          if (p != null && !isProvider && !isAdmin) ...[
             const Divider(),
             ListTile(
               leading: const Icon(Icons.receipt_long_outlined,
@@ -2210,7 +2206,7 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
               },
             ),
           ],
-          if (isLoggedIn) ...[
+          if (p != null) ...[
             const Divider(),
             ListTile(
               leading:
@@ -2288,7 +2284,7 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
             },
           ),
           const Divider(),
-          if (!isLoggedIn) ...[
+          if (p == null) ...[
             ListTile(
               leading: const Icon(Icons.login, color: AppColors.orange),
               title: Text(

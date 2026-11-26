@@ -188,7 +188,7 @@ class NotificationsService {
       });
 
       _tokenRefreshSub?.cancel();
-      _tokenRefreshSub = fcm.onTokenRefresh.listen((newToken) {
+      _tokenRefreshSub = fcm.onRegistered.listen((newToken) {
         registerPushToken(newToken);
       });
 
@@ -202,10 +202,7 @@ class NotificationsService {
     if (!_isMobileNative) return;
     try {
       if (Firebase.apps.isEmpty) return;
-      final token = await FirebaseMessaging.instance.getToken();
-      if (token != null && token.trim().isNotEmpty) {
-        await registerPushToken(token.trim());
-      }
+      await FirebaseMessaging.instance.register();
     } catch (_) {}
   }
 
@@ -674,6 +671,7 @@ class NotificationsService {
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.white,
+      constraints: const BoxConstraints(maxWidth: 520),
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
       ),
@@ -700,9 +698,10 @@ class NotificationsService {
                       TextButton.icon(
                         onPressed: () async {
                           await markAllNotificationsAsRead();
+                          if (!ctx.mounted) return;
                           AppTopToast.success(
                             'تم تحديد جميع الإشعارات كمقروءة',
-                            context: context,
+                            context: ctx,
                           );
                         },
                         icon: const Icon(Icons.done_all, size: 17),
