@@ -1,5 +1,4 @@
 import 'package:flutter/foundation.dart';
-import 'package:flutter/services.dart';
 import 'package:local_auth/local_auth.dart';
 import 'package:material_ui/material_ui.dart';
 
@@ -18,14 +17,11 @@ class WalletAuthService {
 
       final didAuthenticate = await _auth.authenticate(
         localizedReason: 'التحقق بالبصمة أو الوجه أو رمز القفل لفتح المحفظة',
-        options: const AuthenticationOptions(
-          biometricOnly: false,
-          stickyAuth: true,
-          useErrorDialogs: true,
-        ),
+        biometricOnly: false,
+        persistAcrossBackgrounding: true,
       );
       return didAuthenticate;
-    } on PlatformException {
+    } on LocalAuthException {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
