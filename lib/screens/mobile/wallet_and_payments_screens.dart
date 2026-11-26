@@ -27,34 +27,32 @@ class _ProviderWalletViewState extends State<ProviderWalletView> {
   DashboardPeriod _period = DashboardPeriod.month1;
   DateTimeRange? _customRange;
 
-  late double _walletBalance = widget.profile.walletBalance;
-  late double _pendingDebt = widget.profile.pendingCommissionDebt;
-  double _minWithdrawal = 20.0;
-
-  List<DbWalletTransaction> _allTransactions = [];
-  bool _loading = true;
-  bool _settlingDebt = false;
-
   StreamSubscription<List<Map<String, dynamic>>>? _txSub;
   StreamSubscription<List<Map<String, dynamic>>>? _profileSub;
+
+  List<DbWalletTransaction> _allTxs = [];
+  bool _loadingInitial = true;
+  bool _loadedOnce = false;
+  bool _settlingDebt = false;
+
+  late double _liveWalletBalance = widget.profile.walletBalance;
+  late double _livePendingDebt = widget.profile.pendingCommissionDebt;
 
   @override
   void initState() {
     super.initState();
-    _loadWalletData();
-    _startRealtimeListeners();
+    _loadInitialData();
+    _bindRealtimeStreams();
   }
 
   @override
   void didUpdateWidget(covariant ProviderWalletView oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.profile.id != widget.profile.id) {
-      _txSub?.cancel();
-      _profileSub?.cancel();
-      _walletBalance = widget.profile.walletBalance;
-      _pendingDebt = widget.profile.pendingCommissionDebt;
-      _loadWalletData();
-      _startRealtimeListeners();
+      _liveWalletBalance = widget.profile.walletBalance;
+      _livePendingDebt = widget.profile.pendingCommissionDebt;
+      _loadInitialData();
+      _bindRealtimeStreams();
     }
   }
 
@@ -65,234 +63,446 @@ class _ProviderWalletViewState extends State<ProviderWalletView> {
     super.dispose();
   }
 
-  void _startRealtimeListeners() {
-    final uid = widget.profile.id;
+  Future<void> _loadInitialData() async {
+    try {
+      final results = await Future.wait([
+        _db
+            .from('wallet_transactions')
+            .select()
+            .eq('provider_id', widget.profile.id)
+            .order('created_at', ascending: false),
+        _db
+            .from('customers')
+            .select('wallet_balance, pending_commission_debt')
+            .eq('id', widget.profile.id)
+            .maybeSingle(),
+      ]);
+
+      final txRows = results[0] as List;
+      final profileRow = results[1] as Map<String, dynamic>?;
+
+      if (!mounted) return;
+      setState(() {
+        _allTxs = txRows
+            .map((e) => DbWalletTransaction.fromMap(Map<String, dynamic>.from(e as Map)))
+            .toList();
+        if (profileRow != null) {
+          _liveWalletBalance =
+              (profileRow['wallet_balance'] as num?)?.toDouble() ?? 0.0;
+          _livePendingDebt =
+              (profileRow['pending_commission_debt'] as num?)?.toDouble() ?? 0.0;
+        }
+        _loadingInitial = false;
+        _loadedOnce = true;
+      });
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _loadingInitial = false;
+          _loadedOnce = true;
+        });
+      }
+    }
+  }
+
+  void _bindRealtimeStreams() {
+    _txSub?.cancel();
+    _profileSub?.cancel();
 
     _txSub = _db
         .from('wallet_transactions')
         .stream(primaryKey: ['id'])
-        .eq('provider_id', uid)
+        .eq('provider_id', widget.profile.id)
         .order('created_at', ascending: false)
         .listen(
           (rows) {
             if (!mounted) return;
-            final parsed = rows.map(DbWalletTransaction.fromMap).toList();
             setState(() {
-              _allTransactions = parsed;
-              _loading = false;
+              _allTxs = rows.map(DbWalletTransaction.fromMap).toList();
+              _loadingInitial = false;
+              _loadedOnce = true;
             });
           },
-          onError: (_) {
-            // لا نمسح البيانات المخزنة في حال انقطاع مؤقت للاتصال
-          },
+          onError: (_) {},
         );
 
     _profileSub = _db
         .from('customers')
         .stream(primaryKey: ['id'])
-        .eq('id', uid)
+        .eq('id', widget.profile.id)
         .listen(
           (rows) {
             if (!mounted || rows.isEmpty) return;
             final row = rows.first;
             setState(() {
-              _walletBalance =
-                  (row['wallet_balance'] as num?)?.toDouble() ?? _walletBalance;
-              _pendingDebt =
-                  (row['pending_commission_debt'] as num?)?.toDouble() ??
-                      _pendingDebt;
+              _liveWalletBalance =
+                  (row['wallet_balance'] as num?)?.toDouble() ?? 0.0;
+              _livePendingDebt =
+                  (row['pending_commission_debt'] as num?)?.toDouble() ?? 0.0;
             });
           },
           onError: (_) {},
         );
   }
 
-  Future<void> _loadWalletData() async {
-    final uid = widget.profile.id;
-    try {
-      final results = await Future.wait<dynamic>([
-        _db
-            .from('customers')
-            .select('wallet_balance, pending_commission_debt')
-            .eq('id', uid)
-            .maybeSingle(),
-        _db
-            .from('wallet_transactions')
-            .select()
-            .eq('provider_id', uid)
-            .order('created_at', ascending: false),
-        _db
-            .from('system_settings')
-            .select('value')
-            .eq('key', 'min_withdrawal_amount')
-            .maybeSingle(),
-      ]);
-
-      final custRow = results[0] as Map<String, dynamic>?;
-      final txRows = (results[1] as List<dynamic>? ?? [])
-          .map((e) => DbWalletTransaction.fromMap(Map<String, dynamic>.from(e)))
-          .toList();
-      final minSetting = results[2] as Map<String, dynamic>?;
-      final parsedMin =
-          double.tryParse((minSetting?['value'] as String?)?.trim() ?? '');
-
-      if (!mounted) return;
-      setState(() {
-        if (custRow != null) {
-          _walletBalance =
-              (custRow['wallet_balance'] as num?)?.toDouble() ?? _walletBalance;
-          _pendingDebt =
-              (custRow['pending_commission_debt'] as num?)?.toDouble() ??
-                  _pendingDebt;
-        }
-        _allTransactions = txRows;
-        if (parsedMin != null && parsedMin > 0) {
-          _minWithdrawal = parsedMin;
-        }
-        _loading = false;
-      });
-    } catch (_) {
-      if (mounted) {
-        setState(() => _loading = false);
-      }
-    }
-  }
-
   bool _inPeriod(DateTime dt) {
     final range = DateRangeFilterBar.resolveRange(_period, _customRange);
-    final start = DateTime(range.start.year, range.start.month, range.start.day);
-    final end = DateTime(
-      range.end.year,
-      range.end.month,
-      range.end.day,
-      23,
-      59,
-      59,
-    );
-    return !dt.isBefore(start) && !dt.isAfter(end);
+    return !dt.isBefore(range.start) &&
+        !dt.isAfter(range.end.add(const Duration(days: 1)));
   }
 
-  /// تمييز حركات الأرباح الحقيقية عن حركات تسديد العمولة أو السحب حتى لا تتخربط الأرقام
-  bool _isNonEarningTx(DbWalletTransaction t) {
-    final type = t.transactionType.trim().toLowerCase();
-    return type == 'commission_settlement' ||
-        type == 'debt_settlement' ||
-        type == 'debt' ||
-        type == 'cliq_payment' ||
-        type == 'withdrawal' ||
+  bool _isEarningTransaction(DbWalletTransaction t) {
+    final type = t.transactionType.toLowerCase();
+    if (type == 'withdrawal' ||
         type == 'payout' ||
-        type.contains('settlement') ||
-        type.contains('withdraw');
-  }
-
-  String _txTitle(DbWalletTransaction t) {
-    final type = t.transactionType.trim().toLowerCase();
-    if (type == 'commission_settlement' ||
-        type == 'debt_settlement' ||
         type == 'debt' ||
-        type.contains('settlement')) {
-      return 'تسديد عمولة مستحقة';
+        type == 'debt_settlement' ||
+        type == 'commission_settlement' ||
+        type == 'subscription') {
+      return false;
     }
-    if (type == 'withdrawal' || type == 'payout' || type.contains('withdraw')) {
-      return 'سحب أرباح من المحفظة';
-    }
-    if (type.contains('winch')) return 'طلب ونش طوارئ';
-    if (type.contains('emergency') || type.contains('mechanic')) {
-      return 'طلب ميكانيكي طوارئ';
-    }
-    if (type.contains('workshop') || type.contains('appointment')) {
-      return 'صيانة ورشة';
-    }
-    if (type.contains('part') || type == 'order') return 'بيع قطعة غيار';
-    return 'حركة مالية';
+    return true;
   }
 
-  String _methodLabel(String method) {
-    return switch (method.trim().toLowerCase()) {
-      'visa' || 'card' || 'meps' => 'Visa / Mastercard',
-      'apple_pay' => 'Apple Pay',
-      'google_pay' => 'Google Pay',
-      'cliq' => 'CliQ',
-      'cash' => 'كاش',
-      'iban' => 'تحويل بنكي IBAN',
-      _ => method,
-    };
+  Future<void> _openWithdrawalSheet(double availableBalance) async {
+    if (availableBalance <= 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('لا يوجد رصيد متاح للسحب حالياً'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    final amountCtrl =
+        TextEditingController(text: availableBalance.toStringAsFixed(2));
+    final destinationCtrl = TextEditingController();
+    final holderCtrl =
+        TextEditingController(text: widget.profile.fullName ?? '');
+    String method = 'cliq'; // 'cliq' | 'iban'
+    bool submitting = false;
+
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      constraints: const BoxConstraints(maxWidth: 560),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+      ),
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setSheetState) {
+          return Padding(
+            padding: EdgeInsets.fromLTRB(
+              20,
+              20,
+              20,
+              MediaQuery.of(ctx).viewInsets.bottom + 24,
+            ),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'طلب سحب الأرباح (CliQ / IBAN)',
+                    style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    'الرصيد المتاح للسحب: ${availableBalance.toStringAsFixed(2)} د.أ (يمكنك سحب أي مبلغ متاح)',
+                    style: const TextStyle(
+                      color: AppColors.textSecondary,
+                      fontSize: 12.5,
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: ChoiceChip(
+                          label: const Center(child: Text('CliQ · كليك')),
+                          selected: method == 'cliq',
+                          selectedColor: AppColors.navy,
+                          labelStyle: TextStyle(
+                            color: method == 'cliq'
+                                ? Colors.white
+                                : AppColors.textPrimary,
+                            fontWeight: FontWeight.bold,
+                          ),
+                          onSelected: (_) =>
+                              setSheetState(() => method = 'cliq'),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: ChoiceChip(
+                          label: const Center(child: Text('تحويل بنكي IBAN')),
+                          selected: method == 'iban',
+                          selectedColor: AppColors.navy,
+                          labelStyle: TextStyle(
+                            color: method == 'iban'
+                                ? Colors.white
+                                : AppColors.textPrimary,
+                            fontWeight: FontWeight.bold,
+                          ),
+                          onSelected: (_) =>
+                              setSheetState(() => method = 'iban'),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 14),
+                  TextField(
+                    controller: amountCtrl,
+                    keyboardType:
+                        const TextInputType.numberWithOptions(decimal: true),
+                    decoration: InputDecoration(
+                      labelText: 'المبلغ المطلوب سحبه (د.أ)',
+                      filled: true,
+                      fillColor: AppColors.background,
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: destinationCtrl,
+                    decoration: InputDecoration(
+                      labelText: method == 'cliq'
+                          ? 'الاسم المستعار CliQ أو رقم الهاتف'
+                          : 'رقم الآيبان (IBAN)',
+                      hintText: method == 'cliq'
+                          ? 'مثال: AHMAD99 أو 079xxxxxxx'
+                          : 'JO94 CBJO 0010 0000 ...',
+                      filled: true,
+                      fillColor: AppColors.background,
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: holderCtrl,
+                    decoration: InputDecoration(
+                      labelText: 'اسم صاحب الحساب البنكي',
+                      filled: true,
+                      fillColor: AppColors.background,
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 18),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.orange,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                      ),
+                      onPressed: submitting
+                          ? null
+                          : () async {
+                              final amount = double.tryParse(
+                                amountCtrl.text.trim().replaceAll(',', '.'),
+                              );
+                              final dest = destinationCtrl.text.trim();
+                              final holder = holderCtrl.text.trim();
+
+                              if (amount == null || amount <= 0) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                    content:
+                                        Text('يرجى إدخال مبلغ صحيح أكبر من 0'),
+                                    backgroundColor: Colors.red,
+                                  ),
+                                );
+                                return;
+                              }
+                              if (amount > availableBalance + 0.001) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                    content: Text(
+                                        'المبلغ المطلوب أكبر من الرصيد المتاح'),
+                                    backgroundColor: Colors.red,
+                                  ),
+                                );
+                                return;
+                              }
+                              if (dest.isEmpty) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text(
+                                      method == 'cliq'
+                                          ? 'يرجى إدخال معرّف CliQ أو رقم الهاتف'
+                                          : 'يرجى إدخال رقم الـ IBAN',
+                                    ),
+                                    backgroundColor: Colors.red,
+                                  ),
+                                );
+                                return;
+                              }
+
+                              setSheetState(() => submitting = true);
+                              try {
+                                final newBalance = double.parse(
+                                  (availableBalance - amount)
+                                      .clamp(0.0, double.infinity)
+                                      .toStringAsFixed(2),
+                                );
+
+                                await _db.from('wallet_transactions').insert({
+                                  'provider_id': widget.profile.id,
+                                  'customer_id': widget.profile.id,
+                                  'reference_id':
+                                      '${method.toUpperCase()}:$dest${holder.isNotEmpty ? ' ($holder)' : ''}',
+                                  'transaction_type': 'withdrawal',
+                                  'payment_method': method,
+                                  'gross_amount': amount,
+                                  'commission_rate': 0.0,
+                                  'commission_amount': 0.0,
+                                  'net_amount': -amount,
+                                  'status': 'pending',
+                                });
+
+                                await _db.from('customers').update({
+                                  'wallet_balance': newBalance,
+                                }).eq('id', widget.profile.id);
+
+                                // إشعار الأدمن بطلب السحب
+                                try {
+                                  final admins = await _db
+                                      .from('customers')
+                                      .select('id')
+                                      .eq('role', 'admin')
+                                      .limit(10);
+                                  for (final a in (admins as List)) {
+                                    final adminId = a['id'] as String?;
+                                    if (adminId != null) {
+                                      await NotificationsService.instance
+                                          .sendNotification(
+                                        targetUserId: adminId,
+                                        title: 'طلب سحب أرباح جديد',
+                                        body:
+                                            '${widget.profile.fullName ?? "مزود"} طلب سحب ${amount.toStringAsFixed(2)} د.أ عبر ${method.toUpperCase()} ($dest)',
+                                        type: 'withdrawal_request',
+                                        referenceId: widget.profile.id,
+                                      );
+                                    }
+                                  }
+                                } catch (_) {}
+
+                                if (mounted) {
+                                  setState(() {
+                                    _liveWalletBalance = newBalance;
+                                  });
+                                }
+                                widget.onRefreshProfile();
+
+                                if (ctx.mounted) Navigator.pop(ctx);
+                                if (mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(
+                                      content: Text(
+                                          'تم إرسال طلب سحب الأرباح بنجاح ✓'),
+                                      backgroundColor: AppColors.success,
+                                    ),
+                                  );
+                                }
+                              } catch (e) {
+                                if (mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: Text('تعذر إرسال طلب السحب: $e'),
+                                      backgroundColor: Colors.red,
+                                    ),
+                                  );
+                                }
+                              } finally {
+                                if (ctx.mounted) {
+                                  setSheetState(() => submitting = false);
+                                }
+                              }
+                            },
+                      child: submitting
+                          ? const SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(
+                                color: Colors.white,
+                                strokeWidth: 2.2,
+                              ),
+                            )
+                          : const Text(
+                              'إرسال طلب السحب',
+                              style: TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 15,
+                              ),
+                            ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+
+    amountCtrl.dispose();
+    destinationCtrl.dispose();
+    holderCtrl.dispose();
   }
 
-  Future<void> _settleCommissionDebt() async {
-    if (_settlingDebt || _pendingDebt <= 0.009) return;
-    final amountToPay = double.parse(_pendingDebt.toStringAsFixed(2));
+  Future<void> _payPendingCommissionDebt(double debtAmount) async {
+    if (debtAmount <= 0 || _settlingDebt) return;
 
     setState(() => _settlingDebt = true);
     try {
-      final paid = await PayTabsPaymentService().startPaymentFlow(
+      // دفع العمولات إلكترونياً فقط (ممنوع الدفع نقداً للعمولات)
+      final ok = await PayTabsPaymentService().startPaymentFlow(
         context: context,
-        baseAmount: amountToPay,
-        title: 'تسديد عمولات مستحقة للمنصة',
+        baseAmount: debtAmount,
+        title: 'سداد عمولات الكاش المستحقة للمنصة',
         orderType: 'debt',
         referenceId: widget.profile.id,
         email: widget.profile.email,
         phone: widget.profile.phone,
         name: widget.profile.fullName,
         userRole: widget.profile.role,
+        allowCash: false,
       );
 
-      if (!paid || !mounted) return;
+      if (!ok) return;
 
-      final methodUsed = PayTabsPaymentService.lastChosenMethod ?? 'cliq';
+      await _db.from('customers').update({
+        'pending_commission_debt': 0.0,
+      }).eq('id', widget.profile.id);
 
-      // 1) تصفير الذمم المستحقة على الحساب فوراً في قاعدة البيانات
-      final freshCust = await _db
-          .from('customers')
-          .select('pending_commission_debt')
-          .eq('id', widget.profile.id)
-          .maybeSingle();
-      final currentDbDebt =
-          (freshCust?['pending_commission_debt'] as num?)?.toDouble() ??
-              amountToPay;
-      final remainingDebt =
-          double.parse((currentDbDebt - amountToPay).clamp(0.0, 999999.0).toStringAsFixed(2));
-
-      await _db
-          .from('customers')
-          .update({'pending_commission_debt': remainingDebt})
-          .eq('id', widget.profile.id);
-
-      // 2) تسجيل حركة التسديد بدون التأثير على إجمالي الطلبات أو صافي الأرباح
-      try {
-        await _db.from('wallet_transactions').insert({
-          'provider_id': widget.profile.id,
-          'customer_id': widget.profile.id,
-          'reference_id': widget.profile.id,
-          'transaction_type': 'commission_settlement',
-          'payment_method': methodUsed,
-          'gross_amount': 0.0,
-          'commission_rate': 0.0,
-          'commission_amount': amountToPay,
-          'net_amount': 0.0,
-          'status': 'completed',
-        });
-      } catch (_) {}
-
-      if (!mounted) return;
-      setState(() {
-        _pendingDebt = remainingDebt;
-      });
+      if (mounted) {
+        setState(() => _livePendingDebt = 0.0);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('تم سداد العمولات المستحقة وتصفير الذمة بنجاح ✓'),
+            backgroundColor: AppColors.success,
+          ),
+        );
+      }
       widget.onRefreshProfile();
-      await _loadWalletData();
-
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('تم تسديد العمولة المستحقة بنجاح ✓'),
-          backgroundColor: AppColors.success,
-        ),
-      );
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('تعذر تسديد العمولة: $e'),
+            content: Text('تعذر سداد العمولات: $e'),
             backgroundColor: Colors.red,
           ),
         );
@@ -302,283 +512,113 @@ class _ProviderWalletViewState extends State<ProviderWalletView> {
     }
   }
 
-  Future<void> _showWithdrawDialog() async {
-    if (_walletBalance < _minWithdrawal) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            'الحد الأدنى للسحب هو ${_minWithdrawal.toStringAsFixed(2)} د.أ',
-          ),
-          backgroundColor: AppColors.orange,
-        ),
-      );
-      return;
-    }
+  String _txArabicTitle(DbWalletTransaction t) {
+    final type = t.transactionType.toLowerCase();
+    return switch (type) {
+      'withdrawal' || 'payout' => 'طلب سحب أرباح',
+      'workshop' || 'workshop_appointment' || 'wrk' => 'فاتورة ورشة صيانة',
+      'emergency' || 'mechanic_emergency' || 'emg' => 'خدمة طوارئ ميكانيكي',
+      'winch' || 'winch_towing' || 'towing' => 'رحلة ونش طوارئ',
+      'order' || 'part_order' || 'ord' => 'مبيعات قطعة غيار',
+      'debt' || 'debt_settlement' || 'commission_settlement' =>
+        'سداد عمولات المنصة',
+      'subscription' || 'sub' => 'اشتراك باقة',
+      _ => t.transactionType,
+    };
+  }
 
-    final amountCtrl =
-        TextEditingController(text: _walletBalance.toStringAsFixed(2));
-    final accountCtrl = TextEditingController();
-    String withdrawMethod = 'cliq';
-    bool submitting = false;
+  String _methodArabic(String method) {
+    return switch (method.toLowerCase()) {
+      'visa' || 'card' || 'meps' => 'Visa / Mastercard',
+      'apple_pay' || 'applepay' => 'Apple Pay',
+      'google_pay' || 'googlepay' => 'Google Pay',
+      'cliq' => 'CliQ · كليك',
+      'iban' => 'تحويل بنكي IBAN',
+      'cash' => 'نقداً (كاش)',
+      _ => method,
+    };
+  }
 
-    await showDialog(
-      context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setD) => AlertDialog(
-          title: const Text('سحب الأرباح (IBAN / CliQ)'),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: ChoiceChip(
-                        label: const Center(child: Text('CliQ')),
-                        selected: withdrawMethod == 'cliq',
-                        selectedColor: AppColors.navy,
-                        labelStyle: TextStyle(
-                          color: withdrawMethod == 'cliq'
-                              ? Colors.white
-                              : AppColors.textPrimary,
-                        ),
-                        onSelected: (_) => setD(() => withdrawMethod = 'cliq'),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: ChoiceChip(
-                        label: const Center(child: Text('IBAN')),
-                        selected: withdrawMethod == 'iban',
-                        selectedColor: AppColors.navy,
-                        labelStyle: TextStyle(
-                          color: withdrawMethod == 'iban'
-                              ? Colors.white
-                              : AppColors.textPrimary,
-                        ),
-                        onSelected: (_) => setD(() => withdrawMethod = 'iban'),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: amountCtrl,
-                  keyboardType:
-                      const TextInputType.numberWithOptions(decimal: true),
-                  decoration: InputDecoration(
-                    labelText: 'المبلغ المطلوب سحبه (د.أ)',
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 10),
-                TextField(
-                  controller: accountCtrl,
-                  decoration: InputDecoration(
-                    labelText: withdrawMethod == 'cliq'
-                        ? 'الاسم المستعار أو رقم الهاتف (CliQ)'
-                        : 'رقم الحساب البنكي (IBAN)',
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: submitting ? null : () => Navigator.pop(ctx),
-              child: const Text('إلغاء'),
-            ),
-            ElevatedButton(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.orange,
-                foregroundColor: Colors.white,
-              ),
-              onPressed: submitting
-                  ? null
-                  : () async {
-                      final amt = double.tryParse(amountCtrl.text.trim()) ?? 0;
-                      final acc = accountCtrl.text.trim();
-                      if (amt < _minWithdrawal || amt > _walletBalance) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text(
-                              'أدخل مبلغاً بين ${_minWithdrawal.toStringAsFixed(2)} و ${_walletBalance.toStringAsFixed(2)} د.أ',
-                            ),
-                            backgroundColor: Colors.red,
-                          ),
-                        );
-                        return;
-                      }
-                      if (acc.isEmpty) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text('يرجى إدخال بيانات الحساب'),
-                            backgroundColor: Colors.red,
-                          ),
-                        );
-                        return;
-                      }
+  String _statusArabic(String status) {
+    return switch (status.toLowerCase()) {
+      'completed' || 'paid' || 'approved' || 'success' => 'مكتملة',
+      'pending' || 'pending_review' => 'قيد المراجعة',
+      'rejected' || 'failed' || 'cancelled' => 'ملغاة',
+      _ => status,
+    };
+  }
 
-                      setD(() => submitting = true);
-                      try {
-                        final newBalance = double.parse(
-                          (_walletBalance - amt).clamp(0.0, 999999.0).toStringAsFixed(2),
-                        );
-                        await _db
-                            .from('customers')
-                            .update({'wallet_balance': newBalance})
-                            .eq('id', widget.profile.id);
-
-                        await _db.from('wallet_transactions').insert({
-                          'provider_id': widget.profile.id,
-                          'customer_id': widget.profile.id,
-                          'reference_id': acc,
-                          'transaction_type': 'withdrawal',
-                          'payment_method': withdrawMethod,
-                          'gross_amount': 0.0,
-                          'commission_rate': 0.0,
-                          'commission_amount': 0.0,
-                          'net_amount': -amt,
-                          'status': 'pending',
-                        });
-
-                        // إشعار الأدمن بطلب السحب
-                        try {
-                          final admins = await _db
-                              .from('customers')
-                              .select('id')
-                              .eq('role', 'admin')
-                              .limit(10);
-                          for (final a in (admins as List)) {
-                            final adminId = a['id'] as String?;
-                            if (adminId != null) {
-                              await NotificationsService.instance
-                                  .sendNotification(
-                                targetUserId: adminId,
-                                title: 'طلب سحب أرباح جديد',
-                                body:
-                                    '${widget.profile.fullName ?? "مزود"} طلب سحب ${amt.toStringAsFixed(2)} د.أ عبر ${withdrawMethod.toUpperCase()} ($acc)',
-                                type: 'withdrawal_request',
-                                referenceId: widget.profile.id,
-                              );
-                            }
-                          }
-                        } catch (_) {}
-
-                        if (ctx.mounted) Navigator.pop(ctx);
-                        if (mounted) {
-                          setState(() => _walletBalance = newBalance);
-                          widget.onRefreshProfile();
-                          await _loadWalletData();
-                          if (mounted) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                content: Text('تم إرسال طلب سحب الأرباح بنجاح ✓'),
-                                backgroundColor: AppColors.success,
-                              ),
-                            );
-                          }
-                        }
-                      } catch (e) {
-                        setD(() => submitting = false);
-                        if (mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: Text('تعذر إرسال الطلب: $e'),
-                              backgroundColor: Colors.red,
-                            ),
-                          );
-                        }
-                      }
-                    },
-              child: submitting
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(
-                        color: Colors.white,
-                        strokeWidth: 2,
-                      ),
-                    )
-                  : const Text('تأكيد السحب'),
-            ),
-          ],
-        ),
-      ),
-    );
-
-    amountCtrl.dispose();
-    accountCtrl.dispose();
+  Color _statusColor(String status) {
+    return switch (status.toLowerCase()) {
+      'completed' || 'paid' || 'approved' || 'success' => AppColors.success,
+      'pending' || 'pending_review' => AppColors.orange,
+      'rejected' || 'failed' || 'cancelled' => Colors.red,
+      _ => AppColors.textSecondary,
+    };
   }
 
   @override
   Widget build(BuildContext context) {
-    final periodTxs =
-        _allTransactions.where((t) => _inPeriod(t.createdAt)).toList();
+    final periodTxs = _allTxs.where((t) => _inPeriod(t.createdAt)).toList();
+    final earningPeriodTxs = periodTxs.where(_isEarningTransaction).toList();
 
-    // حساب الأرباح والعمولات من الطلبات الفعلية فقط (بدون حركات تسديد العمولة أو السحب)
-    final earningTxs = periodTxs.where((t) => !_isNonEarningTx(t)).toList();
-    final gross = earningTxs.fold<double>(0.0, (s, t) => s + t.grossAmount);
-    final comm = earningTxs.fold<double>(0.0, (s, t) => s + t.commissionAmount);
-    final periodNet = earningTxs.fold<double>(
-      0.0,
-      (s, t) => s + (t.netAmount > 0 ? t.netAmount : (t.grossAmount - t.commissionAmount)),
-    );
+    final periodGross =
+        earningPeriodTxs.fold<double>(0.0, (s, t) => s + t.grossAmount);
+    final periodComm =
+        earningPeriodTxs.fold<double>(0.0, (s, t) => s + t.commissionAmount);
+    final periodNet =
+        earningPeriodTxs.fold<double>(0.0, (s, t) => s + t.netAmount);
+
+    // إذا تم حذف جميع المعاملات من قاعدة البيانات لا يُعرض رصيد قديم عالق
+    final double availableBalance =
+        (_loadedOnce && _allTxs.isEmpty) ? 0.0 : _liveWalletBalance;
+    final double pendingDebt =
+        (_loadedOnce && _allTxs.isEmpty) ? 0.0 : _livePendingDebt;
 
     return RefreshIndicator(
-      onRefresh: _loadWalletData,
+      onRefresh: _loadInitialData,
       child: ListView(
-        physics: const AlwaysScrollableScrollPhysics(),
         padding: const EdgeInsets.all(16),
         children: [
-          DateRangeFilterBar(
-            period: _period,
-            customRange: _customRange,
-            onChanged: (p, r) => setState(() {
-              _period = p;
-              _customRange = r;
-            }),
+          Align(
+            alignment: AlignmentDirectional.centerStart,
+            child: DateRangeFilterBar(
+              period: _period,
+              customRange: _customRange,
+              onChanged: (p, r) => setState(() {
+                _period = p;
+                _customRange = r;
+              }),
+            ),
           ),
-          const SizedBox(height: 14),
+          const SizedBox(height: 12),
 
-          // بطاقة الرصيد الرئيسية
+          // بطاقة الرصيد الرئيسية (بنفس التصميم تماماً)
           Container(
             padding: const EdgeInsets.all(20),
             decoration: BoxDecoration(
               color: AppColors.navy,
-              borderRadius: BorderRadius.circular(22),
-              boxShadow: [
-                BoxShadow(
-                  color: AppColors.navy.withValues(alpha: 0.22),
-                  blurRadius: 16,
-                  offset: const Offset(0, 6),
-                ),
-              ],
+              borderRadius: BorderRadius.circular(18),
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 const Text(
                   'صافي الرصيد القابل للسحب',
-                  style: TextStyle(color: Colors.white70, fontSize: 13.5),
+                  style: TextStyle(color: Colors.white70, fontSize: 13),
                 ),
-                const SizedBox(height: 6),
+                const SizedBox(height: 4),
                 Text(
-                  '${_walletBalance.toStringAsFixed(2)} د.أ',
+                  '${availableBalance.toStringAsFixed(2)} د.أ',
                   style: const TextStyle(
                     color: Colors.white,
-                    fontSize: 30,
+                    fontSize: 28,
                     fontWeight: FontWeight.w900,
                   ),
                 ),
-                const SizedBox(height: 10),
+                const SizedBox(height: 6),
                 Text(
-                  'إجمالي الفترة: ${gross.toStringAsFixed(2)} د.أ  |  العمولات: ${comm.toStringAsFixed(2)} د.أ  |  الصافي: ${periodNet.toStringAsFixed(2)} د.أ',
+                  'إجمالي الفترة: ${periodGross.toStringAsFixed(2)} د.أ  |  العمولات: ${periodComm.toStringAsFixed(2)} د.أ  |  الصافي: ${periodNet.toStringAsFixed(2)} د.أ',
                   style: const TextStyle(color: Colors.white70, fontSize: 12),
                 ),
                 const SizedBox(height: 16),
@@ -588,96 +628,94 @@ class _ProviderWalletViewState extends State<ProviderWalletView> {
                     style: ElevatedButton.styleFrom(
                       backgroundColor: AppColors.orange,
                       foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      padding: const EdgeInsets.symmetric(vertical: 13),
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(14),
                       ),
                     ),
-                    onPressed: _showWithdrawDialog,
-                    icon: const Icon(Icons.account_balance, size: 20),
+                    icon: const Icon(Icons.account_balance, size: 19),
                     label: const Text(
-                      'سحب الأرباح (IBAN / CliQ)',
-                      style: TextStyle(
-                        fontWeight: FontWeight.bold,
-                        fontSize: 14.5,
-                      ),
+                      'سحب الأرباح (CliQ / IBAN)',
+                      style: TextStyle(fontWeight: FontWeight.bold),
                     ),
+                    onPressed: () => _openWithdrawalSheet(availableBalance),
                   ),
                 ),
               ],
             ),
           ),
 
-          // بطاقة العمولات المستحقة للتسوية (تختفي تلقائياً فور التصفير)
-          if (_pendingDebt > 0.009) ...[
+          // بطاقة عمولات الكاش المستحقة (تظهر فقط إذا وجدت ذمة مستحقة)
+          if (pendingDebt > 0) ...[
             const SizedBox(height: 14),
             Container(
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
-                color: const Color(0xFFFFF1F2),
-                borderRadius: BorderRadius.circular(18),
-                border: Border.all(color: Colors.red.shade300),
+                color: AppColors.orangeLight,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: AppColors.orange),
               ),
               child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      const Icon(
-                        Icons.warning_amber_rounded,
-                        color: Color(0xFFDC2626),
-                        size: 24,
-                      ),
-                      const SizedBox(width: 8),
-                      const Expanded(
-                        child: Text(
-                          'مستحقات / عمولات مطلوبة للتسوية',
-                          style: TextStyle(
-                            color: Color(0xFFB91C1C),
-                            fontWeight: FontWeight.bold,
-                            fontSize: 13.5,
-                          ),
+                      const Text(
+                        'عمولات الكاش المستحقة للمنصة',
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          color: AppColors.navy,
+                          fontSize: 14,
                         ),
                       ),
                       Text(
-                        '${_pendingDebt.toStringAsFixed(2)} د.أ',
+                        '${pendingDebt.toStringAsFixed(2)} د.أ',
                         style: const TextStyle(
-                          color: Color(0xFFB91C1C),
                           fontWeight: FontWeight.w900,
+                          color: AppColors.orange,
                           fontSize: 16,
                         ),
                       ),
                     ],
+                  ),
+                  const SizedBox(height: 6),
+                  const Text(
+                    'يمكنك تسديد العمولات إلكترونياً مباشرة (Visa / Apple Pay / Google Pay / CliQ).',
+                    style: TextStyle(
+                      color: AppColors.textSecondary,
+                      fontSize: 12,
+                    ),
                   ),
                   const SizedBox(height: 12),
                   SizedBox(
                     width: double.infinity,
                     child: ElevatedButton.icon(
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFFD32F2F),
+                        backgroundColor: AppColors.navy,
                         foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(vertical: 13),
+                        padding: const EdgeInsets.symmetric(vertical: 12),
                         shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(14),
+                          borderRadius: BorderRadius.circular(12),
                         ),
                       ),
-                      onPressed: _settlingDebt ? null : _settleCommissionDebt,
                       icon: _settlingDebt
                           ? const SizedBox(
-                              width: 18,
-                              height: 18,
+                              width: 16,
+                              height: 16,
                               child: CircularProgressIndicator(
                                 color: Colors.white,
                                 strokeWidth: 2,
                               ),
                             )
-                          : const Icon(Icons.credit_card, size: 19),
-                      label: const Text(
-                        'تسديد الآن',
-                        style: TextStyle(
-                          fontWeight: FontWeight.bold,
-                          fontSize: 14.5,
-                        ),
+                          : const Icon(Icons.payment, size: 18),
+                      label: Text(
+                        'سداد العمولات الآن (${pendingDebt.toStringAsFixed(2)} د.أ)',
+                        style: const TextStyle(fontWeight: FontWeight.bold),
                       ),
+                      onPressed: _settlingDebt
+                          ? null
+                          : () => _payPendingCommissionDebt(pendingDebt),
                     ),
                   ),
                 ],
@@ -687,47 +725,42 @@ class _ProviderWalletViewState extends State<ProviderWalletView> {
 
           const SizedBox(height: 20),
 
-          // عنوان سجل الحركات المالية
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               const Text(
                 'سجل الحركات المالية',
-                style: TextStyle(
-                  fontSize: 17,
-                  fontWeight: FontWeight.w800,
-                  color: AppColors.navy,
-                ),
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
               ),
               Text(
                 '${periodTxs.length} حركة',
                 style: const TextStyle(
                   color: AppColors.textSecondary,
-                  fontSize: 13,
+                  fontSize: 12.5,
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 10),
 
-          if (_loading && _allTransactions.isEmpty)
+          if (_loadingInitial)
             const Padding(
               padding: EdgeInsets.symmetric(vertical: 40),
               child: Center(child: CircularProgressIndicator()),
             )
           else if (periodTxs.isEmpty)
             Container(
-              padding: const EdgeInsets.symmetric(vertical: 38, horizontal: 20),
+              padding: const EdgeInsets.symmetric(vertical: 44, horizontal: 20),
               decoration: BoxDecoration(
                 color: AppColors.surface,
-                borderRadius: BorderRadius.circular(18),
+                borderRadius: BorderRadius.circular(16),
                 border: Border.all(color: AppColors.border),
               ),
               child: const Column(
                 children: [
                   Icon(
                     Icons.receipt_long_outlined,
-                    size: 46,
+                    size: 40,
                     color: AppColors.textSecondary,
                   ),
                   SizedBox(height: 10),
@@ -735,7 +768,7 @@ class _ProviderWalletViewState extends State<ProviderWalletView> {
                     'لا توجد حركات مالية مسجلة حتى الآن',
                     style: TextStyle(
                       color: AppColors.textSecondary,
-                      fontSize: 14,
+                      fontSize: 13.5,
                     ),
                   ),
                 ],
@@ -743,72 +776,68 @@ class _ProviderWalletViewState extends State<ProviderWalletView> {
             )
           else
             ...periodTxs.map((t) {
-              final isNonEarning = _isNonEarningTx(t);
               final isWithdrawal =
-                  t.transactionType.toLowerCase().contains('withdraw') ||
-                      t.transactionType.toLowerCase() == 'payout';
-              final isSettlement = isNonEarning && !isWithdrawal;
-
-              final displayNet = isWithdrawal
-                  ? t.netAmount
-                  : isSettlement
-                      ? -t.commissionAmount
-                      : (t.netAmount > 0
-                          ? t.netAmount
-                          : (t.grossAmount - t.commissionAmount));
-
+                  t.transactionType.toLowerCase() == 'withdrawal' ||
+                      t.transactionType.toLowerCase() == 'payout' ||
+                      t.netAmount < 0;
+              final displayAmt = isWithdrawal
+                  ? '-${t.netAmount.abs().toStringAsFixed(2)} د.أ'
+                  : '+${t.netAmount.toStringAsFixed(2)} د.أ';
               final dateStr =
-                  '${t.createdAt.year}-${t.createdAt.month.toString().padLeft(2, '0')}-${t.createdAt.day.toString().padLeft(2, '0')}';
+                  '${t.createdAt.year}/${t.createdAt.month.toString().padLeft(2, '0')}/${t.createdAt.day.toString().padLeft(2, '0')}';
 
               return Card(
                 margin: const EdgeInsets.only(bottom: 10),
                 child: ListTile(
                   leading: CircleAvatar(
-                    backgroundColor: isSettlement
+                    backgroundColor: isWithdrawal
                         ? AppColors.orangeLight
-                        : isWithdrawal
-                            ? Colors.blue.withValues(alpha: 0.12)
-                            : AppColors.success.withValues(alpha: 0.12),
+                        : AppColors.success.withValues(alpha: 0.12),
                     child: Icon(
-                      isSettlement
-                          ? Icons.verified_outlined
-                          : isWithdrawal
-                              ? Icons.account_balance
-                              : Icons.payments_outlined,
-                      color: isSettlement
-                          ? AppColors.orange
-                          : isWithdrawal
-                              ? AppColors.navy
-                              : AppColors.success,
+                      isWithdrawal
+                          ? Icons.north_east
+                          : Icons.south_west_rounded,
+                      color: isWithdrawal ? AppColors.orange : AppColors.success,
                       size: 20,
                     ),
                   ),
                   title: Text(
-                    '${_txTitle(t)} · ${_methodLabel(t.paymentMethod)}',
+                    '${_txArabicTitle(t)} · ${_methodArabic(t.paymentMethod)}',
                     style: const TextStyle(
                       fontWeight: FontWeight.bold,
                       fontSize: 13.5,
                     ),
                   ),
                   subtitle: Text(
-                    isSettlement
-                        ? 'تسديد عمولة مستحقة · $dateStr'
-                        : isWithdrawal
-                            ? 'طلب سحب أرباح · $dateStr'
-                            : 'المبلغ: ${t.grossAmount.toStringAsFixed(2)} د.أ | العمولة: -${t.commissionAmount.toStringAsFixed(2)} د.أ · $dateStr',
-                    style: const TextStyle(fontSize: 11.5),
+                    isWithdrawal
+                        ? '$dateStr · ${_statusArabic(t.status)}'
+                        : '$dateStr · قبل العمولة: ${t.grossAmount.toStringAsFixed(2)} | العمولة: -${t.commissionAmount.toStringAsFixed(2)}',
+                    style: const TextStyle(fontSize: 12),
                   ),
-                  trailing: Text(
-                    '${displayNet >= 0 ? '+' : ''}${displayNet.toStringAsFixed(2)} د.أ',
-                    style: TextStyle(
-                      color: isSettlement
-                          ? AppColors.orange
-                          : displayNet >= 0
-                              ? AppColors.success
-                              : Colors.red,
-                      fontWeight: FontWeight.w800,
-                      fontSize: 14,
-                    ),
+                  trailing: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      Text(
+                        displayAmt,
+                        style: TextStyle(
+                          color: isWithdrawal
+                              ? AppColors.orange
+                              : AppColors.success,
+                          fontWeight: FontWeight.w800,
+                          fontSize: 14,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        _statusArabic(t.status),
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                          color: _statusColor(t.status),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               );
@@ -835,16 +864,32 @@ class CustomerPaymentsHistoryScreen extends StatefulWidget {
 class _CustomerPaymentsHistoryScreenState
     extends State<CustomerPaymentsHistoryScreen> {
   final _db = Supabase.instance.client;
-  List<DbWalletTransaction> _items = [];
+  StreamSubscription<List<Map<String, dynamic>>>? _sub;
+  List<DbWalletTransaction> _txs = [];
   bool _loading = true;
 
   @override
   void initState() {
     super.initState();
-    _load();
+    _loadInitial();
+    _sub = _db
+        .from('wallet_transactions')
+        .stream(primaryKey: ['id'])
+        .eq('customer_id', widget.profile.id)
+        .order('created_at', ascending: false)
+        .listen(
+          (rows) {
+            if (!mounted) return;
+            setState(() {
+              _txs = rows.map(DbWalletTransaction.fromMap).toList();
+              _loading = false;
+            });
+          },
+          onError: (_) {},
+        );
   }
 
-  Future<void> _load() async {
+  Future<void> _loadInitial() async {
     try {
       final rows = await _db
           .from('wallet_transactions')
@@ -853,9 +898,9 @@ class _CustomerPaymentsHistoryScreenState
           .order('created_at', ascending: false);
       if (!mounted) return;
       setState(() {
-        _items = (rows as List)
+        _txs = (rows as List)
             .map((e) =>
-                DbWalletTransaction.fromMap(Map<String, dynamic>.from(e)))
+                DbWalletTransaction.fromMap(Map<String, dynamic>.from(e as Map)))
             .toList();
         _loading = false;
       });
@@ -865,68 +910,152 @@ class _CustomerPaymentsHistoryScreenState
   }
 
   @override
+  void dispose() {
+    _sub?.cancel();
+    super.dispose();
+  }
+
+  String _txTitle(String type) {
+    return switch (type.toLowerCase()) {
+      'workshop' || 'workshop_appointment' || 'wrk' => 'دفع فاتورة ورشة',
+      'emergency' || 'mechanic_emergency' || 'emg' => 'دفع خدمة طوارئ',
+      'winch' || 'winch_towing' || 'towing' => 'دفع خدمة ونش طوارئ',
+      'order' || 'part_order' || 'ord' => 'شراء قطعة غيار',
+      'subscription' || 'sub' => 'اشتراك عضوية',
+      _ => type,
+    };
+  }
+
+  String _methodLabel(String method) {
+    return switch (method.toLowerCase()) {
+      'visa' || 'card' || 'meps' => 'Visa / Mastercard',
+      'apple_pay' || 'applepay' => 'Apple Pay',
+      'google_pay' || 'googlepay' => 'Google Pay',
+      'cliq' => 'CliQ · كليك',
+      'cash' => 'نقداً (كاش)',
+      _ => method,
+    };
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final totalSpent = _txs.fold<double>(0.0, (s, t) => s + t.grossAmount);
+
     return Scaffold(
-      appBar: AppBar(title: const Text('سجل مدفوعاتي')),
-      body: RefreshIndicator(
-        onRefresh: _load,
-        child: _loading
-            ? const Center(child: CircularProgressIndicator())
-            : _items.isEmpty
-                ? ListView(
-                    children: const [
-                      SizedBox(height: 120),
-                      Icon(
-                        Icons.receipt_long_outlined,
-                        size: 54,
-                        color: AppColors.textSecondary,
+      appBar: AppBar(title: const Text('سجل المدفوعات والفواتير')),
+      body: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 820),
+          child: RefreshIndicator(
+            onRefresh: _loadInitial,
+            child: ListView(
+              padding: const EdgeInsets.all(16),
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(20),
+                  decoration: BoxDecoration(
+                    color: AppColors.navy,
+                    borderRadius: BorderRadius.circular(18),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'إجمالي المدفوعات المسجلة',
+                        style: TextStyle(color: Colors.white70, fontSize: 13),
                       ),
-                      SizedBox(height: 12),
-                      Center(
-                        child: Text(
-                          'لا توجد مدفوعات مسجلة حتى الآن',
-                          style: TextStyle(color: AppColors.textSecondary),
+                      const SizedBox(height: 4),
+                      Text(
+                        '${totalSpent.toStringAsFixed(2)} د.أ',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 26,
+                          fontWeight: FontWeight.w900,
                         ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        'عدد العمليات: ${_txs.length}',
+                        style: const TextStyle(
+                            color: Colors.white70, fontSize: 12),
                       ),
                     ],
+                  ),
+                ),
+                const SizedBox(height: 16),
+                if (_loading)
+                  const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 40),
+                    child: Center(child: CircularProgressIndicator()),
                   )
-                : ListView.builder(
-                    padding: const EdgeInsets.all(16),
-                    itemCount: _items.length,
-                    itemBuilder: (_, i) {
-                      final t = _items[i];
-                      final amt = t.grossAmount > 0
-                          ? t.grossAmount
-                          : t.commissionAmount;
-                      return Card(
-                        margin: const EdgeInsets.only(bottom: 10),
-                        child: ListTile(
-                          leading: const CircleAvatar(
-                            backgroundColor: AppColors.orangeLight,
-                            child: Icon(
-                              Icons.receipt_long,
-                              color: AppColors.orange,
-                            ),
-                          ),
-                          title: Text(
-                            '${t.transactionType} · ${t.paymentMethod}',
-                            style: const TextStyle(fontWeight: FontWeight.bold),
-                          ),
-                          subtitle: Text(
-                            '${t.createdAt.year}-${t.createdAt.month.toString().padLeft(2, '0')}-${t.createdAt.day.toString().padLeft(2, '0')}',
-                          ),
-                          trailing: Text(
-                            '${amt.toStringAsFixed(2)} د.أ',
-                            style: const TextStyle(
-                              fontWeight: FontWeight.w800,
-                              color: AppColors.navy,
-                              fontSize: 15,
-                            ),
+                else if (_txs.isEmpty)
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                        vertical: 44, horizontal: 20),
+                    decoration: BoxDecoration(
+                      color: AppColors.surface,
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: AppColors.border),
+                    ),
+                    child: const Column(
+                      children: [
+                        Icon(
+                          Icons.receipt_long_outlined,
+                          size: 40,
+                          color: AppColors.textSecondary,
+                        ),
+                        SizedBox(height: 10),
+                        Text(
+                          'لا توجد مدفوعات مسجلة حتى الآن',
+                          style: TextStyle(
+                            color: AppColors.textSecondary,
+                            fontSize: 13.5,
                           ),
                         ),
-                      );
-                    },
-                  ),
+                      ],
+                    ),
+                  )
+                else
+                  ..._txs.map((t) {
+                    final dateStr =
+                        '${t.createdAt.year}/${t.createdAt.month.toString().padLeft(2, '0')}/${t.createdAt.day.toString().padLeft(2, '0')}';
+                    return Card(
+                      margin: const EdgeInsets.only(bottom: 10),
+                      child: ListTile(
+                        leading: const CircleAvatar(
+                          backgroundColor: AppColors.orangeLight,
+                          child: Icon(
+                            Icons.receipt_outlined,
+                            color: AppColors.orange,
+                            size: 20,
+                          ),
+                        ),
+                        title: Text(
+                          _txTitle(t.transactionType),
+                          style: const TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 14,
+                          ),
+                        ),
+                        subtitle: Text(
+                          '$dateStr · ${_methodLabel(t.paymentMethod)}',
+                          style: const TextStyle(fontSize: 12),
+                        ),
+                        trailing: Text(
+                          '${t.grossAmount.toStringAsFixed(2)} د.أ',
+                          style: const TextStyle(
+                            color: AppColors.navy,
+                            fontWeight: FontWeight.w800,
+                            fontSize: 14.5,
+                          ),
+                        ),
+                      ),
+                    );
+                  }),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }
