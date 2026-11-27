@@ -1,12 +1,16 @@
 ﻿import 'dart:async';
 import 'package:flutter/services.dart';
+import 'package:flutter_map/flutter_map.dart';
+import 'package:latlong2/latlong.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
+
 import '../../config/env_config.dart';
 import '../../models/db_models.dart';
 import '../../models/subscription_plans.dart';
 import '../../services/app_locale_service.dart';
+import '../../services/location_service.dart';
 import '../../services/notifications_service.dart';
 import '../../services/wallet_auth_service.dart';
 import '../../theme/app_theme.dart';
@@ -27,16 +31,238 @@ import 'customer_subscriptions_screen.dart';
 import 'emergency_screen.dart';
 import 'live_store_home_screen.dart';
 import 'wallet_and_payments_screens.dart';
+
 export 'wallet_and_payments_screens.dart';
 
+/// عرض السياسات الكاملة للتطبيق (شروط المستخدم، شروط المزود، سياسة الـ 24 ساعة، خصوصية Apple، سياسة الموقع )
+/// مترجمة بالكامل للغتين العربية والإنجليزية حسب لغة التطبيق
+void showAppLegalPoliciesSheet(BuildContext context) {
+  final loc = AppLocaleService.instance;
+  showModalBottomSheet(
+    context: context,
+    isScrollControlled: true,
+    shape: const RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+    ),
+    builder: (ctx) {
+      return DraggableScrollableSheet(
+        expand: false,
+        initialChildSize: 0.86,
+        maxChildSize: 0.95,
+        minChildSize: 0.5,
+        builder: (_, scrollCtrl) {
+          return Column(
+            children: [
+              Container(
+                margin: const EdgeInsets.only(top: 10, bottom: 6),
+                width: 44,
+                height: 4.5,
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade300,
+                  borderRadius: BorderRadius.circular(4),
+                ),
+              ),
+              Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 18, vertical: 8),
+                child: Row(
+                  children: [
+                    const Icon(Icons.policy_rounded, color: AppColors.navy),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        loc.tr(
+                          'الشروط والأحكام وسياسة الخصوصية — غيارك',
+                          'Terms, Refund & Privacy Policy — Ghiyarak',
+                        ),
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w800,
+                          color: AppColors.navy,
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      onPressed: () => Navigator.pop(ctx),
+                      icon: const Icon(Icons.close),
+                    ),
+                  ],
+                ),
+              ),
+              const Divider(height: 1),
+              Expanded(
+                child: ListView(
+                  controller: scrollCtrl,
+                  padding: const EdgeInsets.all(18),
+                  children: [
+                    _policyCard(
+                      icon: Icons.person_outline,
+                      title: loc.tr(
+                        '1. شروط وأحكام المستخدم العادي',
+                        '1. Regular User Terms & Conditions',
+                      ),
+                      body: loc.tr(
+                        '• يلتزم المستخدم بتقديم بيانات دقيقة للمركبة والموقع عند طلب خدمات الصيانة أو الطوارئ أو شراء القطع.\n'
+                        '• تسعيرة خدمات الطوارئ والونش تعتمد على عرض السعر المباشر من المزود، وللمستخدم كامل الحرية بقبول العرض أو رفضه ليبحث التطبيق تلقائياً عن مزود آخر.\n'
+                        '• ممنوع إلغاء الطلب أو الفاتورة أو الدفع نهائياً بعد قيام الورشة أو المزود بإصدار الفاتورة النهائية.\n'
+                        '• يظهر شريط التتبع المباشر (البروجرس) لمواعيد الورشة المحجوزة مسبقاً قبل الموعد بساعة واحدة فقط.\n'
+                        '• يلتزم المستخدم بتقييم مقدم الخدمة بمصداقية بعد إتمام الدفع واستلام المركبة.',
+                        '• Users must provide accurate vehicle and pickup details when booking workshops, roadside assistance, or purchasing parts.\n'
+                        '• Roadside mechanic & towing pricing is quote-based: providers send a direct price quote, and users may accept or decline (automatically searching for another available provider).\n'
+                        '• Once a workshop or roadside provider issues the final invoice, order and payment cancellation is strictly prohibited.\n'
+                        '• For future/next-day workshop appointments, the live progress tracker activates 1 hour prior to the scheduled appointment slot.\n'
+                        '• Users are invited to submit honest star ratings and reviews after completing payment.',
+                      ),
+                    ),
+                    _policyCard(
+                      icon: Icons.handyman_outlined,
+                      title: loc.tr(
+                        '2. شروط المزودين (ورش، ميكانيكي، ونش، تجار) وسياسة الغرامات',
+                        '2. Provider Terms, Workshop Capacity Lock & Penalties',
+                      ),
+                      body: loc.tr(
+                        '• قفل سعة الورشة: لا يمكن لصاحب الورشة قبول طلبات أو مواعيد جديدة بمجرد امتلاء السعة القصوى للورشة بالطلبات النشطة حتى يتم إنهاء الصيانة وإصدار الفاتورة رسمياً.\n'
+                        '• سياسة منع التلاعب والإلغاءات المتكررة: في حال تجاوز عدد الطلبات الملغية من قبل المزود عدد الطلبات المكتملة والمفوترة، يُصدر النظام تلقائياً تنبيهاً وإنذاراً رسمياً على حساب المزود مع فرض غرامة مالية تُضاف تلقائياً إلى ذمم العمولة.\n'
+                        '• يلتزم المزود بتقديم عروض أسعار واضحة وعادلة وإصدار الفاتورة فور الانتهاء من العمل.\n'
+                        '• تتم مراجعة طلبات سحب الرصيد البنكي (IBAN أو CliQ) وتحويلها بعد التحقق من عدم وجود ذمم عمولات مستحقة.',
+                        '• Workshop Capacity Lock: Workshops cannot accept new active bookings once their max car capacity is full until active jobs are finished and billed.\n'
+                        '• Anti-Manipulation & Cancellation Penalty: If a provider’s cancelled orders exceed completed billed orders, the system automatically issues an account warning and adds a financial penalty to pending commission dues.\n'
+                        '• Providers must submit transparent quotes and issue final invoices promptly upon job completion.\n'
+                        '• Wallet payout requests (Bank IBAN or CliQ) are verified and settled after checking pending commission balances.',
+                      ),
+                    ),
+                    _policyCard(
+                      icon: Icons.currency_exchange_rounded,
+                      title: loc.tr(
+                        '3. سياسة استرداد قيمة الباقات (Refund Policy)',
+                        '3. Subscription Refund Policy (24 Hours Only)',
+                      ),
+                      body: loc.tr(
+                        '• يحق للمستخدم أو المزود طلب استرداد كامل قيمة الاشتراك المدفوع (Refund) خلال 24 ساعة فقط من وقت تفعيل الاشتراك.\n'
+                        '• بعد مرور 24 ساعة من وقت الاشتراك، لا يمكن استرداد قيمة الباقة ويستمر الاشتراك فعالاً حتى نهاية مدته.\n'
+                        '• عند الموافقة على طلب الاسترداد خلال الـ 24 ساعة، يتم إلغاء مزايا الباقة وإعادة الحساب للباقة المجانية ورد المبلغ عبر نفس وسيلة الدفع.',
+                        '• Customers and providers may request a full refund of any paid subscription within 24 hours of activation ONLY.\n'
+                        '• After 24 hours have elapsed from subscription purchase, fees are non-refundable and benefits remain active until expiration.\n'
+                        '• Approved 24-hour refunds revert the account to the Free plan and return funds via the original payment method.',
+                      ),
+                    ),
+                    _policyCard(
+                      icon: Icons.privacy_tip_outlined,
+                      title: loc.tr(
+                        '4. سياسة الخصوصية',
+                        '4. Privacy Policy',
+                      ),
+                      body: loc.tr(
+                        '• البيانات التي نجمعها: الاسم، رقم الهاتف، البريد الإلكتروني، تفاصيل المركبة، وموقعك الجغرافي أثناء استخدام الخدمة فقط، بالإضافة إلى صور القطع أو الورشة التي تختار رفعها.\n'
+                        '• استخدام البيانات: تُستخدم البيانات حصراً لتنفيذ الطلبات، ربطك بأقرب ورشة أو ونش، إرسال إشعارات حالة طلباتك، وتوثيق الفواتير والمدفوعات.\n'
+                        '• عدم البيع لطرف ثالث: لا نقوم ببيع أو تأجير بياناتك الشخصية لأي جهات إعلانية أو أطراف ثالثة.\n'
+                        '• حق حذف الحساب نهائياً (Apple Guideline 5.1.1(v)): يمكنك حذف حسابك وبياناتك الشخصية نهائياً في أي وقت من داخل شاشة "الملف الشخصي" بشرط تسوية أي ذمم مالية مستحقة.\n'
+                        '• التواصل بشأن الخصوصية: ${EnvConfig.supportEmail}',
+                        '• Data We Collect: Name, phone number, email address, vehicle details, active location when using roadside/workshop services, and photos you voluntarily upload.\n'
+                        '• Purpose of Processing: Data is used strictly to fulfill orders, match you with nearby workshops/towing, send real-time job notifications, and verify invoices/payments.\n'
+                        '• No Third-Party Data Sale: We never sell or rent your personal data to brokers or third-party advertisers.\n'
+                        '• In-App Account Deletion (Apple Guideline 5.1.1(v)): You can permanently delete your account and personal data anytime from your Profile screen, provided no unpaid financial balance exists.\n'
+                        '• Privacy Contact: ${EnvConfig.supportEmail}',
+                      ),
+                    ),
+                    _policyCard(
+                      icon: Icons.my_location_rounded,
+                      title: loc.tr(
+                        '5. سياسة الموقع الجغرافي',
+                        '5. Location Policy',
+                      ),
+                      body: loc.tr(
+                        '• لا يقوم تطبيق غيارك بتخزين سجل تاريخي لتحركات السائقين أو المستخدمين على قاعدة البيانات.\n'
+                        '• يتم تحديث الإحداثيات الحالية فقط عبر استبدال الموقع السابق بالموقع الجديد لحظياً (In-Place Update) أثناء وجود طلب نشط أو تفعيل حالة "متاح" للمزود.\n'
+                        '• يُستخدم الموقع حصراً لحساب المسافة لأقرب ميكانيكي أو ونش، وإظهار حركة المزود على الخريطة أثناء توجهه إليك، وإشعار الورشة بوصولك.',
+                        '• Ghiyarak does NOT store historical GPS breadcrumbs or location logs for drivers or customers.\n'
+                        '• Coordinates are overwritten in-place (replacing the previous coordinate with the latest one) strictly while an order is active or while a provider is toggled Online.\n'
+                        '• Location is used solely to match the nearest provider, show live provider arrival on the map, and confirm arrival at workshops.',
+                      ),
+                    ),
+                    _policyCard(
+                      icon: Icons.verified_user_outlined,
+                      title: loc.tr(
+                        '6. أمان المدفوعات والتحقق الخادمي',
+                        '6. Payment Security & Server-Side Verification',
+                      ),
+                      body: loc.tr(
+                        '• تتم معالجة بطاقات Visa و Mastercard عبر بوابة MEPS المعتمدة بتشفير كامل دون حفظ أرقام البطاقات داخل التطبيق.\n'
+                        '• لا يُعتمد أي دفع إلكتروني ولا تُفعّل أي باقة أو فاتورة إلا بعد التحقق الرسمي المباشر من خادم بوابة الدفع.\n'
+                        '• حوالات CliQ تخضع للمراجعة المالية قبل التفعيل النهائي.',
+                        '• Visa & Mastercard transactions are processed through MEPS with full encryption; card details are never stored in the app.\n'
+                        '• No subscription or invoice is marked paid unless verified server-side against payment gateway records.\n'
+                        '• CliQ transfers undergo financial review before final confirmation.',
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          );
+        },
+      );
+    },
+  );
+}
+
+Widget _policyCard({
+  required IconData icon,
+  required String title,
+  required String body,
+}) {
+  return Container(
+    margin: const EdgeInsets.only(bottom: 14),
+    padding: const EdgeInsets.all(14),
+    decoration: BoxDecoration(
+      color: AppColors.surface,
+      borderRadius: BorderRadius.circular(16),
+      border: Border.all(color: AppColors.border),
+    ),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Icon(icon, color: AppColors.orange, size: 20),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                title,
+                style: const TextStyle(
+                  fontWeight: FontWeight.w800,
+                  fontSize: 14,
+                  color: AppColors.navy,
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        Text(
+          body,
+          style: const TextStyle(
+            fontSize: 12.5,
+            height: 1.65,
+            color: AppColors.textPrimary,
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+/// شاشة الملف الشخصي: تعديل البيانات + تغيير موقع الورشة GPS/خريطة + Refund خلال 24 ساعة + حذف الحساب نهائياً
 class UserProfileScreen extends StatefulWidget {
   final CustomerProfile profile;
   final VoidCallback onSaved;
+  final VoidCallback? onSignedOut;
 
   const UserProfileScreen({
     super.key,
     required this.profile,
     required this.onSaved,
+    this.onSignedOut,
   });
 
   @override
@@ -46,9 +272,13 @@ class UserProfileScreen extends StatefulWidget {
 class _UserProfileScreenState extends State<UserProfileScreen> {
   final _db = Supabase.instance.client;
   final _loc = AppLocaleService.instance;
+  final _locationService = LocationService();
   late final TextEditingController _name;
   late final TextEditingController _username;
   late final TextEditingController _phone;
+  late final TextEditingController _addressCtrl;
+  late double? _workshopLat = widget.profile.workshopLatitude;
+  late double? _workshopLng = widget.profile.workshopLongitude;
   bool _saving = false;
 
   @override
@@ -57,6 +287,8 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     _name = TextEditingController(text: widget.profile.fullName ?? '');
     _username = TextEditingController(text: widget.profile.username ?? '');
     _phone = TextEditingController(text: widget.profile.phone ?? '');
+    _addressCtrl =
+        TextEditingController(text: widget.profile.workshopAddress ?? '');
   }
 
   @override
@@ -64,6 +296,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     _name.dispose();
     _username.dispose();
     _phone.dispose();
+    _addressCtrl.dispose();
     super.dispose();
   }
 
@@ -71,7 +304,6 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     final name = _name.text.trim();
     final username = _username.text.trim();
     final phone = _phone.text.trim();
-
     if (name.isEmpty || username.isEmpty || phone.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -90,22 +322,32 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
         'full_name': name,
         'username': username,
         'phone': phone,
+        if (widget.profile.role == 'mechanic') ...{
+          'workshop_address': _addressCtrl.text.trim(),
+          'workshop_latitude': _workshopLat,
+          'workshop_longitude': _workshopLng,
+        },
       }).eq('id', widget.profile.id);
-
       await _db.auth.updateUser(
         UserAttributes(data: {'full_name': name, 'phone': phone}),
       );
-
       widget.onSaved();
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(_loc.tr('تم حفظ التغييرات', 'Changes saved'))),
+        SnackBar(
+          backgroundColor: AppColors.success,
+          content: Text(_loc.tr(
+            'تم حفظ بيانات الملف الشخصي بنجاح ✓',
+            'Profile saved ✓',
+          )),
+        ),
       );
       Navigator.of(context).pop();
     } catch (_) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
+          backgroundColor: Colors.red,
           content: Text(_loc.tr(
             'تعذر حفظ التغييرات. تأكد أن اسم المستخدم غير مستخدم.',
             'Could not save changes. Make sure the username is unique.',
@@ -117,56 +359,387 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
     }
   }
 
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(_loc.tr('الملف الشخصي', 'My Profile')),
+  Future<void> _pickWorkshopLocationOnMap() async {
+    LatLng selected = LatLng(
+      _workshopLat ?? 31.9539,
+      _workshopLng ?? 35.9106,
+    );
+    final mapCtrl = MapController();
+
+    final picked = await showModalBottomSheet<LatLng>(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
       ),
-      body: SafeArea(
-        child: ListView(
-          padding: const EdgeInsets.all(16),
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setS) => SizedBox(
+          height: MediaQuery.of(ctx).size.height * 0.78,
+          child: Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.all(14),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        _loc.tr(
+                          'اضغط على الخريطة لتحديد موقع الورشة الجديد',
+                          'Tap map to choose new workshop location',
+                        ),
+                        style: const TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.my_location,
+                          color: AppColors.orange),
+                      onPressed: () async {
+                        final res = await _locationService.getCurrentLocation();
+                        setS(() => selected = res.coordinates);
+                        mapCtrl.move(selected, 15.5);
+                      },
+                    ),
+                  ],
+                ),
+              ),
+              Expanded(
+                child: FlutterMap(
+                  mapController: mapCtrl,
+                  options: MapOptions(
+                    initialCenter: selected,
+                    initialZoom: 14.5,
+                    onTap: (_, pos) => setS(() => selected = pos),
+                  ),
+                  children: [
+                    TileLayer(
+                      urlTemplate:
+                          'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}@2x.png',
+                      subdomains: const ['a', 'b', 'c', 'd'],
+                      userAgentPackageName: 'com.autoparts.ghiyarak',
+                      retinaMode: true,
+                    ),
+                    MarkerLayer(markers: [
+                      Marker(
+                        point: selected,
+                        width: 48,
+                        height: 48,
+                        child: const Icon(
+                          Icons.location_on,
+                          color: AppColors.orange,
+                          size: 42,
+                        ),
+                      ),
+                    ]),
+                  ],
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.all(16),
+                child: SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.navy,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                    ),
+                    onPressed: () => Navigator.pop(ctx, selected),
+                    child: Text(_loc.tr(
+                      'تأكيد موقع الورشة الجديد',
+                      'Confirm Workshop Location',
+                    )),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    if (picked != null) {
+      final addr = await _locationService.getAddressFromLatLng(picked);
+      if (mounted) {
+        setState(() {
+          _workshopLat = picked.latitude;
+          _workshopLng = picked.longitude;
+          _addressCtrl.text = addr;
+        });
+      }
+    }
+  }
+
+  Future<void> _requestSubscriptionRefund() async {
+    final reasonCtrl = TextEditingController();
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(_loc.tr(
+          'طلب استرداد الباقة (خلال 24 ساعة فقط)',
+          'Subscription Refund (Within 24h Only)',
+        )),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
           children: [
-            TextField(
-              controller: _name,
-              decoration: InputDecoration(
-                labelText: _loc.tr('الاسم الكامل', 'Full name'),
+            Text(
+              _loc.tr(
+                'يمكنك استرداد قيمة الباقة خلال 24 ساعة فقط من وقت الاشتراك.',
+                'Refunds are eligible within 24 hours of subscription activation only.',
               ),
+              style: const TextStyle(fontSize: 12.5),
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: 10),
             TextField(
-              controller: _username,
+              controller: reasonCtrl,
               decoration: InputDecoration(
-                labelText: _loc.tr('اسم المستخدم', 'Username'),
+                labelText: _loc.tr('سبب طلب الاسترداد', 'Reason for refund'),
               ),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _phone,
-              keyboardType: TextInputType.phone,
-              decoration: InputDecoration(
-                labelText: _loc.tr('رقم الهاتف', 'Phone number'),
-              ),
-            ),
-            const SizedBox(height: 20),
-            ElevatedButton.icon(
-              onPressed: _saving ? null : _save,
-              icon: _saving
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.save_outlined),
-              label: Text(_loc.tr('حفظ', 'Save')),
             ),
           ],
         ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text(_loc.tr('إلغاء', 'Cancel')),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.orange,
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(_loc.tr('إرسال الطلب', 'Submit Refund')),
+          ),
+        ],
       ),
+    );
+    if (confirm == true) {
+      try {
+        await _db.rpc('request_subscription_refund', params: {
+          'p_reason': reasonCtrl.text.trim(),
+        });
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              backgroundColor: AppColors.success,
+              content: Text(_loc.tr(
+                'تم استلام طلب الاسترداد بنجاح ✓ ستتم مراجعته من الإدارة.',
+                'Refund request received ✓ Pending admin approval.',
+              )),
+            ),
+          );
+        }
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(backgroundColor: Colors.red, content: Text('$e')),
+          );
+        }
+      }
+    }
+    reasonCtrl.dispose();
+  }
+
+  Future<void> _confirmDeleteAccount() async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(
+          _loc.tr('حذف الحساب نهائياً', 'Delete Account Permanently'),
+          style: const TextStyle(color: Colors.red),
+        ),
+        content: Text(_loc.tr(
+          'هل أنت متأكد من حذف حسابك وبياناتك الشخصية نهائياً؟ لا يمكن التراجع عن هذا الإجراء.',
+          'Are you sure you want to permanently delete your account and personal data? This cannot be undone.',
+        )),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text(_loc.tr('تراجع', 'Cancel')),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(_loc.tr('نعم، احذف حسابي', 'Yes, Delete Account')),
+          ),
+        ],
+      ),
+    );
+    if (confirm == true) {
+      try {
+        await _db.rpc('delete_my_account');
+        await _db.auth.signOut();
+        widget.onSignedOut?.call();
+        if (mounted) {
+          Navigator.popUntil(context, (r) => r.isFirst);
+        }
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(backgroundColor: Colors.red, content: Text('$e')),
+          );
+        }
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final p = widget.profile;
+    return ListenableBuilder(
+      listenable:
+          Listenable.merge([_loc.langCode, EnvConfig.subscriptionsEnabled]),
+      builder: (_, __) {
+        final showSubs = EnvConfig.subscriptionsEnabled.value;
+        return Scaffold(
+          appBar: AppBar(
+            title: Text(_loc.tr('الملف الشخصي', 'My Profile')),
+          ),
+          body: SafeArea(
+            child: ListView(
+              padding: const EdgeInsets.all(16),
+              children: [
+                TextField(
+                  controller: _name,
+                  decoration: InputDecoration(
+                    labelText: _loc.tr('الاسم الكامل', 'Full name'),
+                    prefixIcon: const Icon(Icons.person_outline),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _username,
+                  decoration: InputDecoration(
+                    labelText: _loc.tr('اسم المستخدم', 'Username'),
+                    prefixIcon: const Icon(Icons.alternate_email),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _phone,
+                  keyboardType: TextInputType.phone,
+                  decoration: InputDecoration(
+                    labelText: _loc.tr('رقم الهاتف', 'Phone number'),
+                    prefixIcon: const Icon(Icons.phone_outlined),
+                  ),
+                ),
+                if (p.role == 'mechanic') ...[
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _addressCtrl,
+                    decoration: InputDecoration(
+                      labelText: _loc.tr('عنوان الورشة', 'Workshop Address'),
+                      prefixIcon: const Icon(Icons.location_on_outlined),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  OutlinedButton.icon(
+                    style: OutlinedButton.styleFrom(
+                      side: const BorderSide(color: AppColors.navy),
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                    ),
+                    onPressed: _pickWorkshopLocationOnMap,
+                    icon: const Icon(Icons.map_rounded, color: AppColors.navy),
+                    label: Text(
+                      _loc.tr(
+                        'تغيير موقع الورشة على الخريطة (GPS)',
+                        'Change Workshop Location on Map (GPS)',
+                      ),
+                      style: const TextStyle(
+                        color: AppColors.navy,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 20),
+                ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.orange,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                  ),
+                  onPressed: _saving ? null : _save,
+                  icon: _saving
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(
+                            color: Colors.white,
+                            strokeWidth: 2,
+                          ),
+                        )
+                      : const Icon(Icons.save_outlined),
+                  label: Text(
+                    _loc.tr('حفظ التعديلات', 'Save Changes'),
+                    style: const TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                ),
+                const SizedBox(height: 18),
+                if (showSubs && p.subscriptionPlan != 'free')
+                  Card(
+                    child: ListTile(
+                      leading: const Icon(Icons.currency_exchange,
+                          color: AppColors.orange),
+                      title: Text(
+                        _loc.tr(
+                          'طلب استرداد الاشتراك (خلال 24 ساعة)',
+                          'Request Subscription Refund (24h)',
+                        ),
+                        style: const TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                      subtitle: Text(
+                        _loc.tr(
+                          'الباقة الحالية: ${p.subscriptionPlan}',
+                          'Current plan: ${p.subscriptionPlan}',
+                        ),
+                      ),
+                      trailing: const Icon(Icons.arrow_forward_ios, size: 15),
+                      onTap: _requestSubscriptionRefund,
+                    ),
+                  ),
+                Card(
+                  child: ListTile(
+                    leading: const Icon(Icons.policy_outlined,
+                        color: AppColors.navy),
+                    title: Text(
+                      _loc.tr(
+                        'الشروط والأحكام وسياسة الخصوصية',
+                        'Terms & Privacy Policy',
+                      ),
+                      style: const TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                    trailing: const Icon(Icons.arrow_forward_ios, size: 15),
+                    onTap: () => showAppLegalPoliciesSheet(context),
+                  ),
+                ),
+                const SizedBox(height: 14),
+                OutlinedButton.icon(
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.red,
+                    side: const BorderSide(color: Colors.red),
+                    padding: const EdgeInsets.symmetric(vertical: 13),
+                  ),
+                  onPressed: _confirmDeleteAccount,
+                  icon: const Icon(Icons.delete_forever_rounded),
+                  label: Text(
+                    _loc.tr('حذف الحساب نهائياً', 'Delete Account Permanently'),
+                    style: const TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 }
 
+/// شاشة الدعم الفني والسياسات القانونية
 class SupportScreen extends StatelessWidget {
   const SupportScreen({super.key});
 
@@ -193,6 +766,7 @@ class SupportScreen extends StatelessWidget {
               leading: const Icon(Icons.chat_rounded, color: Colors.green),
               title: Text(loc.tr('واتساب', 'WhatsApp')),
               subtitle: Text(EnvConfig.supportPhone),
+              trailing: const Icon(Icons.arrow_forward_ios, size: 15),
               onTap: () => _open(Uri.parse(
                 'https://wa.me/${EnvConfig.supportWhatsapp}?text=$message',
               )),
@@ -203,6 +777,7 @@ class SupportScreen extends StatelessWidget {
               leading: const Icon(Icons.phone_outlined, color: AppColors.orange),
               title: Text(loc.tr('اتصال', 'Call')),
               subtitle: Text(EnvConfig.supportPhone),
+              trailing: const Icon(Icons.arrow_forward_ios, size: 15),
               onTap: () => _open(Uri.parse('tel:${EnvConfig.supportPhone}')),
             ),
           ),
@@ -211,7 +786,23 @@ class SupportScreen extends StatelessWidget {
               leading: const Icon(Icons.email_outlined, color: AppColors.navy),
               title: Text(loc.tr('البريد الإلكتروني', 'Email')),
               subtitle: Text(EnvConfig.supportEmail),
+              trailing: const Icon(Icons.arrow_forward_ios, size: 15),
               onTap: () => _open(Uri.parse('mailto:${EnvConfig.supportEmail}')),
+            ),
+          ),
+          Card(
+            child: ListTile(
+              leading:
+                  const Icon(Icons.policy_rounded, color: AppColors.orange),
+              title: Text(
+                loc.tr(
+                  'الشروط والأحكام وسياسة الخصوصية والاسترجاع',
+                  'Terms, Refund & Privacy Policy',
+                ),
+                style: const TextStyle(fontWeight: FontWeight.bold),
+              ),
+              trailing: const Icon(Icons.arrow_forward_ios, size: 15),
+              onTap: () => showAppLegalPoliciesSheet(context),
             ),
           ),
         ],
@@ -428,6 +1019,7 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
         UserProfileScreen(
           profile: p,
           onSaved: widget.onRefreshProfile,
+          onSignedOut: widget.onSignedOut,
         ),
       ),
     );
@@ -773,7 +1365,6 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
     newPassCtrl.dispose();
     confirmPassCtrl.dispose();
   }
-
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
@@ -1297,6 +1888,12 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
                   onTap: () => _loc.toggleLanguage(),
                 ),
                 navTile(
+                  icon: Icons.policy_outlined,
+                  label: _loc.tr('الشروط وسياسة الخصوصية', 'Terms & Privacy'),
+                  selected: false,
+                  onTap: () => showAppLegalPoliciesSheet(context),
+                ),
+                navTile(
                   icon: Icons.support_agent,
                   label: _loc.tr('الدعم الفني', 'Support'),
                   selected: false,
@@ -1342,6 +1939,7 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
     final showPayments = EnvConfig.paymentsEnabled.value;
     final showSubs = EnvConfig.subscriptionsEnabled.value;
     final showWinch = EnvConfig.winchEnabled.value;
+
     final displayName = isLoggedIn
         ? (p.username?.isNotEmpty == true
             ? p.username!
@@ -1655,13 +2253,17 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
                     ),
                   ),
                 ),
+
                 const SizedBox(height: 12),
                 const HomeAdBanner(),
+
                 if (isLoggedIn) ...[
                   const SizedBox(height: 12),
                   HomeLiveProgressBanner(viewerProfile: p),
                 ],
+
                 const SizedBox(height: 20),
+
                 Row(
                   children: [
                     const Icon(
@@ -1681,6 +2283,7 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
                   ],
                 ),
                 const SizedBox(height: 14),
+
                 LayoutBuilder(
                   builder: (context, constraints) {
                     final cols = constraints.maxWidth >= 920
@@ -1804,6 +2407,7 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
       ),
     );
   }
+
   List<_ShortcutItem> _buildShortcutsForRole({
     required CustomerProfile? p,
     required bool isAdmin,
@@ -2229,7 +2833,6 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
       ),
     ];
   }
-
   Widget _buildRoleBasedDrawer() {
     final p = widget.profile;
     final isLoggedIn = p != null;
@@ -2531,6 +3134,14 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
             },
           ),
           ListTile(
+            leading: const Icon(Icons.policy_outlined, color: AppColors.navy),
+            title: Text(_loc.tr('الشروط وسياسة الخصوصية', 'Terms & Privacy')),
+            onTap: () {
+              Navigator.pop(context);
+              showAppLegalPoliciesSheet(context);
+            },
+          ),
+          ListTile(
             leading: const Icon(Icons.support_agent, color: AppColors.orange),
             title: Text(_loc.tr('الدعم الفني والمساعدة', 'Support & Help')),
             onTap: () {
@@ -2716,6 +3327,20 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
                 Card(
                   child: ListTile(
                     leading: const Icon(
+                      Icons.policy_outlined,
+                      color: AppColors.navy,
+                    ),
+                    title: Text(
+                      _loc.tr('الشروط وسياسة الخصوصية', 'Terms & Privacy'),
+                    ),
+                    trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+                    onTap: () => showAppLegalPoliciesSheet(context),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Card(
+                  child: ListTile(
+                    leading: const Icon(
                       Icons.support_agent,
                       color: AppColors.orange,
                     ),
@@ -2793,11 +3418,15 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
                     color: AppColors.orange,
                   ),
                   title: Text(
-                    _loc.tr('البروفايل (معلوماتي الشخصية)', 'My Profile'),
+                    _loc.tr('البروفايل وإعدادات الحساب', 'My Profile'),
                   ),
                   subtitle: Text(_loc.tr(
-                    'عرض وتعديل الاسم، الهاتف، ومعلومات النشاط',
-                    'View & edit name, phone and workshop info',
+                    showSubs
+                        ? 'تعديل البيانات، موقع الورشة، الاسترجاع وحذف الحساب'
+                        : 'تعديل البيانات، موقع الورشة وحذف الحساب',
+                    showSubs
+                        ? 'Edit profile, workshop location, refund & delete account'
+                        : 'Edit profile, workshop location & delete account',
                   )),
                   trailing: const Icon(Icons.arrow_forward_ios, size: 16),
                   onTap: () => _openUserProfile(p),
@@ -2892,6 +3521,21 @@ class _LiveMobileShellState extends State<LiveMobileShell> {
                   title: Text(_loc.tr('تغيير كلمة المرور', 'Change Password')),
                   trailing: const Icon(Icons.arrow_forward_ios, size: 16),
                   onTap: _showChangePasswordDialog,
+                ),
+              ),
+              const SizedBox(height: 12),
+              Card(
+                child: ListTile(
+                  leading: const Icon(
+                    Icons.policy_outlined,
+                    color: AppColors.navy,
+                  ),
+                  title: Text(_loc.tr(
+                    'الشروط والسياسات وخصوصية التطبيق',
+                    'Terms, Refund & Privacy Policy',
+                  )),
+                  trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+                  onTap: () => showAppLegalPoliciesSheet(context),
                 ),
               ),
               const SizedBox(height: 12),

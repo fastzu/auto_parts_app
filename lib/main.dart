@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
+
 import 'config/env_config.dart';
 import 'models/db_models.dart';
 import 'screens/auth/auth_screens.dart';
@@ -11,6 +12,7 @@ import 'screens/mobile/mobile_shell.dart';
 import 'services/app_locale_service.dart';
 import 'theme/app_theme.dart';
 import 'widgets/animations.dart';
+import 'widgets/app_top_toast.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -47,16 +49,145 @@ class AutoPartsSupabaseApp extends StatelessWidget {
       builder: (_, lang, __) {
         final isArabic = lang == 'ar';
         return MaterialApp(
+          navigatorKey: appNavigatorKey,
           debugShowCheckedModeBanner: false,
           title: isArabic ? 'غيارك' : 'Ghiyarak',
           theme: AppTheme.lightTheme,
           builder: (context, child) => Directionality(
             textDirection: isArabic ? TextDirection.rtl : TextDirection.ltr,
-            child: child!,
+            child: _TopToastScaffoldMessenger(child: child!),
           ),
           home: const RoleRouterGate(),
         );
       },
+    );
+  }
+}
+
+/// يعترض جميع رسائل SnackBar في التطبيق بالكامل ويعرضها من الأعلى بتصميم AppTopToast
+class _TopToastScaffoldMessenger extends ScaffoldMessenger {
+  const _TopToastScaffoldMessenger({required super.child});
+
+  @override
+  ScaffoldMessengerState createState() => _TopToastScaffoldMessengerState();
+}
+
+class _TopToastScaffoldMessengerState extends ScaffoldMessengerState {
+  static String _extractText(Widget? widget) {
+    if (widget == null) return '';
+    if (widget is Text) {
+      return widget.data ?? widget.textSpan?.toPlainText() ?? '';
+    }
+    if (widget is RichText) {
+      return widget.text.toPlainText();
+    }
+    if (widget is Flex) {
+      return widget.children
+          .map(_extractText)
+          .where((s) => s.trim().isNotEmpty)
+          .join(' ');
+    }
+    if (widget is Wrap) {
+      return widget.children
+          .map(_extractText)
+          .where((s) => s.trim().isNotEmpty)
+          .join(' ');
+    }
+    if (widget is Container) {
+      return _extractText(widget.child);
+    }
+    if (widget is SingleChildRenderObjectWidget) {
+      return _extractText(widget.child);
+    }
+    if (widget is ProxyWidget) {
+      return _extractText(widget.child);
+    }
+    return '';
+  }
+
+  static AppToastType _detectType(Color? bg, String message) {
+    final lower = message.toLowerCase();
+    if (bg == Colors.red ||
+        bg == Colors.redAccent ||
+        (bg != null && bg.r > 0.65 && bg.g < 0.35 && bg.b < 0.35) ||
+        message.contains('فشل') ||
+        message.contains('تعذر') ||
+        message.contains('خطأ') ||
+        message.contains('غير صحيح') ||
+        message.contains('ممنوع') ||
+        message.contains('حظر') ||
+        lower.contains('failed') ||
+        lower.contains('error') ||
+        lower.contains('exception') ||
+        lower.contains('invalid')) {
+      return AppToastType.error;
+    }
+    if (bg == AppColors.success ||
+        bg == Colors.green ||
+        (bg != null && bg.g > 0.45 && bg.r < 0.35) ||
+        message.contains('بنجاح') ||
+        message.contains('✓') ||
+        message.contains('تم حفظ') ||
+        message.contains('تم تحديث') ||
+        message.contains('تم حذف') ||
+        message.contains('تم إرسال') ||
+        lower.contains('success') ||
+        lower.contains('saved')) {
+      return AppToastType.success;
+    }
+    if (bg == AppColors.orange ||
+        bg == Colors.orange ||
+        bg == Colors.amber ||
+        message.contains('يرجى') ||
+        message.contains('تنبيه') ||
+        message.contains('تحذير') ||
+        lower.contains('please') ||
+        lower.contains('warning')) {
+      return AppToastType.warning;
+    }
+    return AppToastType.info;
+  }
+
+  static String _defaultTitle(AppToastType type) {
+    final loc = AppLocaleService.instance;
+    return switch (type) {
+      AppToastType.success => loc.tr('تمت العملية بنجاح', 'Success'),
+      AppToastType.error => loc.tr('تعذر إتمام العملية', 'Error'),
+      AppToastType.warning => loc.tr('تنبيه', 'Notice'),
+      _ => loc.tr('إشعار', 'Info'),
+    };
+  }
+
+  @override
+  ScaffoldFeatureController<SnackBar, SnackBarClosedReason> showSnackBar(
+    SnackBar snackBar, {
+    AnimationStyle? snackBarAnimationStyle,
+  }) {
+    final message = _extractText(snackBar.content).trim();
+    if (message.isNotEmpty) {
+      final type = _detectType(snackBar.backgroundColor, message);
+      AppTopToast.show(
+        title: _defaultTitle(type),
+        message: message,
+        type: type,
+        context: context,
+        duration: snackBar.duration.inMilliseconds > 500
+            ? snackBar.duration
+            : const Duration(seconds: 3),
+      );
+    }
+
+    return super.showSnackBar(
+      const SnackBar(
+        content: SizedBox.shrink(),
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        padding: EdgeInsets.zero,
+        margin: EdgeInsets.zero,
+        behavior: SnackBarBehavior.floating,
+        duration: Duration(milliseconds: 1),
+      ),
+      snackBarAnimationStyle: AnimationStyle.noAnimation,
     );
   }
 }
@@ -147,7 +278,6 @@ class _RoleRouterGateState extends State<RoleRouterGate> {
 
   Future<void> _loadSession() async {
     await _loadSystemSettingsOnce();
-
     CustomerProfile? loadedProfile;
     bool needsCompletion = false;
     final user = _db.auth.currentUser;
@@ -183,7 +313,6 @@ class _RoleRouterGateState extends State<RoleRouterGate> {
   @override
   Widget build(BuildContext context) {
     final showSplash = !_splashAnimationDone || !_dataLoaded;
-
     return AnimatedSwitcher(
       duration: const Duration(milliseconds: 500),
       child: showSplash
