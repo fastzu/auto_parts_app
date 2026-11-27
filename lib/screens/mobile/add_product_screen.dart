@@ -2,6 +2,7 @@ import 'dart:typed_data';
 import 'package:image_picker/image_picker.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import '../../config/env_config.dart';
 import '../../models/car_parts_catalog_az.dart';
 import '../../models/subscription_plans.dart';
 import '../../theme/app_theme.dart';
@@ -17,6 +18,7 @@ Future<void> showPostLimitUpgradeSheet(
   required VoidCallback onSubscribed,
   bool justPublished = false,
 }) async {
+  final showSubs = EnvConfig.subscriptionsEnabled.value;
   final currentPlan = AppSubscriptionCatalog.getProviderPlan(currentPlanCode);
   final upgradePlans = AppSubscriptionCatalog.providerPlans
       .where((p) => p.code != 'free' && p.code != currentPlanCode)
@@ -53,8 +55,10 @@ Future<void> showPostLimitUpgradeSheet(
                   shape: BoxShape.circle,
                   border: Border.all(color: AppColors.orange, width: 1.5),
                 ),
-                child: const Icon(
-                  Icons.workspace_premium,
+                child: Icon(
+                  showSubs
+                      ? Icons.workspace_premium
+                      : Icons.inventory_2_outlined,
                   color: AppColors.orange,
                   size: 34,
                 ),
@@ -73,7 +77,9 @@ Future<void> showPostLimitUpgradeSheet(
               ),
               const SizedBox(height: 6),
               Text(
-                'باقتك الحالية: ${currentPlan.title}. اشترك الآن لرفع عدد المنشورات المسموحة وتقليل العمولة وزيادة ظهورك للعملاء!',
+                showSubs
+                    ? 'باقتك الحالية: ${currentPlan.title}. اشترك الآن لرفع عدد المنشورات المسموحة وتقليل العمولة وزيادة ظهورك للعملاء!'
+                    : 'لقد وصلت للحد الأقصى المسموح للمنشورات حالياً ($currentCount / $maxLimit). يمكنك إدارة منشوراتك الحالية من لوحة التحكم.',
                 textAlign: TextAlign.center,
                 style: const TextStyle(
                   fontSize: 12.5,
@@ -81,113 +87,139 @@ Future<void> showPostLimitUpgradeSheet(
                   height: 1.45,
                 ),
               ),
-              const SizedBox(height: 16),
-              ...upgradePlans.map((plan) {
-                final isUnlimited =
-                    plan.maxPostsLimit < 0 || plan.maxPostsLimit >= 9999;
-                final postsLabel = isUnlimited
-                    ? 'منشورات لا نهائية ∞'
-                    : '${plan.maxPostsLimit} منشور';
-                final commPct =
-                    (plan.commissionRate * 100).toStringAsFixed(plan.commissionRate == 0.065 || plan.commissionRate == 0.025 ? 1 : 0);
-
-                return Container(
-                  margin: const EdgeInsets.only(bottom: 8),
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
-                  decoration: BoxDecoration(
-                    color: isUnlimited
-                        ? AppColors.orangeLight
-                        : AppColors.background,
-                    borderRadius: BorderRadius.circular(14),
-                    border: Border.all(
-                      color: isUnlimited ? AppColors.orange : AppColors.border,
-                      width: isUnlimited ? 1.4 : 1,
+              if (showSubs) ...[
+                const SizedBox(height: 16),
+                ...upgradePlans.map((plan) {
+                  final isUnlimited =
+                      plan.maxPostsLimit < 0 || plan.maxPostsLimit >= 9999;
+                  final postsLabel = isUnlimited
+                      ? 'منشورات لا نهائية ∞'
+                      : '${plan.maxPostsLimit} منشور';
+                  final commPct = (plan.commissionRate * 100).toStringAsFixed(
+                    plan.commissionRate == 0.065 || plan.commissionRate == 0.025
+                        ? 1
+                        : 0,
+                  );
+                  return Container(
+                    margin: const EdgeInsets.only(bottom: 8),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 11,
                     ),
-                  ),
-                  child: Row(
-                    children: [
-                      Icon(
-                        isUnlimited
-                            ? Icons.all_inclusive
-                            : Icons.rocket_launch_outlined,
-                        color: isUnlimited ? AppColors.orange : AppColors.navy,
-                        size: 22,
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              plan.title,
-                              style: const TextStyle(
-                                fontWeight: FontWeight.bold,
-                                fontSize: 13.5,
-                                color: AppColors.navy,
-                              ),
-                            ),
-                            Text(
-                              '$postsLabel · عمولة $commPct% · تاجر موثوق ✓',
-                              style: const TextStyle(
-                                fontSize: 11.5,
-                                color: AppColors.textSecondary,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      Text(
-                        '${plan.priceJod.toStringAsFixed(2)} د.أ',
-                        style: const TextStyle(
-                          fontWeight: FontWeight.w900,
-                          fontSize: 14,
-                          color: AppColors.orange,
-                        ),
-                      ),
-                    ],
-                  ),
-                );
-              }),
-              const SizedBox(height: 12),
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton.icon(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.orange,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 15),
-                    shape: RoundedRectangleBorder(
+                    decoration: BoxDecoration(
+                      color: isUnlimited
+                          ? AppColors.orangeLight
+                          : AppColors.background,
                       borderRadius: BorderRadius.circular(14),
+                      border: Border.all(
+                        color: isUnlimited ? AppColors.orange : AppColors.border,
+                        width: isUnlimited ? 1.4 : 1,
+                      ),
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(
+                          isUnlimited
+                              ? Icons.all_inclusive
+                              : Icons.rocket_launch_outlined,
+                          color: isUnlimited ? AppColors.orange : AppColors.navy,
+                          size: 22,
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                plan.title,
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 13.5,
+                                  color: AppColors.navy,
+                                ),
+                              ),
+                              Text(
+                                '$postsLabel · عمولة $commPct% · تاجر موثوق ✓',
+                                style: const TextStyle(
+                                  fontSize: 11.5,
+                                  color: AppColors.textSecondary,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        Text(
+                          '${plan.priceJod.toStringAsFixed(2)} د.أ',
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w900,
+                            fontSize: 14,
+                            color: AppColors.orange,
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                }),
+                const SizedBox(height: 12),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.orange,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 15),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                    ),
+                    icon: const Icon(Icons.workspace_premium),
+                    label: const Text(
+                      'اشترك بالباقة الآن',
+                      style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
+                    ),
+                    onPressed: () {
+                      Navigator.pop(ctx);
+                      Navigator.push(
+                        context,
+                        animatedRoute(
+                          ProviderSubscriptionsScreen(
+                            currentPlanCode: currentPlanCode,
+                            onSubscribed: onSubscribed,
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+                const SizedBox(height: 6),
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text(
+                    'لاحقاً',
+                    style: TextStyle(color: AppColors.textSecondary),
+                  ),
+                ),
+              ] else ...[
+                const SizedBox(height: 16),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.navy,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                    ),
+                    onPressed: () => Navigator.pop(ctx),
+                    child: const Text(
+                      'حسناً',
+                      style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
                     ),
                   ),
-                  icon: const Icon(Icons.workspace_premium),
-                  label: const Text(
-                    'اشترك بالباقة الآن',
-                    style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
-                  ),
-                  onPressed: () {
-                    Navigator.pop(ctx);
-                    Navigator.push(
-                      context,
-                      animatedRoute(
-                        ProviderSubscriptionsScreen(
-                          currentPlanCode: currentPlanCode,
-                          onSubscribed: onSubscribed,
-                        ),
-                      ),
-                    );
-                  },
                 ),
-              ),
-              const SizedBox(height: 6),
-              TextButton(
-                onPressed: () => Navigator.pop(ctx),
-                child: const Text(
-                  'لاحقاً',
-                  style: TextStyle(color: AppColors.textSecondary),
-                ),
-              ),
+              ],
             ],
           ),
         ),
@@ -207,7 +239,6 @@ class AddProductScreen extends StatefulWidget {
 class _AddProductScreenState extends State<AddProductScreen> {
   final _db = Supabase.instance.client;
   final _picker = ImagePicker();
-
   final _titleCtrl = TextEditingController();
   final _descCtrl = TextEditingController();
   final _priceCtrl = TextEditingController();
@@ -253,7 +284,6 @@ class _AddProductScreenState extends State<AddProductScreen> {
       if (mounted) setState(() => _loadingQuota = false);
       return;
     }
-
     try {
       final settingsRows = await _db
           .from('system_settings')
@@ -339,7 +369,6 @@ class _AddProductScreenState extends State<AddProductScreen> {
     setState(() => _publishing = true);
     try {
       await _loadQuota();
-
       // التحقق قبل النشر وإظهار اقتراح الاشتراك مباشرة عند الوصول للحد
       if (_limitsEnabled && !_isUnlimited && _activePostsCount >= _planLimit) {
         if (mounted) {
@@ -360,6 +389,7 @@ class _AddProductScreenState extends State<AddProductScreen> {
 
       final uid = user.id;
       final List<String> imageUrls = [];
+
       for (final img in _images) {
         final safeName = img.name.replaceAll(RegExp(r'[^a-zA-Z0-9._-]'), '_');
         final path =
@@ -367,8 +397,10 @@ class _AddProductScreenState extends State<AddProductScreen> {
         await _db.storage.from('app_media').uploadBinary(
               path,
               img.bytes,
-              fileOptions:
-                  const FileOptions(contentType: 'image/jpeg', upsert: true),
+              fileOptions: const FileOptions(
+                contentType: 'image/jpeg',
+                upsert: true,
+              ),
             );
         imageUrls.add(_db.storage.from('app_media').getPublicUrl(path));
       }
@@ -409,7 +441,10 @@ class _AddProductScreenState extends State<AddProductScreen> {
       );
 
       // إذا وصل المستخدم الآن إلى الحد الأقصى (مثلاً المنشور الـ 5)، نعرض له اقتراح الاشتراك فوراً!
-      if (_limitsEnabled && !_isUnlimited && newCount >= _planLimit) {
+      if (_limitsEnabled &&
+          !_isUnlimited &&
+          newCount >= _planLimit &&
+          EnvConfig.subscriptionsEnabled.value) {
         setState(() {
           _activePostsCount = newCount;
           _publishing = false;
@@ -449,318 +484,340 @@ class _AddProductScreenState extends State<AddProductScreen> {
     final reachedLimit =
         _limitsEnabled && !_isUnlimited && _activePostsCount >= _planLimit;
 
-    return Scaffold(
-      appBar: AppBar(title: const Text('إضافة منشور قطعة غيار')),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          if (!_loadingQuota)
-            Container(
-              margin: const EdgeInsets.only(bottom: 14),
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-              decoration: BoxDecoration(
-                color: reachedLimit ? AppColors.orangeLight : AppColors.navy,
-                borderRadius: BorderRadius.circular(14),
-                border: reachedLimit
-                    ? Border.all(color: AppColors.orange, width: 1.4)
-                    : null,
-              ),
-              child: Row(
-                children: [
-                  Icon(
-                    _isUnlimited
-                        ? Icons.all_inclusive
-                        : (reachedLimit
-                            ? Icons.workspace_premium
-                            : Icons.inventory_2_outlined),
-                    color: AppColors.orange,
-                    size: 22,
+    return ListenableBuilder(
+      listenable: EnvConfig.subscriptionsEnabled,
+      builder: (context, _) {
+        final showSubs = EnvConfig.subscriptionsEnabled.value;
+
+        return Scaffold(
+          appBar: AppBar(title: const Text('إضافة منشور قطعة غيار')),
+          body: ListView(
+            padding: const EdgeInsets.all(16),
+            children: [
+              if (!_loadingQuota)
+                Container(
+                  margin: const EdgeInsets.only(bottom: 14),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 12,
                   ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          currentPlan.title,
-                          style: TextStyle(
-                            color: reachedLimit ? AppColors.navy : Colors.white,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 13,
-                          ),
-                        ),
-                        Text(
-                          _isUnlimited
-                              ? 'منشوراتك لا نهائية ∞'
-                              : 'المنشورات المستخدمة: $_activePostsCount من $_planLimit',
-                          style: TextStyle(
-                            color: reachedLimit
-                                ? AppColors.orange
-                                : Colors.white70,
-                            fontSize: 12,
-                            fontWeight: reachedLimit
-                                ? FontWeight.bold
-                                : FontWeight.normal,
-                          ),
-                        ),
-                      ],
-                    ),
+                  decoration: BoxDecoration(
+                    color:
+                        reachedLimit ? AppColors.orangeLight : AppColors.navy,
+                    borderRadius: BorderRadius.circular(14),
+                    border: reachedLimit
+                        ? Border.all(color: AppColors.orange, width: 1.4)
+                        : null,
                   ),
-                  if (!_isUnlimited)
-                    TextButton(
-                      style: TextButton.styleFrom(
-                        backgroundColor: AppColors.orange,
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 6,
-                        ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        _isUnlimited
+                            ? Icons.all_inclusive
+                            : (reachedLimit
+                                ? Icons.workspace_premium
+                                : Icons.inventory_2_outlined),
+                        color: AppColors.orange,
+                        size: 22,
                       ),
-                      onPressed: () => showPostLimitUpgradeSheet(
-                        context,
-                        currentPlanCode: _planCode,
-                        currentCount: _activePostsCount,
-                        maxLimit: _planLimit,
-                        onSubscribed: () {
-                          widget.onSubscribed?.call();
-                          _loadQuota();
-                        },
-                      ),
-                      child: const Text(
-                        'ترقية الباقة',
-                        style: TextStyle(
-                          fontSize: 11.5,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ),
-                ],
-              ),
-            ),
-          GestureDetector(
-            onTap: _pickImages,
-            child: Container(
-              height: 125,
-              decoration: BoxDecoration(
-                color: AppColors.surface,
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: AppColors.border),
-              ),
-              child: _images.isEmpty
-                  ? const Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(
-                          Icons.add_photo_alternate_outlined,
-                          size: 36,
-                          color: AppColors.orange,
-                        ),
-                        SizedBox(height: 6),
-                        Text('اضغط لرفع صورة القطعة (إلزامي)'),
-                      ],
-                    )
-                  : ListView.separated(
-                      padding: const EdgeInsets.all(10),
-                      scrollDirection: Axis.horizontal,
-                      itemCount: _images.length,
-                      separatorBuilder: (_, __) => const SizedBox(width: 8),
-                      itemBuilder: (_, i) => Stack(
-                        children: [
-                          ClipRRect(
-                            borderRadius: BorderRadius.circular(10),
-                            child: Image.memory(
-                              _images[i].bytes,
-                              width: 95,
-                              height: 105,
-                              fit: BoxFit.cover,
-                            ),
-                          ),
-                          Positioned(
-                            top: 2,
-                            right: 2,
-                            child: GestureDetector(
-                              onTap: () => setState(() => _images.removeAt(i)),
-                              child: const CircleAvatar(
-                                radius: 11,
-                                backgroundColor: Colors.black54,
-                                child: Icon(
-                                  Icons.close,
-                                  size: 14,
-                                  color: Colors.white,
-                                ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              showSubs ? currentPlan.title : 'حصة المنشورات',
+                              style: TextStyle(
+                                color: reachedLimit
+                                    ? AppColors.navy
+                                    : Colors.white,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 13,
                               ),
                             ),
+                            Text(
+                              _isUnlimited
+                                  ? 'منشوراتك لا نهائية ∞'
+                                  : 'المنشورات المستخدمة: $_activePostsCount من $_planLimit',
+                              style: TextStyle(
+                                color: reachedLimit
+                                    ? AppColors.orange
+                                    : Colors.white70,
+                                fontSize: 12,
+                                fontWeight: reachedLimit
+                                    ? FontWeight.bold
+                                    : FontWeight.normal,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      if (!_isUnlimited && showSubs)
+                        TextButton(
+                          style: TextButton.styleFrom(
+                            backgroundColor: AppColors.orange,
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 6,
+                            ),
                           ),
-                        ],
-                      ),
-                    ),
-            ),
-          ),
-          const SizedBox(height: 14),
-          DropdownButtonFormField<String>(
-            isExpanded: true,
-            initialValue: _mainCat,
-            decoration: InputDecoration(
-              labelText: 'القسم الرئيسي للقطعة',
-              filled: true,
-              fillColor: AppColors.surface,
-              border:
-                  OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
-            ),
-            items: CarPartsCatalogAZ.mainCategories
-                .map(
-                  (c) => DropdownMenuItem(
-                    value: c,
-                    child: Text(c, overflow: TextOverflow.ellipsis),
-                  ),
-                )
-                .toList(),
-            onChanged: (val) {
-              if (val != null) {
-                setState(() {
-                  _mainCat = val;
-                  _subPart =
-                      CarPartsCatalogAZ.categoriesAndParts[_mainCat]!.first;
-                });
-              }
-            },
-          ),
-          const SizedBox(height: 12),
-          AnimatedSwitcher(
-            duration: const Duration(milliseconds: 220),
-            child: DropdownButtonFormField<String>(
-              key: ValueKey(_mainCat),
-              isExpanded: true,
-              initialValue: _subPart,
-              decoration: InputDecoration(
-                labelText: 'القطعة الفرعية / الملحقات',
-                filled: true,
-                fillColor: AppColors.surface,
-                border:
-                    OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
-              ),
-              items: CarPartsCatalogAZ.categoriesAndParts[_mainCat]!
-                  .map((sub) => DropdownMenuItem(value: sub, child: Text(sub)))
-                  .toList(),
-              onChanged: (val) {
-                if (val != null) {
-                  setState(() => _subPart = val);
-                }
-              },
-            ),
-          ),
-          const SizedBox(height: 12),
-          DropdownButtonFormField<String>(
-            isExpanded: true,
-            initialValue: _selectedBrand,
-            decoration: InputDecoration(
-              labelText: 'شركة السيارة',
-              filled: true,
-              fillColor: AppColors.surface,
-              border:
-                  OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
-            ),
-            items: JordanCarsCatalog.brands
-                .map((b) => DropdownMenuItem(value: b, child: Text(b)))
-                .toList(),
-            onChanged: (val) {
-              if (val != null) {
-                setState(() {
-                  _selectedBrand = val;
-                  _selectedModel =
-                      JordanCarsCatalog.brandsAndModels[_selectedBrand]!.first;
-                });
-              }
-            },
-          ),
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              Expanded(
-                flex: 3,
-                child: AnimatedSwitcher(
-                  duration: const Duration(milliseconds: 200),
-                  child: DropdownButtonFormField<String>(
-                    key: ValueKey(_selectedBrand),
-                    isExpanded: true,
-                    initialValue: _selectedModel,
-                    decoration: InputDecoration(
-                      labelText: 'الموديل',
-                      filled: true,
-                      fillColor: AppColors.surface,
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(14),
-                      ),
-                    ),
-                    items: modelsForBrand
-                        .map((m) => DropdownMenuItem(value: m, child: Text(m)))
-                        .toList(),
-                    onChanged: (val) {
-                      if (val != null) {
-                        setState(() => _selectedModel = val);
-                      }
-                    },
+                          onPressed: () => showPostLimitUpgradeSheet(
+                            context,
+                            currentPlanCode: _planCode,
+                            currentCount: _activePostsCount,
+                            maxLimit: _planLimit,
+                            onSubscribed: () {
+                              widget.onSubscribed?.call();
+                              _loadQuota();
+                            },
+                          ),
+                          child: const Text(
+                            'ترقية الباقة',
+                            style: TextStyle(
+                              fontSize: 11.5,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                    ],
                   ),
                 ),
+              GestureDetector(
+                onTap: _pickImages,
+                child: Container(
+                  height: 125,
+                  decoration: BoxDecoration(
+                    color: AppColors.surface,
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: AppColors.border),
+                  ),
+                  child: _images.isEmpty
+                      ? const Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(
+                              Icons.add_photo_alternate_outlined,
+                              size: 36,
+                              color: AppColors.orange,
+                            ),
+                            SizedBox(height: 6),
+                            Text('اضغط لرفع صورة القطعة (إلزامي)'),
+                          ],
+                        )
+                      : ListView.separated(
+                          padding: const EdgeInsets.all(10),
+                          scrollDirection: Axis.horizontal,
+                          itemCount: _images.length,
+                          separatorBuilder: (_, __) => const SizedBox(width: 8),
+                          itemBuilder: (_, i) => Stack(
+                            children: [
+                              ClipRRect(
+                                borderRadius: BorderRadius.circular(10),
+                                child: Image.memory(
+                                  _images[i].bytes,
+                                  width: 95,
+                                  height: 105,
+                                  fit: BoxFit.cover,
+                                ),
+                              ),
+                              Positioned(
+                                top: 2,
+                                right: 2,
+                                child: GestureDetector(
+                                  onTap: () =>
+                                      setState(() => _images.removeAt(i)),
+                                  child: const CircleAvatar(
+                                    radius: 11,
+                                    backgroundColor: Colors.black54,
+                                    child: Icon(
+                                      Icons.close,
+                                      size: 14,
+                                      color: Colors.white,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                ),
               ),
-              const SizedBox(width: 10),
-              Expanded(
-                flex: 2,
+              const SizedBox(height: 14),
+              DropdownButtonFormField<String>(
+                isExpanded: true,
+                initialValue: _mainCat,
+                decoration: InputDecoration(
+                  labelText: 'القسم الرئيسي للقطعة',
+                  filled: true,
+                  fillColor: AppColors.surface,
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                ),
+                items: CarPartsCatalogAZ.mainCategories
+                    .map(
+                      (c) => DropdownMenuItem(
+                        value: c,
+                        child: Text(c, overflow: TextOverflow.ellipsis),
+                      ),
+                    )
+                    .toList(),
+                onChanged: (val) {
+                  if (val != null) {
+                    setState(() {
+                      _mainCat = val;
+                      _subPart =
+                          CarPartsCatalogAZ.categoriesAndParts[_mainCat]!.first;
+                    });
+                  }
+                },
+              ),
+              const SizedBox(height: 12),
+              AnimatedSwitcher(
+                duration: const Duration(milliseconds: 220),
                 child: DropdownButtonFormField<String>(
+                  key: ValueKey(_mainCat),
                   isExpanded: true,
-                  initialValue: _selectedYear,
+                  initialValue: _subPart,
                   decoration: InputDecoration(
-                    labelText: 'السنة',
+                    labelText: 'القطعة الفرعية / الملحقات',
                     filled: true,
                     fillColor: AppColors.surface,
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(14),
                     ),
                   ),
-                  items: JordanCarsCatalog.years
-                      .map((y) => DropdownMenuItem(value: y, child: Text(y)))
+                  items: CarPartsCatalogAZ.categoriesAndParts[_mainCat]!
+                      .map((sub) =>
+                          DropdownMenuItem(value: sub, child: Text(sub)))
                       .toList(),
                   onChanged: (val) {
                     if (val != null) {
-                      setState(() => _selectedYear = val);
+                      setState(() => _subPart = val);
                     }
                   },
                 ),
               ),
+              const SizedBox(height: 12),
+              DropdownButtonFormField<String>(
+                isExpanded: true,
+                initialValue: _selectedBrand,
+                decoration: InputDecoration(
+                  labelText: 'شركة السيارة',
+                  filled: true,
+                  fillColor: AppColors.surface,
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                ),
+                items: JordanCarsCatalog.brands
+                    .map((b) => DropdownMenuItem(value: b, child: Text(b)))
+                    .toList(),
+                onChanged: (val) {
+                  if (val != null) {
+                    setState(() {
+                      _selectedBrand = val;
+                      _selectedModel = JordanCarsCatalog
+                          .brandsAndModels[_selectedBrand]!.first;
+                    });
+                  }
+                },
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Expanded(
+                    flex: 3,
+                    child: AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 200),
+                      child: DropdownButtonFormField<String>(
+                        key: ValueKey(_selectedBrand),
+                        isExpanded: true,
+                        initialValue: _selectedModel,
+                        decoration: InputDecoration(
+                          labelText: 'الموديل',
+                          filled: true,
+                          fillColor: AppColors.surface,
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                        ),
+                        items: modelsForBrand
+                            .map((m) =>
+                                DropdownMenuItem(value: m, child: Text(m)))
+                            .toList(),
+                        onChanged: (val) {
+                          if (val != null) {
+                            setState(() => _selectedModel = val);
+                          }
+                        },
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    flex: 2,
+                    child: DropdownButtonFormField<String>(
+                      isExpanded: true,
+                      initialValue: _selectedYear,
+                      decoration: InputDecoration(
+                        labelText: 'السنة',
+                        filled: true,
+                        fillColor: AppColors.surface,
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                      ),
+                      items: JordanCarsCatalog.years
+                          .map((y) => DropdownMenuItem(value: y, child: Text(y)))
+                          .toList(),
+                      onChanged: (val) {
+                        if (val != null) {
+                          setState(() => _selectedYear = val);
+                        }
+                      },
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              _field(_titleCtrl, 'عنوان المنشور'),
+              _field(_priceCtrl, 'السعر (د.أ)', type: TextInputType.number),
+              _field(_chassisCtrl, 'رقم الشاصي (VIN / Chassis Number)'),
+              _field(_descCtrl, 'وصف وتفاصيل القطعة', maxLines: 3),
+              const SizedBox(height: 16),
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.orange,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                ),
+                onPressed: _publishing ? null : _publish,
+                child: _publishing
+                    ? const SizedBox(
+                        width: 22,
+                        height: 22,
+                        child: CircularProgressIndicator(
+                          color: Colors.white,
+                          strokeWidth: 2.5,
+                        ),
+                      )
+                    : const Text(
+                        'نشر القطعة الآن',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+              ),
             ],
           ),
-          const SizedBox(height: 12),
-          _field(_titleCtrl, 'عنوان المنشور'),
-          _field(_priceCtrl, 'السعر (د.أ)', type: TextInputType.number),
-          _field(_chassisCtrl, 'رقم الشاصي (VIN / Chassis Number)'),
-          _field(_descCtrl, 'وصف وتفاصيل القطعة', maxLines: 3),
-          const SizedBox(height: 16),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.orange,
-              foregroundColor: Colors.white,
-              padding: const EdgeInsets.symmetric(vertical: 16),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(14),
-              ),
-            ),
-            onPressed: _publishing ? null : _publish,
-            child: _publishing
-                ? const SizedBox(
-                    width: 22,
-                    height: 22,
-                    child: CircularProgressIndicator(
-                      color: Colors.white,
-                      strokeWidth: 2.5,
-                    ),
-                  )
-                : const Text(
-                    'نشر القطعة الآن',
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                  ),
-          ),
-        ],
-      ),
+        );
+      },
     );
   }
 

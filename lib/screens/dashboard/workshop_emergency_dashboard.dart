@@ -51,6 +51,7 @@ class _WorkshopEmergencyDashboardState
   late double? _myLng =
       widget.profile.longitude ?? widget.profile.workshopLongitude;
   final double _maxRadiusKm = 15.0;
+
   DashboardPeriod _period = DashboardPeriod.month1;
   DateTimeRange? _customRange;
   String? _trackingRequestId;
@@ -62,9 +63,11 @@ class _WorkshopEmergencyDashboardState
       (id: 1, label: 'طلبات الطوارئ'),
       (id: 2, label: 'حجوزات الورشة'),
       (id: 3, label: 'قطع الغيار والمخزون'),
-      (id: 4, label: 'المحفظة المالية'),
     ];
     if (EnvConfig.paymentsEnabled.value) {
+      list.add((id: 4, label: 'المحفظة المالية'));
+    }
+    if (EnvConfig.subscriptionsEnabled.value) {
       list.add((id: 5, label: 'الاشتراك والباقة'));
     }
     return list;
@@ -109,6 +112,8 @@ class _WorkshopEmergencyDashboardState
   }
 
   Future<void> _selectTab(int id, {required bool isDrawer}) async {
+    if (id == 4 && !EnvConfig.paymentsEnabled.value) return;
+    if (id == 5 && !EnvConfig.subscriptionsEnabled.value) return;
     if (id == 4 && !_walletUnlocked) {
       final ok = await WalletAuthService.instance.authenticate(context);
       if (!ok || !mounted) return;
@@ -145,6 +150,7 @@ class _WorkshopEmergencyDashboardState
   String _emergencyStatusLabel(String? status, String? progressStep) {
     final st = (status ?? '').trim().toLowerCase();
     final step = (progressStep ?? '').trim().toLowerCase();
+
     if (st == 'cancelled' || step == 'cancelled') return 'ملغي';
     if (st == 'completed' || step == 'completed') return 'مكتمل وتم الدفع ✓';
     if (st == 'awaiting_payment' || step == 'awaiting_payment') {
@@ -295,116 +301,139 @@ class _WorkshopEmergencyDashboardState
 
   @override
   Widget build(BuildContext context) {
-    final isWide = MediaQuery.of(context).size.width >= 850;
-    final showPayments = EnvConfig.paymentsEnabled.value;
-    if (!showPayments && _tab == 5) {
-      _tab = 0;
-    }
+    return ListenableBuilder(
+      listenable: Listenable.merge([
+        EnvConfig.paymentsEnabled,
+        EnvConfig.subscriptionsEnabled,
+        EnvConfig.winchEnabled,
+      ]),
+      builder: (context, _) {
+        final isWide = MediaQuery.of(context).size.width >= 850;
+        final showPayments = EnvConfig.paymentsEnabled.value;
+        final showSubs = EnvConfig.subscriptionsEnabled.value;
+        if ((!showPayments && _tab == 4) || (!showSubs && _tab == 5)) {
+          _tab = 0;
+        }
 
-    return Scaffold(
-      appBar: isWide
-          ? null
-          : AppBar(
-              backgroundColor: AppColors.navy,
-              foregroundColor: Colors.white,
-              iconTheme: const IconThemeData(color: Colors.white),
-              actionsIconTheme: const IconThemeData(color: Colors.white),
-              leading: Builder(
-                builder: (ctx) => IconButton(
-                  icon: const Icon(Icons.menu, color: Colors.white),
-                  onPressed: () => Scaffold.of(ctx).openDrawer(),
-                ),
-              ),
-              title: Text(
-                widget.profile.fullName ?? 'لوحة الورشة',
-                style: const TextStyle(color: Colors.white, fontSize: 16),
-              ),
-              actions: [
-                IconButton(
-                  tooltip: 'العودة للرئيسية',
-                  icon: const Icon(Icons.grid_view_rounded, color: Colors.white),
-                  onPressed: _goHome,
-                ),
-                const NotificationBellButton(iconColor: Colors.white),
-                IconButton(
-                  tooltip: 'تسجيل الخروج',
-                  icon: const Icon(Icons.logout, color: Colors.white),
-                  onPressed: () async {
-                    await _db.auth.signOut();
-                    if (context.mounted) {
-                      Navigator.popUntil(context, (r) => r.isFirst);
-                    }
-                    widget.onSignedOut();
-                  },
-                ),
-              ],
-            ),
-      drawer: isWide ? null : Drawer(child: _buildSidebar(isDrawer: true)),
-      body: Row(
-        children: [
-          if (isWide)
-            SizedBox(width: 240, child: _buildSidebar(isDrawer: false)),
-          Expanded(
-            child: Column(
-              children: [
-                Container(
-                  color: _isAvailable
-                      ? AppColors.success.withValues(alpha: 0.10)
-                      : Colors.red.withValues(alpha: 0.10),
-                  padding: const EdgeInsets.symmetric(horizontal: 12),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: SwitchListTile(
-                          contentPadding: EdgeInsets.zero,
-                          title: Text(
-                            _isAvailable
-                                ? 'متاح لاستقبال الطلبات والمواعيد'
-                                : 'غير متاح حالياً',
-                            style: TextStyle(
-                              fontWeight: FontWeight.bold,
-                              fontSize: 13,
-                              color:
-                                  _isAvailable ? AppColors.success : Colors.red,
-                            ),
-                          ),
-                          value: _isAvailable,
-                          activeTrackColor: AppColors.success,
-                          onChanged: _toggleAvailability,
-                        ),
-                      ),
-                      if (isWide)
-                        const NotificationBellButton(iconColor: AppColors.navy),
-                    ],
-                  ),
-                ),
-                Expanded(
-                  child: AnimatedSwitcher(
-                    duration: const Duration(milliseconds: 240),
-                    child: KeyedSubtree(
-                      key: ValueKey(_tab),
-                      child: switch (_tab) {
-                        1 => _buildEmergencyTab(),
-                        2 => _buildAppointmentsTab(),
-                        3 => const MerchantProductsDashboard(embedded: true),
-                        4 => ProviderWalletView(
-                            profile: widget.profile,
-                            onRefreshProfile: widget.onRefreshProfile,
-                          ),
-                        5 => ProviderSubscriptionsScreen(
-                            currentPlanCode: widget.profile.subscriptionPlan,
-                            onSubscribed: widget.onRefreshProfile,
-                          ),
-                        _ => _buildOverviewTab(isWide),
-                      },
+        return Scaffold(
+          appBar: isWide
+              ? null
+              : AppBar(
+                  backgroundColor: AppColors.navy,
+                  foregroundColor: Colors.white,
+                  iconTheme: const IconThemeData(color: Colors.white),
+                  actionsIconTheme: const IconThemeData(color: Colors.white),
+                  leading: Builder(
+                    builder: (ctx) => IconButton(
+                      icon: const Icon(Icons.menu, color: Colors.white),
+                      onPressed: () => Scaffold.of(ctx).openDrawer(),
                     ),
                   ),
+                  title: Text(
+                    widget.profile.fullName ?? 'لوحة الورشة',
+                    style: const TextStyle(color: Colors.white, fontSize: 16),
+                  ),
+                  actions: [
+                    IconButton(
+                      tooltip: 'العودة للرئيسية',
+                      icon: const Icon(
+                        Icons.grid_view_rounded,
+                        color: Colors.white,
+                      ),
+                      onPressed: _goHome,
+                    ),
+                    const NotificationBellButton(iconColor: Colors.white),
+                    IconButton(
+                      tooltip: 'تسجيل الخروج',
+                      icon: const Icon(Icons.logout, color: Colors.white),
+                      onPressed: () async {
+                        await _db.auth.signOut();
+                        if (context.mounted) {
+                          Navigator.popUntil(context, (r) => r.isFirst);
+                        }
+                        widget.onSignedOut();
+                      },
+                    ),
+                  ],
                 ),
-              ],
-            ),
+          drawer: isWide ? null : Drawer(child: _buildSidebar(isDrawer: true)),
+          body: Row(
+            children: [
+              if (isWide)
+                SizedBox(width: 240, child: _buildSidebar(isDrawer: false)),
+              Expanded(
+                child: Column(
+                  children: [
+                    Container(
+                      color: _isAvailable
+                          ? AppColors.success.withValues(alpha: 0.10)
+                          : Colors.red.withValues(alpha: 0.10),
+                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: SwitchListTile(
+                              contentPadding: EdgeInsets.zero,
+                              title: Text(
+                                _isAvailable
+                                    ? 'متاح لاستقبال الطلبات والمواعيد'
+                                    : 'غير متاح حالياً',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 13,
+                                  color: _isAvailable
+                                      ? AppColors.success
+                                      : Colors.red,
+                                ),
+                              ),
+                              value: _isAvailable,
+                              activeTrackColor: AppColors.success,
+                              onChanged: _toggleAvailability,
+                            ),
+                          ),
+                          if (isWide)
+                            const NotificationBellButton(
+                              iconColor: AppColors.navy,
+                            ),
+                        ],
+                      ),
+                    ),
+                    Expanded(
+                      child: AnimatedSwitcher(
+                        duration: const Duration(milliseconds: 240),
+                        child: KeyedSubtree(
+                          key: ValueKey(_tab),
+                          child: switch (_tab) {
+                            1 => _buildEmergencyTab(),
+                            2 => _buildAppointmentsTab(),
+                            3 => const MerchantProductsDashboard(
+                                embedded: true,
+                              ),
+                            4 => showPayments
+                                ? ProviderWalletView(
+                                    profile: widget.profile,
+                                    onRefreshProfile: widget.onRefreshProfile,
+                                  )
+                                : _buildOverviewTab(isWide),
+                            5 => showSubs
+                                ? ProviderSubscriptionsScreen(
+                                    currentPlanCode:
+                                        widget.profile.subscriptionPlan,
+                                    onSubscribed: widget.onRefreshProfile,
+                                  )
+                                : _buildOverviewTab(isWide),
+                            _ => _buildOverviewTab(isWide),
+                          },
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ),
-        ],
-      ),
+        );
+      },
     );
   }
 
@@ -487,7 +516,7 @@ class _WorkshopEmergencyDashboardState
 
   Widget _buildOverviewTab(bool isWide) {
     final showWinch = EnvConfig.winchEnabled.value;
-
+    final showPayments = EnvConfig.paymentsEnabled.value;
     return StreamBuilder<List<Map<String, dynamic>>>(
       stream: _db
           .from('mechanic_requests')
@@ -572,7 +601,7 @@ class _WorkshopEmergencyDashboardState
                   ),
                   const SizedBox(height: 14),
                   GridView.count(
-                    crossAxisCount: isWide ? 4 : 2,
+                    crossAxisCount: isWide ? (showPayments ? 4 : 3) : 2,
                     shrinkWrap: true,
                     physics: const NeverScrollableScrollPhysics(),
                     crossAxisSpacing: 12,
@@ -594,11 +623,12 @@ class _WorkshopEmergencyDashboardState
                         widget.profile.maxCarCapacity,
                         Icons.garage,
                       ),
-                      _kpiCard(
-                        'رصيد المحفظة (د.أ)',
-                        widget.profile.walletBalance.toInt(),
-                        Icons.account_balance_wallet,
-                      ),
+                      if (showPayments)
+                        _kpiCard(
+                          'رصيد المحفظة (د.أ)',
+                          widget.profile.walletBalance.toInt(),
+                          Icons.account_balance_wallet,
+                        ),
                     ],
                   ),
                   const SizedBox(height: 16),
@@ -612,41 +642,41 @@ class _WorkshopEmergencyDashboardState
                     appts.isEmpty
                         ? [const Text('لا توجد مواعيد ضمن هذه الفترة')]
                         : appts
-                              .take(4)
-                              .map(
-                                (a) => Padding(
-                                  padding: const EdgeInsets.symmetric(
-                                    vertical: 6,
-                                  ),
-                                  child: Row(
-                                    mainAxisAlignment:
-                                        MainAxisAlignment.spaceBetween,
-                                    children: [
-                                      Text(
-                                        '${a['appointment_time']} · ${a['appointment_date']}',
-                                        style: const TextStyle(
-                                          fontWeight: FontWeight.w600,
-                                        ),
-                                      ),
-                                      Flexible(
-                                        child: Text(
-                                          StatusLabels.appointment(
-                                            a['status'] as String?,
-                                            progressStep:
-                                                a['progress_step'] as String?,
-                                          ),
-                                          style: const TextStyle(
-                                            color: AppColors.orange,
-                                            fontWeight: FontWeight.bold,
-                                            fontSize: 12,
-                                          ),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
+                            .take(4)
+                            .map(
+                              (a) => Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  vertical: 6,
                                 ),
-                              )
-                              .toList(),
+                                child: Row(
+                                  mainAxisAlignment:
+                                      MainAxisAlignment.spaceBetween,
+                                  children: [
+                                    Text(
+                                      '${a['appointment_time']} · ${a['appointment_date']}',
+                                      style: const TextStyle(
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                    Flexible(
+                                      child: Text(
+                                        StatusLabels.appointment(
+                                          a['status'] as String?,
+                                          progressStep:
+                                              a['progress_step'] as String?,
+                                        ),
+                                        style: const TextStyle(
+                                          color: AppColors.orange,
+                                          fontWeight: FontWeight.bold,
+                                          fontSize: 12,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            )
+                            .toList(),
                   ),
                 ],
               ),
@@ -1492,7 +1522,6 @@ class _WorkshopEmergencyDashboardState
     ];
     String chosenHour = hours.first;
     DateTime chosenDate = DateTime.now();
-
     await showDialog<void>(
       context: context,
       builder: (ctx) => StatefulBuilder(

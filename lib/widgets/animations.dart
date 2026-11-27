@@ -1,9 +1,21 @@
 import 'dart:math' as math;
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 import '../theme/app_theme.dart';
 
 Route<T> animatedRoute<T>(Widget page) {
+  if (kIsWeb) {
+    return PageRouteBuilder<T>(
+      transitionDuration: const Duration(milliseconds: 110),
+      reverseTransitionDuration: const Duration(milliseconds: 90),
+      pageBuilder: (_, __, ___) => page,
+      transitionsBuilder: (_, animation, __, child) {
+        return FadeTransition(opacity: animation, child: child);
+      },
+    );
+  }
+
   return PageRouteBuilder<T>(
     transitionDuration: const Duration(milliseconds: 340),
     reverseTransitionDuration: const Duration(milliseconds: 260),
@@ -107,16 +119,18 @@ class _PulseBlinkState extends State<PulseBlink> with SingleTickerProviderStateM
 
   @override
   Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: _ctrl,
-      builder: (_, child) {
-        final v = Curves.easeInOut.transform(_ctrl.value);
-        return Opacity(
-          opacity: 0.62 + (0.38 * v),
-          child: Transform.scale(scale: 0.98 + (0.04 * v), child: child),
-        );
-      },
-      child: widget.child,
+    return RepaintBoundary(
+      child: AnimatedBuilder(
+        animation: _ctrl,
+        builder: (_, child) {
+          final v = Curves.easeInOut.transform(_ctrl.value);
+          return Opacity(
+            opacity: 0.62 + (0.38 * v),
+            child: Transform.scale(scale: 0.98 + (0.04 * v), child: child),
+          );
+        },
+        child: widget.child,
+      ),
     );
   }
 }
@@ -275,7 +289,7 @@ class _InteractiveAnimatedChartState extends State<InteractiveAnimatedChart> {
                     onExit: (_) => setState(() => _hoveredIndex = null),
                     child: GestureDetector(
                       onTap: () {
-                        HapticFeedback.selectionClick();
+                        if (!kIsWeb) HapticFeedback.selectionClick();
                         setState(() => _hoveredIndex = isActive ? null : i);
                       },
                       child: Padding(
@@ -285,7 +299,7 @@ class _InteractiveAnimatedChartState extends State<InteractiveAnimatedChart> {
                           children: [
                             AnimatedOpacity(
                               opacity: isActive ? 1.0 : 0.65,
-                              duration: const Duration(milliseconds: 160),
+                              duration: const Duration(milliseconds: 140),
                               child: Text(
                                 item.value.toStringAsFixed(0),
                                 style: TextStyle(
@@ -298,10 +312,12 @@ class _InteractiveAnimatedChartState extends State<InteractiveAnimatedChart> {
                             const SizedBox(height: 4),
                             TweenAnimationBuilder<double>(
                               tween: Tween(begin: 0, end: ratio),
-                              duration: Duration(milliseconds: 550 + (i * 60)),
+                              duration: Duration(
+                                milliseconds: kIsWeb ? 260 : 550 + (i * 60),
+                              ),
                               curve: Curves.easeOutCubic,
                               builder: (_, hRatio, __) => AnimatedContainer(
-                                duration: const Duration(milliseconds: 180),
+                                duration: const Duration(milliseconds: 150),
                                 height: (105 * hRatio) + (isActive ? 6 : 0),
                                 width: isActive ? 28 : 22,
                                 decoration: BoxDecoration(
@@ -360,7 +376,7 @@ class _GhiyarakLogoState extends State<GhiyarakLogo> {
   Widget build(BuildContext context) {
     return GestureDetector(
       onTap: () {
-        HapticFeedback.lightImpact();
+        if (!kIsWeb) HapticFeedback.lightImpact();
         setState(() => _turns += 0.5);
       },
       child: AnimatedRotation(
@@ -402,10 +418,13 @@ class _GhiyarakAnimatedSplashState extends State<GhiyarakAnimatedSplash>
   @override
   void initState() {
     super.initState();
-    _ctrl = AnimationController(vsync: this, duration: const Duration(milliseconds: 2400));
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: Duration(milliseconds: kIsWeb ? 1100 : 2400),
+    );
     _ctrl.addStatusListener((status) {
       if (status == AnimationStatus.completed) {
-        Future.delayed(const Duration(milliseconds: 600), () {
+        Future.delayed(Duration(milliseconds: kIsWeb ? 150 : 600), () {
           if (mounted) {
             widget.onCompleted?.call();
           }
@@ -430,86 +449,88 @@ class _GhiyarakAnimatedSplashState extends State<GhiyarakAnimatedSplash>
     return Scaffold(
       backgroundColor: const Color(0xFF121A27),
       body: Center(
-        child: AnimatedBuilder(
-          animation: _ctrl,
-          builder: (_, __) {
-            final t = _ctrl.value;
-            final gearT = Curves.easeOutCubic.transform((t / 0.42).clamp(0.0, 1.0));
-            final ringT = Curves.easeOut.transform(((t - 0.21) / 0.29).clamp(0.0, 1.0));
-            final wrenchT = Curves.easeOutBack.transform(((t - 0.37) / 0.38).clamp(0.0, 1.0));
-            final titleT = Curves.easeOutCubic.transform(((t - 0.62) / 0.29).clamp(0.0, 1.0));
-            final subT = Curves.easeOutCubic.transform(((t - 0.71) / 0.29).clamp(0.0, 1.0));
+        child: RepaintBoundary(
+          child: AnimatedBuilder(
+            animation: _ctrl,
+            builder: (_, __) {
+              final t = _ctrl.value;
+              final gearT = Curves.easeOutCubic.transform((t / 0.42).clamp(0.0, 1.0));
+              final ringT = Curves.easeOut.transform(((t - 0.21) / 0.29).clamp(0.0, 1.0));
+              final wrenchT = Curves.easeOutBack.transform(((t - 0.37) / 0.38).clamp(0.0, 1.0));
+              final titleT = Curves.easeOutCubic.transform(((t - 0.62) / 0.29).clamp(0.0, 1.0));
+              final subT = Curves.easeOutCubic.transform(((t - 0.71) / 0.29).clamp(0.0, 1.0));
 
-            return Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                SizedBox(
-                  width: 195,
-                  height: 195,
-                  child: Stack(
-                    alignment: Alignment.center,
-                    children: [
-                      Opacity(
-                        opacity: gearT,
-                        child: Transform.rotate(
-                          angle: -math.pi * (1 - gearT),
-                          child: Transform.scale(
-                            scale: 0.4 + 0.6 * gearT,
-                            child: Image.asset('assets/gear.png', width: 195, height: 195),
+              return Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  SizedBox(
+                    width: 195,
+                    height: 195,
+                    child: Stack(
+                      alignment: Alignment.center,
+                      children: [
+                        Opacity(
+                          opacity: gearT,
+                          child: Transform.rotate(
+                            angle: -math.pi * (1 - gearT),
+                            child: Transform.scale(
+                              scale: 0.4 + 0.6 * gearT,
+                              child: Image.asset('assets/gear.png', width: 195, height: 195),
+                            ),
                           ),
                         ),
-                      ),
-                      if (ringT > 0)
-                        ClipPath(
-                          clipper: _RingSweepClipper(ringT),
-                          child: Image.asset('assets/ring.png', width: 195, height: 195),
-                        ),
-                      Opacity(
-                        opacity: wrenchT.clamp(0.0, 1.0),
-                        child: Transform.rotate(
-                          angle: (-140 * math.pi / 180) * (1 - wrenchT),
-                          child: Transform.scale(
-                            scale: (0.2 + 0.8 * wrenchT).clamp(0.01, 1.3),
-                            child: Image.asset('assets/wrench.png', width: 195, height: 195),
+                        if (ringT > 0)
+                          ClipPath(
+                            clipper: _RingSweepClipper(ringT),
+                            child: Image.asset('assets/ring.png', width: 195, height: 195),
+                          ),
+                        Opacity(
+                          opacity: wrenchT.clamp(0.0, 1.0),
+                          child: Transform.rotate(
+                            angle: (-140 * math.pi / 180) * (1 - wrenchT),
+                            child: Transform.scale(
+                              scale: (0.2 + 0.8 * wrenchT).clamp(0.01, 1.3),
+                              child: Image.asset('assets/wrench.png', width: 195, height: 195),
+                            ),
                           ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
-                ),
-                const SizedBox(height: 16),
-                Opacity(
-                  opacity: titleT,
-                  child: Transform.translate(
-                    offset: Offset(0, 14 * (1 - titleT)),
-                    child: const Text(
-                      'غيارك',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 44,
-                        fontWeight: FontWeight.w900,
+                  const SizedBox(height: 16),
+                  Opacity(
+                    opacity: titleT,
+                    child: Transform.translate(
+                      offset: Offset(0, 14 * (1 - titleT)),
+                      child: const Text(
+                        'غيارك',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 44,
+                          fontWeight: FontWeight.w900,
+                        ),
                       ),
                     ),
                   ),
-                ),
-                const SizedBox(height: 6),
-                Opacity(
-                  opacity: subT,
-                  child: Transform.translate(
-                    offset: Offset(0, 14 * (1 - subT)),
-                    child: const Text(
-                      'قطع غيار · ورش · طوارئ',
-                      style: TextStyle(
-                        color: Color(0xFF9AA4B4),
-                        fontSize: 15,
-                        fontWeight: FontWeight.w500,
+                  const SizedBox(height: 6),
+                  Opacity(
+                    opacity: subT,
+                    child: Transform.translate(
+                      offset: Offset(0, 14 * (1 - subT)),
+                      child: const Text(
+                        'قطع غيار · ورش · طوارئ',
+                        style: TextStyle(
+                          color: Color(0xFF9AA4B4),
+                          fontSize: 15,
+                          fontWeight: FontWeight.w500,
+                        ),
                       ),
                     ),
                   ),
-                ),
-              ],
-            );
-          },
+                ],
+              );
+            },
+          ),
         ),
       ),
     );
@@ -562,51 +583,53 @@ class _ShimmerProductsLoadingState extends State<ShimmerProductsLoading>
 
   @override
   Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: _c,
-      builder: (_, __) {
-        final col = Color.lerp(AppColors.placeholder, Colors.grey.shade100, _c.value)!;
-        return GridView.builder(
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          itemCount: 4,
-          gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-            maxCrossAxisExtent: 230,
-            mainAxisSpacing: 12,
-            crossAxisSpacing: 12,
-            childAspectRatio: 0.78,
-          ),
-          itemBuilder: (_, __) => Container(
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(
-              color: AppColors.surface,
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: AppColors.border),
+    return RepaintBoundary(
+      child: AnimatedBuilder(
+        animation: _c,
+        builder: (_, __) {
+          final col = Color.lerp(AppColors.placeholder, Colors.grey.shade100, _c.value)!;
+          return GridView.builder(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            itemCount: 4,
+            gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+              maxCrossAxisExtent: 230,
+              mainAxisSpacing: 12,
+              crossAxisSpacing: 12,
+              childAspectRatio: 0.78,
             ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Container(
-                  height: 95,
-                  decoration: BoxDecoration(color: col, borderRadius: BorderRadius.circular(12)),
-                ),
-                const SizedBox(height: 10),
-                Container(
-                  height: 14,
-                  width: 100,
-                  decoration: BoxDecoration(color: col, borderRadius: BorderRadius.circular(6)),
-                ),
-                const SizedBox(height: 6),
-                Container(
-                  height: 11,
-                  width: 70,
-                  decoration: BoxDecoration(color: col, borderRadius: BorderRadius.circular(6)),
-                ),
-              ],
+            itemBuilder: (_, __) => Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: AppColors.surface,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: AppColors.border),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Container(
+                    height: 95,
+                    decoration: BoxDecoration(color: col, borderRadius: BorderRadius.circular(12)),
+                  ),
+                  const SizedBox(height: 10),
+                  Container(
+                    height: 14,
+                    width: 100,
+                    decoration: BoxDecoration(color: col, borderRadius: BorderRadius.circular(6)),
+                  ),
+                  const SizedBox(height: 6),
+                  Container(
+                    height: 11,
+                    width: 70,
+                    decoration: BoxDecoration(color: col, borderRadius: BorderRadius.circular(6)),
+                  ),
+                ],
+              ),
             ),
-          ),
-        );
-      },
+          );
+        },
+      ),
     );
   }
 }
@@ -620,6 +643,9 @@ class AnimatedCounter extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (kIsWeb) {
+      return Text('$value$suffix', style: style);
+    }
     return TweenAnimationBuilder<int>(
       tween: IntTween(begin: 0, end: value),
       duration: const Duration(milliseconds: 700),
@@ -643,6 +669,8 @@ class FadeSlideIn extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (kIsWeb) return child;
+
     final delay = (index * 45).clamp(0, 320);
     return TweenAnimationBuilder<double>(
       tween: Tween(begin: 0, end: 1),
@@ -671,6 +699,17 @@ class _BounceTapState extends State<BounceTap> {
 
   @override
   Widget build(BuildContext context) {
+    if (kIsWeb) {
+      return MouseRegion(
+        cursor: SystemMouseCursors.click,
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: widget.onTap,
+          child: widget.child,
+        ),
+      );
+    }
+
     return GestureDetector(
       onTapDown: (_) {
         HapticFeedback.selectionClick();
@@ -717,28 +756,30 @@ class _PulsingPinState extends State<PulsingPin> with SingleTickerProviderStateM
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      width: 72,
-      height: 72,
-      child: Stack(
-        alignment: Alignment.center,
-        children: [
-          AnimatedBuilder(
-            animation: _controller,
-            builder: (_, __) => Transform.scale(
-              scale: 0.6 + (_controller.value * 1.1),
-              child: Container(
-                width: 48,
-                height: 48,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: widget.color.withValues(alpha: (1 - _controller.value) * 0.35),
+    return RepaintBoundary(
+      child: SizedBox(
+        width: 72,
+        height: 72,
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            AnimatedBuilder(
+              animation: _controller,
+              builder: (_, __) => Transform.scale(
+                scale: 0.6 + (_controller.value * 1.1),
+                child: Container(
+                  width: 48,
+                  height: 48,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: widget.color.withValues(alpha: (1 - _controller.value) * 0.35),
+                  ),
                 ),
               ),
             ),
-          ),
-          Icon(Icons.location_on, color: widget.color, size: 38),
-        ],
+            Icon(Icons.location_on, color: widget.color, size: 38),
+          ],
+        ),
       ),
     );
   }

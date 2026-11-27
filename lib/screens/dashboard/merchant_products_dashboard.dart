@@ -1,5 +1,6 @@
 import 'package:material_ui/material_ui.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import '../../config/env_config.dart';
 import '../../models/db_models.dart';
 import '../../services/app_locale_service.dart';
 import '../../theme/app_theme.dart';
@@ -57,7 +58,6 @@ class _MerchantProductsDashboardState extends State<MerchantProductsDashboard> {
     final id = p['id'] as String;
     final currentHidden = (p['is_hidden'] as bool?) ?? false;
     final nextHidden = !currentHidden;
-
     setState(() => _busyIds.add(id));
     try {
       final updated = await _db
@@ -65,11 +65,9 @@ class _MerchantProductsDashboardState extends State<MerchantProductsDashboard> {
           .update({'is_hidden': nextHidden})
           .eq('id', id)
           .select('id, is_hidden');
-
       if (updated.isEmpty) {
         throw Exception('لم يتم تعديل حالة المنتج — تحقق من الصلاحيات');
       }
-
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -86,8 +84,9 @@ class _MerchantProductsDashboardState extends State<MerchantProductsDashboard> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-              content: Text('تعذر تغيير حالة الإظهار: $e'),
-              backgroundColor: Colors.red),
+            content: Text('تعذر تغيير حالة الإظهار: $e'),
+            backgroundColor: Colors.red,
+          ),
         );
       }
     } finally {
@@ -132,7 +131,9 @@ class _MerchantProductsDashboardState extends State<MerchantProductsDashboard> {
                 Text(
                   (p['title'] as String?) ?? '',
                   style: const TextStyle(
-                      color: AppColors.textSecondary, fontSize: 13),
+                    color: AppColors.textSecondary,
+                    fontSize: 13,
+                  ),
                 ),
                 const SizedBox(height: 12),
                 TextField(
@@ -146,7 +147,8 @@ class _MerchantProductsDashboardState extends State<MerchantProductsDashboard> {
                     filled: true,
                     fillColor: AppColors.surface,
                     border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12)),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
                   ),
                 ),
                 const SizedBox(height: 10),
@@ -160,7 +162,8 @@ class _MerchantProductsDashboardState extends State<MerchantProductsDashboard> {
                     filled: true,
                     fillColor: AppColors.surface,
                     border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12)),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
                   ),
                 ),
                 const SizedBox(height: 10),
@@ -186,8 +189,9 @@ class _MerchantProductsDashboardState extends State<MerchantProductsDashboard> {
             ),
             actions: [
               TextButton(
-                  onPressed: saving ? null : () => Navigator.pop(ctx),
-                  child: const Text('إلغاء')),
+                onPressed: saving ? null : () => Navigator.pop(ctx),
+                child: const Text('إلغاء'),
+              ),
               ElevatedButton(
                 style: ElevatedButton.styleFrom(
                   backgroundColor: AppColors.orange,
@@ -225,8 +229,9 @@ class _MerchantProductsDashboardState extends State<MerchantProductsDashboard> {
                           if (mounted) {
                             ScaffoldMessenger.of(context).showSnackBar(
                               SnackBar(
-                                  content: Text('خطأ: $e'),
-                                  backgroundColor: Colors.red),
+                                content: Text('خطأ: $e'),
+                                backgroundColor: Colors.red,
+                              ),
                             );
                           }
                         }
@@ -236,7 +241,9 @@ class _MerchantProductsDashboardState extends State<MerchantProductsDashboard> {
                         width: 18,
                         height: 18,
                         child: CircularProgressIndicator(
-                            color: Colors.white, strokeWidth: 2),
+                          color: Colors.white,
+                          strokeWidth: 2,
+                        ),
                       )
                     : const Text('حفظ التعديل'),
               ),
@@ -245,6 +252,7 @@ class _MerchantProductsDashboardState extends State<MerchantProductsDashboard> {
         },
       ),
     );
+
     priceCtrl.dispose();
     discountCtrl.dispose();
   }
@@ -257,11 +265,14 @@ class _MerchantProductsDashboardState extends State<MerchantProductsDashboard> {
         content: Text('هل تريد حذف "${p['title']}" نهائياً؟'),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('إلغاء')),
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('إلغاء'),
+          ),
           ElevatedButton(
             style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.red, foregroundColor: Colors.white),
+              backgroundColor: Colors.red,
+              foregroundColor: Colors.white,
+            ),
             onPressed: () => Navigator.pop(ctx, true),
             child: const Text('حذف'),
           ),
@@ -274,14 +285,18 @@ class _MerchantProductsDashboardState extends State<MerchantProductsDashboard> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-              content: Text('تم حذف المنتج بنجاح'),
-              backgroundColor: AppColors.navy),
+            content: Text('تم حذف المنتج بنجاح'),
+            backgroundColor: AppColors.navy,
+          ),
         );
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('تعذر الحذف: $e'), backgroundColor: Colors.red),
+          SnackBar(
+            content: Text('تعذر الحذف: $e'),
+            backgroundColor: Colors.red,
+          ),
         );
       }
     }
@@ -301,7 +316,6 @@ class _MerchantProductsDashboardState extends State<MerchantProductsDashboard> {
         if (!snap.hasData) {
           return const Center(child: CircularProgressIndicator());
         }
-
         final items = snap.data!.where((p) {
           final dt = DateTime.tryParse((p['created_at'] as String?) ?? '');
           if (dt == null) return true;
@@ -345,7 +359,9 @@ class _MerchantProductsDashboardState extends State<MerchantProductsDashboard> {
                         foregroundColor: Colors.white,
                       ),
                       onPressed: () => Navigator.push(
-                          context, animatedRoute(const AddProductScreen())),
+                        context,
+                        animatedRoute(const AddProductScreen()),
+                      ),
                       icon: const Icon(Icons.add, size: 18),
                       label: const Text('إضافة قطعة'),
                     ),
@@ -454,7 +470,9 @@ class _MerchantProductsDashboardState extends State<MerchantProductsDashboard> {
                                         if (isHidden)
                                           Container(
                                             padding: const EdgeInsets.symmetric(
-                                                horizontal: 7, vertical: 2),
+                                              horizontal: 7,
+                                              vertical: 2,
+                                            ),
                                             decoration: BoxDecoration(
                                               color: Colors.orange
                                                   .withValues(alpha: 0.16),
@@ -474,7 +492,9 @@ class _MerchantProductsDashboardState extends State<MerchantProductsDashboard> {
                                           const SizedBox(width: 4),
                                           Container(
                                             padding: const EdgeInsets.symmetric(
-                                                horizontal: 7, vertical: 2),
+                                              horizontal: 7,
+                                              vertical: 2,
+                                            ),
                                             decoration: BoxDecoration(
                                               color: Colors.red,
                                               borderRadius:
@@ -510,10 +530,17 @@ class _MerchantProductsDashboardState extends State<MerchantProductsDashboard> {
                             mainAxisAlignment: MainAxisAlignment.spaceAround,
                             children: [
                               _miniMetric(
-                                  Icons.visibility_outlined, '$views مشاهدة'),
+                                Icons.visibility_outlined,
+                                '$views مشاهدة',
+                              ),
                               _miniMetric(
-                                  Icons.touch_app_outlined, '$clicks نقرة'),
-                              _miniMetric(Icons.sell_outlined, '$sales مبيعة'),
+                                Icons.touch_app_outlined,
+                                '$clicks نقرة',
+                              ),
+                              _miniMetric(
+                                Icons.sell_outlined,
+                                '$sales مبيعة',
+                              ),
                             ],
                           ),
                           const SizedBox(height: 10),
@@ -541,7 +568,8 @@ class _MerchantProductsDashboardState extends State<MerchantProductsDashboard> {
                                           width: 15,
                                           height: 15,
                                           child: CircularProgressIndicator(
-                                              strokeWidth: 2),
+                                            strokeWidth: 2,
+                                          ),
                                         )
                                       : Icon(
                                           isHidden
@@ -552,8 +580,9 @@ class _MerchantProductsDashboardState extends State<MerchantProductsDashboard> {
                                   label: Text(
                                     isHidden ? 'إظهار' : 'إخفاء',
                                     style: const TextStyle(
-                                        fontSize: 12,
-                                        fontWeight: FontWeight.bold),
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.bold,
+                                    ),
                                   ),
                                 ),
                               ),
@@ -566,21 +595,26 @@ class _MerchantProductsDashboardState extends State<MerchantProductsDashboard> {
                                         const EdgeInsets.symmetric(vertical: 8),
                                   ),
                                   onPressed: () => _editProductDialog(p),
-                                  icon: const Icon(Icons.local_offer_outlined,
-                                      size: 17),
+                                  icon: const Icon(
+                                    Icons.local_offer_outlined,
+                                    size: 17,
+                                  ),
                                   label: const Text(
                                     'السعر والخصم',
                                     style: TextStyle(
-                                        fontSize: 12,
-                                        fontWeight: FontWeight.bold),
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.bold,
+                                    ),
                                   ),
                                 ),
                               ),
                               const SizedBox(width: 6),
                               IconButton(
                                 tooltip: 'حذف المنتج',
-                                icon: const Icon(Icons.delete_outline,
-                                    color: Colors.red),
+                                icon: const Icon(
+                                  Icons.delete_outline,
+                                  color: Colors.red,
+                                ),
                                 onPressed: () => _deleteProduct(p),
                               ),
                             ],
@@ -608,47 +642,81 @@ class _MerchantProductsDashboardState extends State<MerchantProductsDashboard> {
       return _buildProductsBody(uid);
     }
 
-    return DefaultTabController(
-      length: 2,
-      child: Scaffold(
-        appBar: AppBar(
-          title: Text(_loc.tr('لوحة تحكم التاجر', 'Merchant Dashboard')),
-          actions: [
-            IconButton(
-              icon: const Icon(Icons.add_circle,
-                  color: AppColors.orange, size: 28),
-              onPressed: () => Navigator.push(
-                  context, animatedRoute(const AddProductScreen())),
-            ),
-          ],
-          bottom: TabBar(
-            indicatorColor: AppColors.orange,
-            labelColor: AppColors.orange,
-            unselectedLabelColor: AppColors.textSecondary,
-            tabs: [
-              Tab(
-                icon: const Icon(Icons.inventory_2_outlined),
-                text: _loc.tr('المنتجات والأداء', 'Products & Stats'),
-              ),
-              Tab(
-                icon: const Icon(Icons.account_balance_wallet_outlined),
-                text: _loc.tr('المحفظة المالية', 'Wallet & Payouts'),
-              ),
-            ],
-          ),
-        ),
-        body: TabBarView(
-          children: [
-            _buildProductsBody(uid),
-            _loadedProfile == null
-                ? const Center(child: CircularProgressIndicator())
-                : ProviderWalletView(
-                    profile: _loadedProfile!,
-                    onRefreshProfile: _loadProfile,
+    return ListenableBuilder(
+      listenable: EnvConfig.paymentsEnabled,
+      builder: (context, _) {
+        final showPayments = EnvConfig.paymentsEnabled.value;
+
+        if (!showPayments) {
+          return Scaffold(
+            appBar: AppBar(
+              title: Text(_loc.tr('لوحة تحكم التاجر', 'Merchant Dashboard')),
+              actions: [
+                IconButton(
+                  icon: const Icon(
+                    Icons.add_circle,
+                    color: AppColors.orange,
+                    size: 28,
                   ),
-          ],
-        ),
-      ),
+                  onPressed: () => Navigator.push(
+                    context,
+                    animatedRoute(const AddProductScreen()),
+                  ),
+                ),
+              ],
+            ),
+            body: _buildProductsBody(uid),
+          );
+        }
+
+        return DefaultTabController(
+          length: 2,
+          child: Scaffold(
+            appBar: AppBar(
+              title: Text(_loc.tr('لوحة تحكم التاجر', 'Merchant Dashboard')),
+              actions: [
+                IconButton(
+                  icon: const Icon(
+                    Icons.add_circle,
+                    color: AppColors.orange,
+                    size: 28,
+                  ),
+                  onPressed: () => Navigator.push(
+                    context,
+                    animatedRoute(const AddProductScreen()),
+                  ),
+                ),
+              ],
+              bottom: TabBar(
+                indicatorColor: AppColors.orange,
+                labelColor: AppColors.orange,
+                unselectedLabelColor: AppColors.textSecondary,
+                tabs: [
+                  Tab(
+                    icon: const Icon(Icons.inventory_2_outlined),
+                    text: _loc.tr('المنتجات والأداء', 'Products & Stats'),
+                  ),
+                  Tab(
+                    icon: const Icon(Icons.account_balance_wallet_outlined),
+                    text: _loc.tr('المحفظة المالية', 'Wallet & Payouts'),
+                  ),
+                ],
+              ),
+            ),
+            body: TabBarView(
+              children: [
+                _buildProductsBody(uid),
+                _loadedProfile == null
+                    ? const Center(child: CircularProgressIndicator())
+                    : ProviderWalletView(
+                        profile: _loadedProfile!,
+                        onRefreshProfile: _loadProfile,
+                      ),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 
@@ -669,9 +737,13 @@ class _MerchantProductsDashboardState extends State<MerchantProductsDashboard> {
               value: val,
               style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
             ),
-            Text(label,
-                style: const TextStyle(
-                    color: AppColors.textSecondary, fontSize: 10)),
+            Text(
+              label,
+              style: const TextStyle(
+                color: AppColors.textSecondary,
+                fontSize: 10,
+              ),
+            ),
           ],
         ),
       ),
@@ -683,8 +755,10 @@ class _MerchantProductsDashboardState extends State<MerchantProductsDashboard> {
       children: [
         Icon(icon, size: 15, color: AppColors.navy),
         const SizedBox(width: 4),
-        Text(text,
-            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+        Text(
+          text,
+          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+        ),
       ],
     );
   }

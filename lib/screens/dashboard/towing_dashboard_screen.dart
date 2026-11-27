@@ -45,6 +45,7 @@ class _TowingDashboardScreenState extends State<TowingDashboardScreen> {
   late double? _myLat = widget.profile.latitude;
   late double? _myLng = widget.profile.longitude;
   final double _maxRadiusKm = 15.0;
+
   DashboardPeriod _period = DashboardPeriod.month1;
   DateTimeRange? _customRange;
   String? _trackingRequestId;
@@ -89,6 +90,7 @@ class _TowingDashboardScreenState extends State<TowingDashboardScreen> {
   }
 
   Future<void> _onTabTap(int i) async {
+    if (!EnvConfig.paymentsEnabled.value && i == 1) return;
     if (i == 1 && !_walletUnlocked) {
       final ok = await WalletAuthService.instance.authenticate(context);
       if (!ok || !mounted) return;
@@ -124,6 +126,7 @@ class _TowingDashboardScreenState extends State<TowingDashboardScreen> {
   String _winchStatusLabel(String? status, String? progressStep) {
     final st = (status ?? '').trim().toLowerCase();
     final step = (progressStep ?? '').trim().toLowerCase();
+
     if (st == 'cancelled' || step == 'cancelled') return 'ملغي';
     if (st == 'completed' || step == 'completed') return 'مكتمل وتم الدفع ✓';
     if (st == 'awaiting_payment' || step == 'awaiting_payment') {
@@ -270,99 +273,116 @@ class _TowingDashboardScreenState extends State<TowingDashboardScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final showPayments = EnvConfig.paymentsEnabled.value;
+    return ListenableBuilder(
+      listenable: Listenable.merge([
+        EnvConfig.paymentsEnabled,
+        EnvConfig.subscriptionsEnabled,
+      ]),
+      builder: (context, _) {
+        final showPayments = EnvConfig.paymentsEnabled.value;
+        final showSubs = EnvConfig.subscriptionsEnabled.value;
+        final activeTab = showPayments ? _tab : 0;
 
-    return Scaffold(
-      appBar: AppBar(
-        backgroundColor: AppColors.navy,
-        foregroundColor: Colors.white,
-        iconTheme: const IconThemeData(color: Colors.white),
-        actionsIconTheme: const IconThemeData(color: Colors.white),
-        leading: Navigator.canPop(context)
-            ? const BackButton(color: Colors.white)
-            : null,
-        title: Text(
-          'ونش الطوارئ · ${widget.profile.fullName ?? ""}',
-          style: const TextStyle(color: Colors.white, fontSize: 16),
-        ),
-        actions: [
-          IconButton(
-            tooltip: 'العودة للرئيسية',
-            icon: const Icon(Icons.grid_view_rounded, color: Colors.white),
-            onPressed: _goHome,
-          ),
-          const NotificationBellButton(iconColor: Colors.white),
-          if (showPayments)
-            IconButton(
-              icon: const Icon(Icons.workspace_premium, color: AppColors.orange),
-              onPressed: () => Navigator.push(
-                context,
-                animatedRoute(
-                  ProviderSubscriptionsScreen(
-                    currentPlanCode: widget.profile.subscriptionPlan,
-                    onSubscribed: widget.onRefreshProfile,
+        return Scaffold(
+          appBar: AppBar(
+            backgroundColor: AppColors.navy,
+            foregroundColor: Colors.white,
+            iconTheme: const IconThemeData(color: Colors.white),
+            actionsIconTheme: const IconThemeData(color: Colors.white),
+            leading: Navigator.canPop(context)
+                ? const BackButton(color: Colors.white)
+                : null,
+            title: Text(
+              'ونش الطوارئ · ${widget.profile.fullName ?? ""}',
+              style: const TextStyle(color: Colors.white, fontSize: 16),
+            ),
+            actions: [
+              IconButton(
+                tooltip: 'العودة للرئيسية',
+                icon: const Icon(Icons.grid_view_rounded, color: Colors.white),
+                onPressed: _goHome,
+              ),
+              const NotificationBellButton(iconColor: Colors.white),
+              if (showSubs)
+                IconButton(
+                  icon: const Icon(
+                    Icons.workspace_premium,
+                    color: AppColors.orange,
+                  ),
+                  onPressed: () => Navigator.push(
+                    context,
+                    animatedRoute(
+                      ProviderSubscriptionsScreen(
+                        currentPlanCode: widget.profile.subscriptionPlan,
+                        onSubscribed: widget.onRefreshProfile,
+                      ),
+                    ),
                   ),
                 ),
+              IconButton(
+                tooltip: 'تسجيل الخروج',
+                icon: const Icon(Icons.logout, color: Colors.white),
+                onPressed: () async {
+                  await _db.auth.signOut();
+                  if (context.mounted) {
+                    Navigator.popUntil(context, (r) => r.isFirst);
+                  }
+                  widget.onSignedOut();
+                },
               ),
-            ),
-          IconButton(
-            tooltip: 'تسجيل الخروج',
-            icon: const Icon(Icons.logout, color: Colors.white),
-            onPressed: () async {
-              await _db.auth.signOut();
-              if (context.mounted) {
-                Navigator.popUntil(context, (r) => r.isFirst);
-              }
-              widget.onSignedOut();
-            },
+            ],
           ),
-        ],
-      ),
-      body: Column(
-        children: [
-          Container(
-            color: _isAvailable
-                ? AppColors.success.withValues(alpha: 0.12)
-                : Colors.red.withValues(alpha: 0.10),
-            child: SwitchListTile(
-              title: Text(
-                _isAvailable ? 'متاح لاستقبال طلبات السحب' : 'غير متاح حالياً',
-                style: TextStyle(
-                  fontWeight: FontWeight.bold,
-                  color: _isAvailable ? AppColors.success : Colors.red,
-                  fontSize: 14,
+          body: Column(
+            children: [
+              Container(
+                color: _isAvailable
+                    ? AppColors.success.withValues(alpha: 0.12)
+                    : Colors.red.withValues(alpha: 0.10),
+                child: SwitchListTile(
+                  title: Text(
+                    _isAvailable
+                        ? 'متاح لاستقبال طلبات السحب'
+                        : 'غير متاح حالياً',
+                    style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      color: _isAvailable ? AppColors.success : Colors.red,
+                      fontSize: 14,
+                    ),
+                  ),
+                  value: _isAvailable,
+                  activeTrackColor: AppColors.success,
+                  onChanged: _toggleAvailability,
                 ),
               ),
-              value: _isAvailable,
-              activeTrackColor: AppColors.success,
-              onChanged: _toggleAvailability,
-            ),
+              Expanded(
+                child: activeTab == 0
+                    ? _towingOrdersTab()
+                    : ProviderWalletView(
+                        profile: widget.profile,
+                        onRefreshProfile: widget.onRefreshProfile,
+                      ),
+              ),
+            ],
           ),
-          Expanded(
-            child: _tab == 0
-                ? _towingOrdersTab()
-                : ProviderWalletView(
-                    profile: widget.profile,
-                    onRefreshProfile: widget.onRefreshProfile,
-                  ),
-          ),
-        ],
-      ),
-      bottomNavigationBar: BottomNavigationBar(
-        currentIndex: _tab,
-        selectedItemColor: AppColors.orange,
-        onTap: _onTabTap,
-        items: const [
-          BottomNavigationBarItem(
-            icon: Icon(Icons.local_shipping),
-            label: 'طلبات الونش',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.account_balance_wallet),
-            label: 'المحفظة المالية',
-          ),
-        ],
-      ),
+          bottomNavigationBar: showPayments
+              ? BottomNavigationBar(
+                  currentIndex: activeTab,
+                  selectedItemColor: AppColors.orange,
+                  onTap: _onTabTap,
+                  items: const [
+                    BottomNavigationBarItem(
+                      icon: Icon(Icons.local_shipping),
+                      label: 'طلبات الونش',
+                    ),
+                    BottomNavigationBarItem(
+                      icon: Icon(Icons.account_balance_wallet),
+                      label: 'المحفظة المالية',
+                    ),
+                  ],
+                )
+              : null,
+        );
+      },
     );
   }
 
@@ -383,6 +403,7 @@ class _TowingDashboardScreenState extends State<TowingDashboardScreen> {
             .map(DbMechanicRequest.fromMap)
             .where(_isVisibleToMe)
             .toList();
+
         final completedCount =
             orders.where((o) => o.status == 'completed').length;
         final pendingCount = orders.where((o) => o.status == 'pending').length;
@@ -902,7 +923,6 @@ class _TowingDashboardScreenState extends State<TowingDashboardScreen> {
                     .select('id');
                 _tracker.stop();
                 _trackingRequestId = null;
-
                 if (o.userId != null) {
                   await _notifs.sendNotification(
                     targetUserId: o.userId!,
