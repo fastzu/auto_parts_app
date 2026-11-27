@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -13,12 +15,26 @@ import 'widgets/animations.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
+  if (kDebugMode && const bool.fromEnvironment('ZAP_PROXY')) {
+    HttpOverrides.global = _ZapHttpOverrides();
+  }
+
   await Supabase.initialize(
     url: EnvConfig.supabaseUrl,
     publishableKey: EnvConfig.supabaseAnonKey,
   );
 
   runApp(const AutoPartsSupabaseApp());
+}
+
+class _ZapHttpOverrides extends HttpOverrides {
+  @override
+  HttpClient createHttpClient(SecurityContext? context) {
+    final client = super.createHttpClient(context);
+    client.findProxy = (_) => 'PROXY 127.0.0.1:8080';
+    client.badCertificateCallback = (_, __, ___) => true;
+    return client;
+  }
 }
 
 class AutoPartsSupabaseApp extends StatelessWidget {

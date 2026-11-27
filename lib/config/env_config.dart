@@ -9,18 +9,16 @@ class EnvConfig {
 
   static const String supabaseAnonKey = String.fromEnvironment(
     'SUPABASE_ANON_KEY',
-    defaultValue:
-        'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5zZHltZHFybHZiaHZ1cndwdHZxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTMzNTQzOTcsImV4cCI6MjEwODkzMDM5N30.IVrWoj0WcapQn9cQS4NYlqKtZI8c4VCq3dPg3BwF0zY',
   );
 
-  // معرّفات Google AdMob (الافتراضي Test IDs الرسمية من Google — بدّلها بمعرّفاتك عند النشر عبر dart-define)
   static const String admobAndroidBannerId = String.fromEnvironment(
     'ADMOB_ANDROID_BANNER',
-    defaultValue: 'ca-app-pub-9603448958879862~2042793991',
+    defaultValue: 'ca-app-pub-3940256099942544/6300978111', // Test ID
   );
+
   static const String admobIosBannerId = String.fromEnvironment(
     'ADMOB_IOS_BANNER',
-    defaultValue: 'ca-app-pub-9603448958879862~5759723902',
+    defaultValue: 'ca-app-pub-3940256099942544/2934735716', // Test ID
   );
 
   // بيانات الدعم الفني (static const لقبولها داخل const Text في كل الشاشات)

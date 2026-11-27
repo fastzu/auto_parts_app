@@ -35,7 +35,10 @@ jobs:
         run: flutter pub get
 
       - name: Prepare iOS release config
-        run: flutter build ios --release --config-only --no-codesign
+        run: flutter build ios --release --config-only --no-codesign\
+            --dart-define=SUPABASE_URL=https://api.ghayarakjo.com \
+            --dart-define=SUPABASE_ANON_KEY=${{ secrets.SUPABASE_ANON_KEY }} \
+            --dart-define=ADMOB_IOS_BANNER=${{ secrets.ADMOB_IOS_BANNER }}
 
       - name: Setup Live Activity Widget Extension
         run: |

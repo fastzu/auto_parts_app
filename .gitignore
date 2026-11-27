@@ -50,3 +50,21 @@ app.*.map.json
 .vs/
 windows/out/
 build/
+
+# Secrets & Environment
+.env
+.env.*
+env.json
+.env.json
+
+# Android Signing & Firebase
+android/key.properties
+**/*.jks
+**/*.keystore
+android/app/google-services.json
+ios/Runner/GoogleService-Info.plist
+lib/firebase_options.dart
+
+# Build artifacts
+android/build/
+windows/out/

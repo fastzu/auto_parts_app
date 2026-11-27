@@ -1,7 +1,0 @@
-{
-	"InstallScripts" : 
-	[
-		"D:/auto_parts_app/auto_parts_app/windows/out/build/x64-debug/_deps/nuget-subbuild/cmake_install.cmake"
-	],
-	"Parallel" : false
-}
