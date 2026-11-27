@@ -35,10 +35,25 @@ jobs:
         run: flutter pub get
 
       - name: Prepare iOS release config
-        run: flutter build ios --release --config-only --no-codesign\
-            --dart-define=SUPABASE_URL=https://api.ghayarakjo.com \
-            --dart-define=SUPABASE_ANON_KEY=${{ secrets.SUPABASE_ANON_KEY }} \
-            --dart-define=ADMOB_IOS_BANNER=${{ secrets.ADMOB_IOS_BANNER }}
+        env:
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          ADMOB_IOS_BANNER: ${{ secrets.ADMOB_IOS_BANNER }}
+        run: |
+          if [ -z "$SUPABASE_ANON_KEY" ]; then
+            echo "Error: SUPABASE_ANON_KEY secret is missing in GitHub Settings"
+            exit 1
+          fi
+          ARGS=(
+            --release
+            --config-only
+            --no-codesign
+            --dart-define=SUPABASE_URL=https://api.ghayarakjo.com
+            "--dart-define=SUPABASE_ANON_KEY=$SUPABASE_ANON_KEY"
+          )
+          if [ -n "$ADMOB_IOS_BANNER" ]; then
+            ARGS+=("--dart-define=ADMOB_IOS_BANNER=$ADMOB_IOS_BANNER")
+          fi
+          flutter build ios "${ARGS[@]}"
 
       - name: Setup Live Activity Widget Extension
         run: |
