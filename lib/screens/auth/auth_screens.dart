@@ -5,6 +5,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../config/env_config.dart';
+import '../../services/app_locale_service.dart';
 import '../../services/location_service.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/animations.dart';
@@ -12,8 +13,7 @@ import '../../widgets/animations.dart';
 typedef PickedMedia = ({String name, Uint8List bytes});
 const String _oauthRedirectUrl = 'com.autoparts.app://login-callback';
 
-String _resolveOAuthRedirectUrl() =>
-    kIsWeb ? Uri.base.origin : _oauthRedirectUrl;
+String _resolveOAuthRedirectUrl() => kIsWeb ? Uri.base.origin : _oauthRedirectUrl;
 
 LaunchMode _resolveOAuthLaunchMode() =>
     kIsWeb ? LaunchMode.platformDefault : LaunchMode.externalApplication;
@@ -21,12 +21,51 @@ LaunchMode _resolveOAuthLaunchMode() =>
 bool _isProviderRole(String role) =>
     role == 'merchant' || role == 'mechanic' || role == 'towing';
 
-String _roleArabicTitle(String role) => switch (role) {
-      'merchant' => 'تاجر قطع غيار',
-      'mechanic' => 'ميكانيكي / صاحب ورشة',
-      'towing' => 'صاحب ونش طوارئ',
-      _ => 'مستخدم',
-    };
+String _roleArabicTitle(String role) {
+  final loc = AppLocaleService.instance;
+  return switch (role) {
+    'merchant' => loc.tr('تاجر قطع غيار', 'Auto Parts Merchant'),
+    'mechanic' => loc.tr('ميكانيكي / صاحب ورشة', 'Mechanic / Workshop Owner'),
+    'towing' => EnvConfig.winchEnabled.value
+        ? loc.tr('صاحب ونش طوارئ', 'Towing / Winch Owner')
+        : loc.tr('مقدم خدمة طوارئ', 'Roadside Service Provider'),
+    _ => loc.tr('مستخدم', 'Customer'),
+  };
+}
+
+class _AuthLangToggleButton extends StatelessWidget {
+  const _AuthLangToggleButton();
+
+  @override
+  Widget build(BuildContext context) {
+    final loc = AppLocaleService.instance;
+    return ValueListenableBuilder<String>(
+      valueListenable: loc.langCode,
+      builder: (_, __, ___) {
+        return Padding(
+          padding: const EdgeInsetsDirectional.only(end: 8),
+          child: TextButton.icon(
+            style: TextButton.styleFrom(
+              foregroundColor: AppColors.navy,
+              backgroundColor: AppColors.surface,
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+                side: const BorderSide(color: AppColors.border),
+              ),
+            ),
+            onPressed: () => loc.toggleLanguage(),
+            icon: const Icon(Icons.language, size: 17, color: AppColors.orange),
+            label: Text(
+              loc.isEnglish ? 'عربي' : 'EN',
+              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
 
 Future<int> _fetchDefaultPostLimit(SupabaseClient db) async {
   try {
@@ -71,6 +110,7 @@ class LoginScreen extends StatefulWidget {
 }
 
 class _LoginScreenState extends State<LoginScreen> {
+  final _loc = AppLocaleService.instance;
   String _loginMode = 'phone';
   final _identifierCtrl = TextEditingController();
   final _passCtrl = TextEditingController();
@@ -84,16 +124,21 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   String get _hintText => switch (_loginMode) {
-        'phone' => 'رقم الهاتف (مثال: 0790000000)',
-        'username' => 'اسم المستخدم (username)',
-        _ => 'البريد الإلكتروني',
+        'phone' => _loc.tr('رقم الهاتف (مثال: 0790000000)', 'Phone number (e.g. 0790000000)'),
+        'username' => _loc.tr('اسم المستخدم (username)', 'Username'),
+        _ => _loc.tr('البريد الإلكتروني', 'Email address'),
       };
 
   Future<void> _login() async {
     final input = _identifierCtrl.text.trim();
     if (input.isEmpty || _passCtrl.text.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('يرجى إدخال بيانات الدخول وكلمة المرور')),
+        SnackBar(
+          content: Text(_loc.tr(
+            'يرجى إدخال بيانات الدخول وكلمة المرور',
+            'Please enter your login credentials and password',
+          )),
+        ),
       );
       return;
     }
@@ -105,7 +150,10 @@ class _LoginScreenState extends State<LoginScreen> {
           : await db.rpc('get_email_for_login', params: {'identifier': input})
               as String?;
       if (emailToUse == null || emailToUse.isEmpty) {
-        throw Exception('لا يوجد حساب مسجل بهذه البيانات');
+        throw Exception(_loc.tr(
+          'لا يوجد حساب مسجل بهذه البيانات',
+          'No account found with these credentials',
+        ));
       }
       await db.auth
           .signInWithPassword(email: emailToUse, password: _passCtrl.text);
@@ -119,7 +167,9 @@ class _LoginScreenState extends State<LoginScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-              content: Text('فشل الدخول: $e'), backgroundColor: Colors.red),
+            content: Text(_loc.tr('فشل الدخول: $e', 'Sign in failed: $e')),
+            backgroundColor: Colors.red,
+          ),
         );
       }
     } finally {
@@ -144,8 +194,9 @@ class _LoginScreenState extends State<LoginScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-              content: Text('تعذر تسجيل الدخول: $e'),
-              backgroundColor: Colors.red),
+            content: Text(_loc.tr('تعذر تسجيل الدخول: $e', 'Could not sign in: $e')),
+            backgroundColor: Colors.red,
+          ),
         );
       }
     } finally {
@@ -157,170 +208,186 @@ class _LoginScreenState extends State<LoginScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('تسجيل الدخول — غيارك')),
-      body: SafeArea(
-        child: Align(
-          alignment: Alignment.topCenter,
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 520),
-            child: ListView(
-              padding: const EdgeInsets.all(24),
-              children: [
-                const Center(child: GhiyarakLogo(size: 64)),
-                const SizedBox(height: 14),
-                const Center(
-                  child: Text(
-                    'مرحباً بعودتك إلى غيارك',
-                    style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
-                  ),
-                ),
-                const SizedBox(height: 18),
-                Container(
-                  padding: const EdgeInsets.all(4),
-                  decoration: BoxDecoration(
-                    color: AppColors.surface,
-                    borderRadius: BorderRadius.circular(14),
-                    border: Border.all(color: AppColors.border),
-                  ),
-                  child: Row(
-                    children: [
-                      _modeBtn('رقم الهاتف', 'phone'),
-                      _modeBtn('اسم المستخدم', 'username'),
-                      _modeBtn('الإيميل', 'email'),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 16),
-                TextField(
-                  controller: _identifierCtrl,
-                  keyboardType: _loginMode == 'phone'
-                      ? TextInputType.phone
-                      : TextInputType.emailAddress,
-                  decoration: InputDecoration(
-                    labelText: _hintText,
-                    filled: true,
-                    fillColor: AppColors.surface,
-                    border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(14)),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: _passCtrl,
-                  obscureText: true,
-                  decoration: InputDecoration(
-                    labelText: 'كلمة المرور',
-                    filled: true,
-                    fillColor: AppColors.surface,
-                    border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(14)),
-                  ),
-                ),
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: TextButton(
-                    onPressed: () => Navigator.push(
-                        context, animatedRoute(const ForgotPasswordScreen())),
-                    child: const Text(
-                      'نسيت كلمة المرور؟',
-                      style: TextStyle(
-                          color: AppColors.orange, fontWeight: FontWeight.bold),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 8),
-                BounceTap(
-                  onTap: _loading ? () {} : _login,
-                  child: Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.symmetric(vertical: 15),
-                    alignment: Alignment.center,
-                    decoration: BoxDecoration(
-                      color: AppColors.orange,
-                      borderRadius: BorderRadius.circular(14),
-                    ),
-                    child: _loading
-                        ? const SizedBox(
-                            width: 22,
-                            height: 22,
-                            child: CircularProgressIndicator(
-                                color: Colors.white, strokeWidth: 2.5),
-                          )
-                        : const Text(
-                            'دخول',
-                            style: TextStyle(
-                                color: Colors.white,
-                                fontSize: 16,
-                                fontWeight: FontWeight.bold),
-                          ),
-                  ),
-                ),
-                const SizedBox(height: 18),
-                const Row(
+    return ListenableBuilder(
+      listenable: Listenable.merge([_loc.langCode, EnvConfig.winchEnabled]),
+      builder: (context, _) {
+        return Scaffold(
+          appBar: AppBar(
+            title: Text(_loc.tr('تسجيل الدخول — غيارك', 'Sign In — Ghiyarak')),
+            actions: const [_AuthLangToggleButton()],
+          ),
+          body: SafeArea(
+            child: Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 560),
+                child: ListView(
+                  padding: const EdgeInsets.all(24),
                   children: [
-                    Expanded(child: Divider()),
-                    Padding(
-                      padding: EdgeInsets.symmetric(horizontal: 10),
-                      child: Text('أو الدخول السريع عبر',
-                          style: TextStyle(
-                              color: AppColors.textSecondary, fontSize: 12)),
+                    const Center(child: GhiyarakLogo(size: 64)),
+                    const SizedBox(height: 14),
+                    Center(
+                      child: Text(
+                        _loc.tr('مرحباً بعودتك إلى غيارك', 'Welcome back to Ghiyarak'),
+                        style: const TextStyle(
+                            fontSize: 22, fontWeight: FontWeight.bold),
+                      ),
                     ),
-                    Expanded(child: Divider()),
+                    const SizedBox(height: 18),
+                    Container(
+                      padding: const EdgeInsets.all(4),
+                      decoration: BoxDecoration(
+                        color: AppColors.surface,
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(color: AppColors.border),
+                      ),
+                      child: Row(
+                        children: [
+                          _modeBtn(_loc.tr('رقم الهاتف', 'Phone'), 'phone'),
+                          _modeBtn(_loc.tr('اسم المستخدم', 'Username'), 'username'),
+                          _modeBtn(_loc.tr('الإيميل', 'Email'), 'email'),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    TextField(
+                      controller: _identifierCtrl,
+                      keyboardType: _loginMode == 'phone'
+                          ? TextInputType.phone
+                          : TextInputType.emailAddress,
+                      decoration: InputDecoration(
+                        labelText: _hintText,
+                        filled: true,
+                        fillColor: AppColors.surface,
+                        border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(14)),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: _passCtrl,
+                      obscureText: true,
+                      decoration: InputDecoration(
+                        labelText: _loc.tr('كلمة المرور', 'Password'),
+                        filled: true,
+                        fillColor: AppColors.surface,
+                        border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(14)),
+                      ),
+                    ),
+                    Align(
+                      alignment: AlignmentDirectional.centerEnd,
+                      child: TextButton(
+                        onPressed: () => Navigator.push(
+                            context, animatedRoute(const ForgotPasswordScreen())),
+                        child: Text(
+                          _loc.tr('نسيت كلمة المرور؟', 'Forgot password?'),
+                          style: const TextStyle(
+                              color: AppColors.orange, fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    BounceTap(
+                      onTap: _loading ? () {} : _login,
+                      child: Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.symmetric(vertical: 15),
+                        alignment: Alignment.center,
+                        decoration: BoxDecoration(
+                          color: AppColors.orange,
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                        child: _loading
+                            ? const SizedBox(
+                                width: 22,
+                                height: 22,
+                                child: CircularProgressIndicator(
+                                    color: Colors.white, strokeWidth: 2.5),
+                              )
+                            : Text(
+                                _loc.tr('دخول', 'Sign In'),
+                                style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.bold),
+                              ),
+                      ),
+                    ),
+                    const SizedBox(height: 18),
+                    Row(
+                      children: [
+                        const Expanded(child: Divider()),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 10),
+                          child: Text(
+                            _loc.tr('أو الدخول السريع عبر', 'Or continue with'),
+                            style: const TextStyle(
+                                color: AppColors.textSecondary, fontSize: 12),
+                          ),
+                        ),
+                        const Expanded(child: Divider()),
+                      ],
+                    ),
+                    const SizedBox(height: 14),
+                    OutlinedButton.icon(
+                      style: OutlinedButton.styleFrom(
+                        backgroundColor: AppColors.surface,
+                        padding: const EdgeInsets.symmetric(vertical: 13),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14)),
+                      ),
+                      onPressed: _loading
+                          ? null
+                          : () => _oauthSignIn(OAuthProvider.google),
+                      icon: const GoogleLogoIcon(size: 20),
+                      label: Text(
+                        _loc.tr('المتابعة باستخدام Google', 'Continue with Google'),
+                        style: const TextStyle(
+                            color: AppColors.textPrimary,
+                            fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.black,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 13),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14)),
+                      ),
+                      onPressed: _loading
+                          ? null
+                          : () => _oauthSignIn(OAuthProvider.apple),
+                      icon: const Icon(Icons.apple, size: 22),
+                      label: Text(
+                        _loc.tr('المتابعة باستخدام Apple', 'Continue with Apple'),
+                        style: const TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    TextButton(
+                      onPressed: () => Navigator.push(
+                        context,
+                        animatedRoute(
+                            SignUpScreen(onAuthenticated: widget.onAuthenticated)),
+                      ),
+                      child: Text(
+                        _loc.tr(
+                          'ليس لديك حساب؟ إنشاء حساب جديد',
+                          'Don\'t have an account? Create one',
+                        ),
+                        style: const TextStyle(
+                            color: AppColors.navy, fontWeight: FontWeight.bold),
+                      ),
+                    ),
                   ],
                 ),
-                const SizedBox(height: 14),
-                OutlinedButton.icon(
-                  style: OutlinedButton.styleFrom(
-                    backgroundColor: AppColors.surface,
-                    padding: const EdgeInsets.symmetric(vertical: 13),
-                    shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(14)),
-                  ),
-                  onPressed: _loading
-                      ? null
-                      : () => _oauthSignIn(OAuthProvider.google),
-                  icon: const GoogleLogoIcon(size: 20),
-                  label: const Text(
-                    'المتابعة باستخدام Google',
-                    style: TextStyle(
-                        color: AppColors.textPrimary,
-                        fontWeight: FontWeight.bold),
-                  ),
-                ),
-                const SizedBox(height: 10),
-                ElevatedButton.icon(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.black,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 13),
-                    shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(14)),
-                  ),
-                  onPressed:
-                      _loading ? null : () => _oauthSignIn(OAuthProvider.apple),
-                  icon: const Icon(Icons.apple, size: 22),
-                  label: const Text('المتابعة باستخدام Apple',
-                      style: TextStyle(fontWeight: FontWeight.bold)),
-                ),
-                const SizedBox(height: 16),
-                TextButton(
-                  onPressed: () => Navigator.push(
-                    context,
-                    animatedRoute(
-                        SignUpScreen(onAuthenticated: widget.onAuthenticated)),
-                  ),
-                  child: const Text(
-                    'ليس لديك حساب؟ إنشاء حساب جديد',
-                    style: TextStyle(
-                        color: AppColors.navy, fontWeight: FontWeight.bold),
-                  ),
-                ),
-              ],
+              ),
             ),
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 
@@ -366,6 +433,7 @@ class CompleteOAuthProfileScreen extends StatefulWidget {
 class _CompleteOAuthProfileScreenState
     extends State<CompleteOAuthProfileScreen> {
   final _db = Supabase.instance.client;
+  final _loc = AppLocaleService.instance;
   final _usernameCtrl = TextEditingController();
   final _nameCtrl = TextEditingController();
   final _phoneCtrl = TextEditingController();
@@ -392,24 +460,29 @@ class _CompleteOAuthProfileScreenState
   }
 
   Future<void> _save() async {
+    final showWinch = EnvConfig.winchEnabled.value;
     final username = _usernameCtrl.text.trim();
     final name = _nameCtrl.text.trim();
     final phone = _phoneCtrl.text.trim();
     if (username.isEmpty || name.isEmpty || phone.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-            content:
-                Text('يرجى إدخال اسم المستخدم والاسم الكامل ورقم الهاتف')),
+        SnackBar(
+          content: Text(_loc.tr(
+            'يرجى إدخال اسم المستخدم والاسم الكامل ورقم الهاتف',
+            'Please enter username, full name, and phone number',
+          )),
+        ),
       );
       return;
     }
 
     if (_isProviderRole(_role) && !_contractAccepted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
+        SnackBar(
+          content: Text(_loc.tr(
             'يرجى قراءة عقد الشراكة والتعهد بدفع العمولات والموافقة عليه قبل المتابعة',
-          ),
+            'Please read and accept the partnership & commission agreement before continuing',
+          )),
           backgroundColor: Colors.red,
         ),
       );
@@ -427,9 +500,11 @@ class _CompleteOAuthProfileScreenState
       if (existing != null && existing['id'] != user.id) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content:
-                  Text('اسم المستخدم أو رقم الهاتف مسجل مسبقاً لحساب آخر'),
+            SnackBar(
+              content: Text(_loc.tr(
+                'اسم المستخدم أو رقم الهاتف مسجل مسبقاً لحساب آخر',
+                'Username or phone number is already registered to another account',
+              )),
               backgroundColor: Colors.red,
             ),
           );
@@ -449,10 +524,10 @@ class _CompleteOAuthProfileScreenState
             fullName: name,
             email: user.email ?? '',
             phone: phone,
-            country: 'الأردن',
+            country: _loc.tr('الأردن', 'Jordan'),
             age: null,
             password: '',
-            hasTowing: EnvConfig.winchEnabled.value ? _hasTowing : false,
+            hasTowing: showWinch ? _hasTowing : false,
             contractAccepted: _contractAccepted,
             onCompleted: widget.onCompleted,
           )),
@@ -460,8 +535,9 @@ class _CompleteOAuthProfileScreenState
         return;
       }
 
+      final safeRole = (!showWinch && _role == 'towing') ? 'user' : _role;
       final defaultLimit = await _fetchDefaultPostLimit(_db);
-      final isProvider = _isProviderRole(_role);
+      final isProvider = _isProviderRole(safeRole);
       await _upsertCustomerRecord(_db, {
         'id': user.id,
         'username': username,
@@ -469,7 +545,7 @@ class _CompleteOAuthProfileScreenState
         'email': user.email,
         'phone': phone,
         'country': 'الأردن',
-        'role': _role,
+        'role': safeRole,
         'max_posts_limit': defaultLimit,
         'subscription_plan': 'free',
         'commission_rate': 0.15,
@@ -487,161 +563,173 @@ class _CompleteOAuthProfileScreenState
 
   @override
   Widget build(BuildContext context) {
-    final showWinch = EnvConfig.winchEnabled.value;
-    final roles = [
-      ('user', 'مستخدم عادي', Icons.person_outline),
-      ('merchant', 'تاجر قطع', Icons.storefront_outlined),
-      if (showWinch) ('towing', 'صاحب ونش', Icons.local_shipping_outlined),
-      ('mechanic', 'ميكانيكي / ورشة', Icons.build_outlined),
-    ];
+    return ListenableBuilder(
+      listenable: Listenable.merge([_loc.langCode, EnvConfig.winchEnabled]),
+      builder: (context, _) {
+        final showWinch = EnvConfig.winchEnabled.value;
+        if (!showWinch && _role == 'towing') {
+          _role = 'user';
+        }
+        final roles = [
+          ('user', _loc.tr('مستخدم عادي', 'Customer'), Icons.person_outline),
+          ('merchant', _loc.tr('تاجر قطع', 'Parts Merchant'), Icons.storefront_outlined),
+          if (showWinch)
+            ('towing', _loc.tr('صاحب ونش', 'Winch / Towing'), Icons.local_shipping_outlined),
+          ('mechanic', _loc.tr('ميكانيكي / ورشة', 'Mechanic / Workshop'), Icons.build_outlined),
+        ];
 
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('إكمال بيانات الحساب'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.logout),
-            onPressed: () async {
-              await _db.auth.signOut();
-              widget.onCompleted();
-            },
-          ),
-        ],
-      ),
-      body: Align(
-        alignment: Alignment.topCenter,
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 560),
-          child: ListView(
-            padding: const EdgeInsets.all(20),
-            children: [
-              const Text(
-                'أهلاً بك! أكمل بياناتك لمتابعة استخدام غيارك',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 14),
-              GridView.builder(
-                itemCount: roles.length,
-                shrinkWrap: true,
-                physics: const NeverScrollableScrollPhysics(),
-                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: 2,
-                  mainAxisSpacing: 10,
-                  crossAxisSpacing: 10,
-                  mainAxisExtent: 56,
-                ),
-                itemBuilder: (_, i) {
-                  final r = roles[i];
-                  final active = _role == r.$1;
-                  return GestureDetector(
-                    onTap: () => setState(() {
-                      if (_role != r.$1) {
-                        _role = r.$1;
-                        _contractAccepted = false;
-                      }
-                    }),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 10),
-                      decoration: BoxDecoration(
-                        color: active ? AppColors.navy : AppColors.surface,
-                        borderRadius: BorderRadius.circular(14),
-                        border: Border.all(
-                            color: active ? AppColors.navy : AppColors.border),
-                      ),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(r.$3,
-                              color:
-                                  active ? Colors.white : AppColors.textPrimary,
-                              size: 18),
-                          const SizedBox(width: 6),
-                          Flexible(
-                            child: Text(
-                              r.$2,
-                              style: TextStyle(
-                                color: active
-                                    ? Colors.white
-                                    : AppColors.textPrimary,
-                                fontWeight: FontWeight.bold,
-                                fontSize: 12,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  );
+        return Scaffold(
+          appBar: AppBar(
+            title: Text(_loc.tr('إكمال بيانات الحساب', 'Complete Your Profile')),
+            actions: [
+              const _AuthLangToggleButton(),
+              IconButton(
+                icon: const Icon(Icons.logout),
+                onPressed: () async {
+                  await _db.auth.signOut();
+                  widget.onCompleted();
                 },
-              ),
-              const SizedBox(height: 16),
-              TextField(
-                controller: _usernameCtrl,
-                decoration: InputDecoration(
-                  labelText: 'اسم المستخدم (username) - لا يتكرر',
-                  filled: true,
-                  fillColor: AppColors.surface,
-                  border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(14)),
-                ),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: _nameCtrl,
-                decoration: InputDecoration(
-                  labelText: 'الاسم الكامل / اسم النشاط',
-                  filled: true,
-                  fillColor: AppColors.surface,
-                  border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(14)),
-                ),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: _phoneCtrl,
-                keyboardType: TextInputType.phone,
-                decoration: InputDecoration(
-                  labelText: 'رقم الهاتف - لا يتكرر',
-                  filled: true,
-                  fillColor: AppColors.surface,
-                  border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(14)),
-                ),
-              ),
-              if (_role == 'mechanic' && showWinch) ...[
-                const SizedBox(height: 10),
-                SwitchListTile(
-                  title: const Text('هل لديك ونش؟'),
-                  value: _hasTowing,
-                  onChanged: (v) => setState(() => _hasTowing = v),
-                ),
-              ],
-              if (_isProviderRole(_role)) ...[
-                const SizedBox(height: 16),
-                _ProviderContractCard(
-                  role: _role,
-                  accepted: _contractAccepted,
-                  onChanged: (v) => setState(() => _contractAccepted = v),
-                ),
-              ],
-              const SizedBox(height: 20),
-              ElevatedButton(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.orange,
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(vertical: 15),
-                ),
-                onPressed: _saving ? null : _save,
-                child: _saving
-                    ? const CircularProgressIndicator(color: Colors.white)
-                    : Text(_role == 'mechanic'
-                        ? 'التالي: معلومات الورشة'
-                        : 'حفظ والدخول'),
               ),
             ],
           ),
-        ),
-      ),
+          body: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 560),
+              child: ListView(
+                padding: const EdgeInsets.all(20),
+                children: [
+                  Text(
+                    _loc.tr(
+                      'أهلاً بك! أكمل بياناتك لمتابعة استخدام غيارك',
+                      'Welcome! Complete your details to continue using Ghiyarak',
+                    ),
+                    style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 14),
+                  GridView.count(
+                    crossAxisCount: 2,
+                    shrinkWrap: true,
+                    physics: const NeverScrollableScrollPhysics(),
+                    mainAxisSpacing: 10,
+                    crossAxisSpacing: 10,
+                    childAspectRatio: 2.3,
+                    children: roles.map((r) {
+                      final active = _role == r.$1;
+                      return GestureDetector(
+                        onTap: () => setState(() {
+                          if (_role != r.$1) {
+                            _role = r.$1;
+                            _contractAccepted = false;
+                          }
+                        }),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 10),
+                          decoration: BoxDecoration(
+                            color: active ? AppColors.navy : AppColors.surface,
+                            borderRadius: BorderRadius.circular(14),
+                            border: Border.all(
+                                color: active ? AppColors.navy : AppColors.border),
+                          ),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(r.$3,
+                                  color: active ? Colors.white : AppColors.textPrimary,
+                                  size: 18),
+                              const SizedBox(width: 6),
+                              Flexible(
+                                child: Text(
+                                  r.$2,
+                                  style: TextStyle(
+                                    color:
+                                        active ? Colors.white : AppColors.textPrimary,
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    }).toList(),
+                  ),
+                  const SizedBox(height: 16),
+                  TextField(
+                    controller: _usernameCtrl,
+                    decoration: InputDecoration(
+                      labelText: _loc.tr(
+                        'اسم المستخدم (username) - لا يتكرر',
+                        'Username (unique)',
+                      ),
+                      filled: true,
+                      fillColor: AppColors.surface,
+                      border:
+                          OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _nameCtrl,
+                    decoration: InputDecoration(
+                      labelText: _loc.tr(
+                        'الاسم الكامل / اسم النشاط',
+                        'Full Name / Business Name',
+                      ),
+                      filled: true,
+                      fillColor: AppColors.surface,
+                      border:
+                          OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _phoneCtrl,
+                    keyboardType: TextInputType.phone,
+                    decoration: InputDecoration(
+                      labelText: _loc.tr('رقم الهاتف - لا يتكرر', 'Phone Number (unique)'),
+                      filled: true,
+                      fillColor: AppColors.surface,
+                      border:
+                          OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+                    ),
+                  ),
+                  if (_role == 'mechanic' && showWinch) ...[
+                    const SizedBox(height: 10),
+                    SwitchListTile(
+                      title: Text(_loc.tr('هل لديك ونش؟', 'Do you have a winch?')),
+                      value: _hasTowing,
+                      onChanged: (v) => setState(() => _hasTowing = v),
+                    ),
+                  ],
+                  if (_isProviderRole(_role)) ...[
+                    const SizedBox(height: 16),
+                    _ProviderContractCard(
+                      role: _role,
+                      accepted: _contractAccepted,
+                      onChanged: (v) => setState(() => _contractAccepted = v),
+                    ),
+                  ],
+                  const SizedBox(height: 20),
+                  ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.orange,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 15),
+                    ),
+                    onPressed: _saving ? null : _save,
+                    child: _saving
+                        ? const CircularProgressIndicator(color: Colors.white)
+                        : Text(_role == 'mechanic'
+                            ? _loc.tr('التالي: معلومات الورشة', 'Next: Workshop Info')
+                            : _loc.tr('حفظ والدخول', 'Save & Continue')),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 }
@@ -654,6 +742,7 @@ class ForgotPasswordScreen extends StatefulWidget {
 
 class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
   final _db = Supabase.instance.client;
+  final _loc = AppLocaleService.instance;
   final _identifierCtrl = TextEditingController();
   final _codeCtrl = TextEditingController();
   final _newPassCtrl = TextEditingController();
@@ -675,8 +764,10 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
   Future<void> _sendRecoveryCode() async {
     final input = _identifierCtrl.text.trim();
     if (input.isEmpty) {
-      setState(() =>
-          _securityAlert = 'يرجى إدخال الإيميل أو رقم الهاتف أو اسم المستخدم');
+      setState(() => _securityAlert = _loc.tr(
+            'يرجى إدخال الإيميل أو رقم الهاتف أو اسم المستخدم',
+            'Please enter your email, phone number, or username',
+          ));
       return;
     }
     setState(() {
@@ -689,8 +780,10 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
           : await _db.rpc('get_email_for_login', params: {'identifier': input})
               as String?;
       if (email == null || email.isEmpty) {
-        setState(() => _securityAlert =
-            'تنبيه: لم يتم العثور على أي حساب مسجل بهذه البيانات.');
+        setState(() => _securityAlert = _loc.tr(
+              'تنبيه: لم يتم العثور على أي حساب مسجل بهذه البيانات.',
+              'Alert: No registered account found with these details.',
+            ));
         return;
       }
       await _db.auth.resetPasswordForEmail(email);
@@ -701,13 +794,20 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
         });
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-              content: Text('تم إرسال رمز الأمان إلى: $email'),
-              backgroundColor: AppColors.success),
+            content: Text(_loc.tr(
+              'تم إرسال رمز الأمان إلى: $email',
+              'Security code sent to: $email',
+            )),
+            backgroundColor: AppColors.success,
+          ),
         );
       }
     } catch (e) {
       if (mounted) {
-        setState(() => _securityAlert = 'تعذر إرسال رمز الأمان: $e');
+        setState(() => _securityAlert = _loc.tr(
+              'تعذر إرسال رمز الأمان: $e',
+              'Failed to send security code: $e',
+            ));
       }
     } finally {
       if (mounted) {
@@ -719,14 +819,18 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
   Future<void> _verifyAndResetPassword() async {
     final code = _codeCtrl.text.trim();
     if (code.length < 6) {
-      _showSecurityWarning(
-          'رمز الأمان ناقص! يرجى إدخال كود الأمان المرسل لبريدك بشكل صحيح.');
+      _showSecurityWarning(_loc.tr(
+        'رمز الأمان ناقص! يرجى إدخال كود الأمان المرسل لبريدك بشكل صحيح.',
+        'Incomplete security code! Please enter the 6-digit code sent to your email.',
+      ));
       return;
     }
     if (_newPassCtrl.text.length < 6 ||
         _newPassCtrl.text != _confirmPassCtrl.text) {
-      _showSecurityWarning(
-          'تأكد من كتابة كلمة مرور من 6 أحرف على الأقل وتطابقها.');
+      _showSecurityWarning(_loc.tr(
+        'تأكد من كتابة كلمة مرور من 6 أحرف على الأقل وتطابقها.',
+        'Please enter a password of at least 6 characters and make sure both match.',
+      ));
       return;
     }
     setState(() {
@@ -740,18 +844,26 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
       await _db.auth.signOut();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('تم تغيير كلمة المرور بنجاح!'),
+          SnackBar(
+            content: Text(_loc.tr(
+              'تم تغيير كلمة المرور بنجاح!',
+              'Password updated successfully!',
+            )),
             backgroundColor: AppColors.success,
           ),
         );
         Navigator.pop(context);
       }
     } on AuthException {
-      _showSecurityWarning(
-          'تنبيه أمني: كود الأمان المدخل خاطئ أو منتهي الصلاحية! تم إيقاف التغيير لحماية حسابك.');
+      _showSecurityWarning(_loc.tr(
+        'تنبيه أمني: كود الأمان المدخل خاطئ أو منتهي الصلاحية! تم إيقاف التغيير لحماية حسابك.',
+        'Security Alert: The code is invalid or expired! Operation cancelled to protect your account.',
+      ));
     } catch (e) {
-      _showSecurityWarning('تنبيه أمني: فشل التحقق ($e).');
+      _showSecurityWarning(_loc.tr(
+        'تنبيه أمني: فشل التحقق ($e).',
+        'Security Alert: Verification failed ($e).',
+      ));
     } finally {
       if (mounted) {
         setState(() => _loading = false);
@@ -767,13 +879,15 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Row(
+        title: Row(
           children: [
-            Icon(Icons.security, color: Colors.red),
-            SizedBox(width: 8),
-            Text('تنبيه أمني',
-                style:
-                    TextStyle(color: Colors.red, fontWeight: FontWeight.bold)),
+            const Icon(Icons.security, color: Colors.red),
+            const SizedBox(width: 8),
+            Text(
+              _loc.tr('تنبيه أمني', 'Security Alert'),
+              style: const TextStyle(
+                  color: Colors.red, fontWeight: FontWeight.bold),
+            ),
           ],
         ),
         content: Text(msg),
@@ -782,7 +896,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
             style: ElevatedButton.styleFrom(
                 backgroundColor: Colors.red, foregroundColor: Colors.white),
             onPressed: () => Navigator.pop(ctx),
-            child: const Text('حسناً'),
+            child: Text(_loc.tr('حسناً', 'OK')),
           ),
         ],
       ),
@@ -791,104 +905,117 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('استعادة كلمة المرور')),
-      body: Align(
-        alignment: Alignment.topCenter,
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 520),
-          child: ListView(
-            padding: const EdgeInsets.all(20),
-            children: [
-              if (_securityAlert != null)
-                Container(
-                  margin: const EdgeInsets.only(bottom: 16),
-                  padding: const EdgeInsets.all(14),
-                  decoration: BoxDecoration(
-                    color: Colors.red.withValues(alpha: 0.1),
-                    borderRadius: BorderRadius.circular(14),
-                    border: Border.all(color: Colors.red),
-                  ),
-                  child: Text(
-                    _securityAlert!,
-                    style: const TextStyle(
-                        color: Colors.red,
-                        fontWeight: FontWeight.bold,
-                        fontSize: 12),
-                  ),
-                ),
-              if (!_codeSent) ...[
-                TextField(
-                  controller: _identifierCtrl,
-                  decoration: InputDecoration(
-                    labelText: 'الإيميل / رقم الهاتف / اسم المستخدم',
-                    filled: true,
-                    fillColor: AppColors.surface,
-                    border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(14)),
-                  ),
-                ),
-                const SizedBox(height: 16),
-                ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.orange,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 15),
-                  ),
-                  onPressed: _loading ? null : _sendRecoveryCode,
-                  child: const Text('إرسال رمز الأمان'),
-                ),
-              ] else ...[
-                TextField(
-                  controller: _codeCtrl,
-                  keyboardType: TextInputType.number,
-                  decoration: InputDecoration(
-                    labelText: 'رمز الأمان (OTP)',
-                    filled: true,
-                    fillColor: AppColors.surface,
-                    border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(14)),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: _newPassCtrl,
-                  obscureText: true,
-                  decoration: InputDecoration(
-                    labelText: 'كلمة المرور الجديدة',
-                    filled: true,
-                    fillColor: AppColors.surface,
-                    border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(14)),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: _confirmPassCtrl,
-                  obscureText: true,
-                  decoration: InputDecoration(
-                    labelText: 'تأكيد كلمة المرور',
-                    filled: true,
-                    fillColor: AppColors.surface,
-                    border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(14)),
-                  ),
-                ),
-                const SizedBox(height: 16),
-                ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.navy,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 15),
-                  ),
-                  onPressed: _loading ? null : _verifyAndResetPassword,
-                  child: const Text('تأكيد الرمز وتغيير كلمة المرور'),
-                ),
-              ],
-            ],
+    return ListenableBuilder(
+      listenable: _loc.langCode,
+      builder: (context, _) {
+        return Scaffold(
+          appBar: AppBar(
+            title: Text(_loc.tr('استعادة كلمة المرور', 'Reset Password')),
+            actions: const [_AuthLangToggleButton()],
           ),
-        ),
-      ),
+          body: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 560),
+              child: ListView(
+                padding: const EdgeInsets.all(20),
+                children: [
+                  if (_securityAlert != null)
+                    Container(
+                      margin: const EdgeInsets.only(bottom: 16),
+                      padding: const EdgeInsets.all(14),
+                      decoration: BoxDecoration(
+                        color: Colors.red.withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(color: Colors.red),
+                      ),
+                      child: Text(
+                        _securityAlert!,
+                        style: const TextStyle(
+                            color: Colors.red,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 12),
+                      ),
+                    ),
+                  if (!_codeSent) ...[
+                    TextField(
+                      controller: _identifierCtrl,
+                      decoration: InputDecoration(
+                        labelText: _loc.tr(
+                          'الإيميل / رقم الهاتف / اسم المستخدم',
+                          'Email / Phone Number / Username',
+                        ),
+                        filled: true,
+                        fillColor: AppColors.surface,
+                        border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(14)),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.orange,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 15),
+                      ),
+                      onPressed: _loading ? null : _sendRecoveryCode,
+                      child: Text(_loc.tr('إرسال رمز الأمان', 'Send Security Code')),
+                    ),
+                  ] else ...[
+                    TextField(
+                      controller: _codeCtrl,
+                      keyboardType: TextInputType.number,
+                      decoration: InputDecoration(
+                        labelText: _loc.tr('رمز الأمان (OTP)', 'Security Code (OTP)'),
+                        filled: true,
+                        fillColor: AppColors.surface,
+                        border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(14)),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: _newPassCtrl,
+                      obscureText: true,
+                      decoration: InputDecoration(
+                        labelText: _loc.tr('كلمة المرور الجديدة', 'New Password'),
+                        filled: true,
+                        fillColor: AppColors.surface,
+                        border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(14)),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: _confirmPassCtrl,
+                      obscureText: true,
+                      decoration: InputDecoration(
+                        labelText: _loc.tr('تأكيد كلمة المرور', 'Confirm Password'),
+                        filled: true,
+                        fillColor: AppColors.surface,
+                        border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(14)),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.navy,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 15),
+                      ),
+                      onPressed: _loading ? null : _verifyAndResetPassword,
+                      child: Text(_loc.tr(
+                        'تأكيد الرمز وتغيير كلمة المرور',
+                        'Verify Code & Update Password',
+                      )),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 }
@@ -902,6 +1029,7 @@ class SignUpScreen extends StatefulWidget {
 }
 
 class _SignUpScreenState extends State<SignUpScreen> {
+  final _loc = AppLocaleService.instance;
   String _selectedRole = 'user';
   bool _hasTowing = false;
   bool _isOwnerDriver = true;
@@ -986,7 +1114,10 @@ class _SignUpScreenState extends State<SignUpScreen> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('خطأ: $e'), backgroundColor: Colors.red),
+          SnackBar(
+            content: Text(_loc.tr('خطأ: $e', 'Error: $e')),
+            backgroundColor: Colors.red,
+          ),
         );
       }
     } finally {
@@ -1010,19 +1141,23 @@ class _SignUpScreenState extends State<SignUpScreen> {
         email.isEmpty ||
         password.length < 6) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-            content: Text(
-                'يرجى تعبئة اسم المستخدم، الاسم الكامل، الهاتف، الإيميل وكلمة المرور')),
+        SnackBar(
+          content: Text(_loc.tr(
+            'يرجى تعبئة اسم المستخدم، الاسم الكامل، الهاتف، الإيميل وكلمة المرور',
+            'Please fill in username, full name, phone, email, and password (6+ chars)',
+          )),
+        ),
       );
       return;
     }
 
     if (_isProviderRole(_selectedRole) && !_contractAccepted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
+        SnackBar(
+          content: Text(_loc.tr(
             'يرجى قراءة عقد الشراكة والتعهد بدفع العمولات والموافقة عليه قبل إنشاء الحساب',
-          ),
+            'Please read and accept the partnership & commission agreement before signing up',
+          )),
           backgroundColor: Colors.red,
         ),
       );
@@ -1034,9 +1169,12 @@ class _SignUpScreenState extends State<SignUpScreen> {
           _winchLicenseFile == null ||
           _winchPlateCtrl.text.trim().isEmpty) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-              content:
-                  Text('يرجى رفع رخصة السائق ورخصة الونش وكتابة نمرة الونش')),
+          SnackBar(
+            content: Text(_loc.tr(
+              'يرجى رفع رخصة السائق ورخصة الونش وكتابة نمرة الونش',
+              'Please upload driver license, winch license, and enter the winch plate number',
+            )),
+          ),
         );
         return;
       }
@@ -1044,8 +1182,12 @@ class _SignUpScreenState extends State<SignUpScreen> {
           (_driverNameCtrl.text.trim().isEmpty ||
               _driverPhoneCtrl.text.trim().isEmpty)) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-              content: Text('يرجى إدخال اسم سائق الونش ورقم هاتفه')),
+          SnackBar(
+            content: Text(_loc.tr(
+              'يرجى إدخال اسم سائق الونش ورقم هاتفه',
+              'Please enter the winch driver\'s name and phone number',
+            )),
+          ),
         );
         return;
       }
@@ -1089,6 +1231,8 @@ class _SignUpScreenState extends State<SignUpScreen> {
         return;
       }
 
+      final safeRole =
+          (!showWinch && _selectedRole == 'towing') ? 'user' : _selectedRole;
       final defaultLimit = await _fetchDefaultPostLimit(db);
       final authRes = await db.auth.signUp(
         email: email,
@@ -1098,19 +1242,19 @@ class _SignUpScreenState extends State<SignUpScreen> {
           'display_name': fullName,
           'username': username,
           'phone': phone,
-          'role': _selectedRole,
+          'role': safeRole,
         },
       );
       final uid = authRes.user!.id;
 
       String? driverUrl;
       String? winchUrl;
-      if (showWinch && _selectedRole == 'towing') {
+      if (showWinch && safeRole == 'towing') {
         driverUrl = await _uploadMedia(_driverLicenseFile!, 'licenses', uid);
         winchUrl = await _uploadMedia(_winchLicenseFile!, 'licenses', uid);
       }
 
-      final isProvider = _isProviderRole(_selectedRole);
+      final isProvider = _isProviderRole(safeRole);
       await _upsertCustomerRecord(db, {
         'id': uid,
         'username': username,
@@ -1119,19 +1263,19 @@ class _SignUpScreenState extends State<SignUpScreen> {
         'phone': phone,
         'country': _countryCtrl.text.trim(),
         'age': int.tryParse(_ageCtrl.text.trim()),
-        'role': _selectedRole,
-        'has_towing': showWinch && _selectedRole == 'towing',
+        'role': safeRole,
+        'has_towing': showWinch && safeRole == 'towing',
         'is_owner_winch_driver':
-            (showWinch && _selectedRole == 'towing') ? _isOwnerDriver : true,
+            (showWinch && safeRole == 'towing') ? _isOwnerDriver : true,
         'winch_driver_name':
-            (showWinch && _selectedRole == 'towing' && !_isOwnerDriver)
+            (showWinch && safeRole == 'towing' && !_isOwnerDriver)
                 ? _driverNameCtrl.text.trim()
                 : null,
         'winch_driver_phone':
-            (showWinch && _selectedRole == 'towing' && !_isOwnerDriver)
+            (showWinch && safeRole == 'towing' && !_isOwnerDriver)
                 ? _driverPhoneCtrl.text.trim()
                 : null,
-        'winch_plate_number': (showWinch && _selectedRole == 'towing')
+        'winch_plate_number': (showWinch && safeRole == 'towing')
             ? _winchPlateCtrl.text.trim()
             : null,
         'driver_license_url': driverUrl,
@@ -1152,7 +1296,9 @@ class _SignUpScreenState extends State<SignUpScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-              content: Text('خطأ بالتسجيل: $e'), backgroundColor: Colors.red),
+            content: Text(_loc.tr('خطأ بالتسجيل: $e', 'Registration error: $e')),
+            backgroundColor: Colors.red,
+          ),
         );
       }
     } finally {
@@ -1164,246 +1310,288 @@ class _SignUpScreenState extends State<SignUpScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final showWinch = EnvConfig.winchEnabled.value;
-    if (!showWinch && _selectedRole == 'towing') {
-      _selectedRole = 'user';
-    }
-    final roles = [
-      ('user', 'مستخدم عادي', Icons.person_outline),
-      ('merchant', 'تاجر قطع', Icons.storefront_outlined),
-      if (showWinch) ('towing', 'صاحب ونش', Icons.local_shipping_outlined),
-      ('mechanic', 'ميكانيكي / ورشة', Icons.build_outlined),
-    ];
+    return ListenableBuilder(
+      listenable: Listenable.merge([_loc.langCode, EnvConfig.winchEnabled]),
+      builder: (context, _) {
+        final showWinch = EnvConfig.winchEnabled.value;
+        if (!showWinch && _selectedRole == 'towing') {
+          _selectedRole = 'user';
+        }
+        final roles = [
+          ('user', _loc.tr('مستخدم عادي', 'Customer'), Icons.person_outline),
+          ('merchant', _loc.tr('تاجر قطع', 'Parts Merchant'), Icons.storefront_outlined),
+          if (showWinch)
+            ('towing', _loc.tr('صاحب ونش', 'Winch / Towing'), Icons.local_shipping_outlined),
+          ('mechanic', _loc.tr('ميكانيكي / ورشة', 'Mechanic / Workshop'), Icons.build_outlined),
+        ];
 
-    return Scaffold(
-      appBar: AppBar(title: const Text('إنشاء حساب جديد — غيارك')),
-      body: Align(
-        alignment: Alignment.topCenter,
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 560),
-          child: ListView(
-            padding: const EdgeInsets.all(16),
-            children: [
-              Row(
+        return Scaffold(
+          appBar: AppBar(
+            title: Text(_loc.tr('إنشاء حساب جديد — غيارك', 'Create Account — Ghiyarak')),
+            actions: const [_AuthLangToggleButton()],
+          ),
+          body: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 560),
+              child: ListView(
+                padding: const EdgeInsets.all(16),
                 children: [
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      style: OutlinedButton.styleFrom(
-                        backgroundColor: AppColors.surface,
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12)),
-                      ),
-                      onPressed: _loading
-                          ? null
-                          : () => _oauthSignUp(OAuthProvider.google),
-                      icon: const GoogleLogoIcon(size: 18),
-                      label: const Text(
-                        'تسجيل بـ Google',
-                        style: TextStyle(
-                            color: AppColors.textPrimary,
-                            fontSize: 12,
-                            fontWeight: FontWeight.bold),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: ElevatedButton.icon(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.black,
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12)),
-                      ),
-                      onPressed: _loading
-                          ? null
-                          : () => _oauthSignUp(OAuthProvider.apple),
-                      icon: const Icon(Icons.apple, size: 20),
-                      label: const Text('تسجيل بـ Apple',
-                          style: TextStyle(
-                              fontSize: 12, fontWeight: FontWeight.bold)),
-                    ),
-                  ),
-                ],
-              ),
-              const Divider(height: 24),
-              const Text('أو اختر نوع الحساب وأدخل بياناتك',
-                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
-              const SizedBox(height: 10),
-              GridView.builder(
-                itemCount: roles.length,
-                shrinkWrap: true,
-                physics: const NeverScrollableScrollPhysics(),
-                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: 2,
-                  mainAxisSpacing: 10,
-                  crossAxisSpacing: 10,
-                  mainAxisExtent: 56,
-                ),
-                itemBuilder: (_, i) {
-                  final r = roles[i];
-                  final active = _selectedRole == r.$1;
-                  return GestureDetector(
-                    onTap: () => setState(() {
-                      if (_selectedRole != r.$1) {
-                        _selectedRole = r.$1;
-                        _contractAccepted = false;
-                      }
-                    }),
-                    child: AnimatedContainer(
-                      duration: const Duration(milliseconds: 200),
-                      padding: const EdgeInsets.symmetric(horizontal: 10),
-                      decoration: BoxDecoration(
-                        color: active ? AppColors.navy : AppColors.surface,
-                        borderRadius: BorderRadius.circular(14),
-                        border: Border.all(
-                            color: active ? AppColors.navy : AppColors.border),
-                      ),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(r.$3,
-                              color:
-                                  active ? Colors.white : AppColors.textPrimary,
-                              size: 18),
-                          const SizedBox(width: 6),
-                          Flexible(
-                            child: Text(
-                              r.$2,
-                              style: TextStyle(
-                                color: active
-                                    ? Colors.white
-                                    : AppColors.textPrimary,
-                                fontWeight: FontWeight.bold,
-                                fontSize: 12,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  );
-                },
-              ),
-              const SizedBox(height: 16),
-              _field(_usernameCtrl, 'اسم المستخدم (username) - لا يتكرر'),
-              _field(_nameCtrl, 'الاسم الكامل / اسم النشاط'),
-              _field(_phoneCtrl, 'رقم الهاتف - لا يتكرر',
-                  type: TextInputType.phone),
-              _field(_emailCtrl, 'البريد الإلكتروني - لا يتكرر',
-                  type: TextInputType.emailAddress),
-              Row(
-                children: [
-                  Expanded(child: _field(_countryCtrl, 'الدولة')),
-                  const SizedBox(width: 10),
-                  Expanded(
-                      child: _field(_ageCtrl, 'العمر (اختياري)',
-                          type: TextInputType.number)),
-                ],
-              ),
-              _field(_passCtrl, 'كلمة المرور (6 أحرف على الأقل)', obscure: true),
-              if (_selectedRole == 'mechanic' && showWinch)
-                Container(
-                  padding: const EdgeInsets.all(14),
-                  decoration: BoxDecoration(
-                    color: AppColors.surface,
-                    borderRadius: BorderRadius.circular(14),
-                    border: Border.all(color: AppColors.border),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                  Row(
                     children: [
-                      const Text('هل لديك ونش؟',
-                          style: TextStyle(fontWeight: FontWeight.bold)),
-                      const SizedBox(height: 8),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: ChoiceChip(
-                              label: const Center(child: Text('نعم')),
-                              selected: _hasTowing,
-                              selectedColor: AppColors.orangeLight,
-                              onSelected: (_) =>
-                                  setState(() => _hasTowing = true),
-                            ),
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          style: OutlinedButton.styleFrom(
+                            backgroundColor: AppColors.surface,
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12)),
                           ),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: ChoiceChip(
-                              label: const Center(child: Text('لا')),
-                              selected: !_hasTowing,
-                              selectedColor: AppColors.orangeLight,
-                              onSelected: (_) =>
-                                  setState(() => _hasTowing = false),
-                            ),
+                          onPressed: _loading
+                              ? null
+                              : () => _oauthSignUp(OAuthProvider.google),
+                          icon: const GoogleLogoIcon(size: 18),
+                          label: Text(
+                            _loc.tr('تسجيل بـ Google', 'Sign up with Google'),
+                            style: const TextStyle(
+                                color: AppColors.textPrimary,
+                                fontSize: 12,
+                                fontWeight: FontWeight.bold),
                           ),
-                        ],
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: ElevatedButton.icon(
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.black,
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12)),
+                          ),
+                          onPressed: _loading
+                              ? null
+                              : () => _oauthSignUp(OAuthProvider.apple),
+                          icon: const Icon(Icons.apple, size: 20),
+                          label: Text(
+                            _loc.tr('تسجيل بـ Apple', 'Sign up with Apple'),
+                            style: const TextStyle(
+                                fontSize: 12, fontWeight: FontWeight.bold),
+                          ),
+                        ),
                       ),
                     ],
                   ),
-                ),
-              if (_selectedRole == 'towing' && showWinch) ...[
-                SwitchListTile(
-                  contentPadding: EdgeInsets.zero,
-                  title: const Text('هل سائق الونش هو نفسه صاحب الحساب؟',
-                      style:
-                          TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-                  value: _isOwnerDriver,
-                  activeTrackColor: AppColors.orange,
-                  onChanged: (v) => setState(() => _isOwnerDriver = v),
-                ),
-                if (!_isOwnerDriver) ...[
-                  _field(_driverNameCtrl, 'اسم سائق الونش (إجباري)'),
-                  _field(_driverPhoneCtrl, 'رقم هاتف سائق الونش (إجباري)',
-                      type: TextInputType.phone),
-                ],
-                _field(_winchPlateCtrl, 'نمرة الونش (إجباري)'),
-                _UploadTile(
-                  title: 'صورة رخصة السائق (إجباري)',
-                  media: _driverLicenseFile,
-                  onTap: () => _pickImage(true),
-                ),
-                const SizedBox(height: 10),
-                _UploadTile(
-                  title: 'صورة رخصة الونش (إجباري)',
-                  media: _winchLicenseFile,
-                  onTap: () => _pickImage(false),
-                ),
-              ],
-              if (_isProviderRole(_selectedRole)) ...[
-                const SizedBox(height: 16),
-                _ProviderContractCard(
-                  role: _selectedRole,
-                  accepted: _contractAccepted,
-                  onChanged: (v) => setState(() => _contractAccepted = v),
-                ),
-              ],
-              const SizedBox(height: 22),
-              ElevatedButton(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.orange,
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(vertical: 16),
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14)),
-                ),
-                onPressed: _loading ? null : _submitStep1,
-                child: _loading
-                    ? const CircularProgressIndicator(color: Colors.white)
-                    : Text(
-                        _selectedRole == 'mechanic'
-                            ? 'التالي: معلومات الورشة'
-                            : 'إنشاء الحساب',
-                        style: const TextStyle(
-                            fontSize: 16, fontWeight: FontWeight.bold),
+                  const Divider(height: 24),
+                  Text(
+                    _loc.tr(
+                      'أو اختر نوع الحساب وأدخل بياناتك',
+                      'Or choose your account type and enter your details',
+                    ),
+                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                  ),
+                  const SizedBox(height: 10),
+                  GridView.count(
+                    crossAxisCount: 2,
+                    shrinkWrap: true,
+                    physics: const NeverScrollableScrollPhysics(),
+                    mainAxisSpacing: 10,
+                    crossAxisSpacing: 10,
+                    childAspectRatio: 2.3,
+                    children: roles.map((r) {
+                      final active = _selectedRole == r.$1;
+                      return GestureDetector(
+                        onTap: () => setState(() {
+                          if (_selectedRole != r.$1) {
+                            _selectedRole = r.$1;
+                            _contractAccepted = false;
+                          }
+                        }),
+                        child: AnimatedContainer(
+                          duration: const Duration(milliseconds: 200),
+                          padding: const EdgeInsets.symmetric(horizontal: 10),
+                          decoration: BoxDecoration(
+                            color: active ? AppColors.navy : AppColors.surface,
+                            borderRadius: BorderRadius.circular(14),
+                            border: Border.all(
+                                color: active ? AppColors.navy : AppColors.border),
+                          ),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(r.$3,
+                                  color: active ? Colors.white : AppColors.textPrimary,
+                                  size: 18),
+                              const SizedBox(width: 6),
+                              Flexible(
+                                child: Text(
+                                  r.$2,
+                                  style: TextStyle(
+                                    color:
+                                        active ? Colors.white : AppColors.textPrimary,
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    }).toList(),
+                  ),
+                  const SizedBox(height: 16),
+                  _field(
+                    _usernameCtrl,
+                    _loc.tr('اسم المستخدم (username) - لا يتكرر', 'Username (unique)'),
+                  ),
+                  _field(
+                    _nameCtrl,
+                    _loc.tr('الاسم الكامل / اسم النشاط', 'Full Name / Business Name'),
+                  ),
+                  _field(
+                    _phoneCtrl,
+                    _loc.tr('رقم الهاتف - لا يتكرر', 'Phone Number (unique)'),
+                    type: TextInputType.phone,
+                  ),
+                  _field(
+                    _emailCtrl,
+                    _loc.tr('البريد الإلكتروني - لا يتكرر', 'Email Address (unique)'),
+                    type: TextInputType.emailAddress,
+                  ),
+                  Row(
+                    children: [
+                      Expanded(child: _field(_countryCtrl, _loc.tr('الدولة', 'Country'))),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: _field(
+                          _ageCtrl,
+                          _loc.tr('العمر (اختياري)', 'Age (optional)'),
+                          type: TextInputType.number,
+                        ),
                       ),
+                    ],
+                  ),
+                  _field(
+                    _passCtrl,
+                    _loc.tr('كلمة المرور (6 أحرف على الأقل)', 'Password (min 6 characters)'),
+                    obscure: true,
+                  ),
+                  if (_selectedRole == 'mechanic' && showWinch)
+                    Container(
+                      padding: const EdgeInsets.all(14),
+                      decoration: BoxDecoration(
+                        color: AppColors.surface,
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(color: AppColors.border),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            _loc.tr('هل لديك ونش؟', 'Do you have a winch?'),
+                            style: const TextStyle(fontWeight: FontWeight.bold),
+                          ),
+                          const SizedBox(height: 8),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: ChoiceChip(
+                                  label: Center(child: Text(_loc.tr('نعم', 'Yes'))),
+                                  selected: _hasTowing,
+                                  selectedColor: AppColors.orangeLight,
+                                  onSelected: (_) => setState(() => _hasTowing = true),
+                                ),
+                              ),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: ChoiceChip(
+                                  label: Center(child: Text(_loc.tr('لا', 'No'))),
+                                  selected: !_hasTowing,
+                                  selectedColor: AppColors.orangeLight,
+                                  onSelected: (_) => setState(() => _hasTowing = false),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                  if (_selectedRole == 'towing' && showWinch) ...[
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: Text(
+                        _loc.tr(
+                          'هل سائق الونش هو نفسه صاحب الحساب؟',
+                          'Is the winch driver the account owner?',
+                        ),
+                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                      ),
+                      value: _isOwnerDriver,
+                      activeTrackColor: AppColors.orange,
+                      onChanged: (v) => setState(() => _isOwnerDriver = v),
+                    ),
+                    if (!_isOwnerDriver) ...[
+                      _field(
+                        _driverNameCtrl,
+                        _loc.tr('اسم سائق الونش (إجباري)', 'Winch Driver Name (required)'),
+                      ),
+                      _field(
+                        _driverPhoneCtrl,
+                        _loc.tr('رقم هاتف سائق الونش (إجباري)', 'Winch Driver Phone (required)'),
+                        type: TextInputType.phone,
+                      ),
+                    ],
+                    _field(
+                      _winchPlateCtrl,
+                      _loc.tr('نمرة الونش (إجباري)', 'Winch Plate Number (required)'),
+                    ),
+                    _UploadTile(
+                      title: _loc.tr('صورة رخصة السائق (إجباري)', 'Driver License Photo (required)'),
+                      media: _driverLicenseFile,
+                      onTap: () => _pickImage(true),
+                    ),
+                    const SizedBox(height: 10),
+                    _UploadTile(
+                      title: _loc.tr('صورة رخصة الونش (إجباري)', 'Winch License Photo (required)'),
+                      media: _winchLicenseFile,
+                      onTap: () => _pickImage(false),
+                    ),
+                  ],
+                  if (_isProviderRole(_selectedRole)) ...[
+                    const SizedBox(height: 16),
+                    _ProviderContractCard(
+                      role: _selectedRole,
+                      accepted: _contractAccepted,
+                      onChanged: (v) => setState(() => _contractAccepted = v),
+                    ),
+                  ],
+                  const SizedBox(height: 22),
+                  ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.orange,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14)),
+                    ),
+                    onPressed: _loading ? null : _submitStep1,
+                    child: _loading
+                        ? const CircularProgressIndicator(color: Colors.white)
+                        : Text(
+                            _selectedRole == 'mechanic'
+                                ? _loc.tr('التالي: معلومات الورشة', 'Next: Workshop Info')
+                                : _loc.tr('إنشاء الحساب', 'Create Account'),
+                            style: const TextStyle(
+                                fontSize: 16, fontWeight: FontWeight.bold),
+                          ),
+                  ),
+                ],
               ),
-            ],
+            ),
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 
@@ -1459,6 +1647,7 @@ class WorkshopSetupScreen extends StatefulWidget {
 }
 
 class _WorkshopSetupScreenState extends State<WorkshopSetupScreen> {
+  final _loc = AppLocaleService.instance;
   final _locationService = LocationService();
   final _mapCtrl = MapController();
   final _picker = ImagePicker();
@@ -1549,27 +1738,34 @@ class _WorkshopSetupScreenState extends State<WorkshopSetupScreen> {
   }
 
   Future<void> _finishRegistration() async {
+    final effectiveHasTowing = widget.hasTowing && EnvConfig.winchEnabled.value;
     final cap = int.tryParse(_capacityCtrl.text.trim()) ?? 0;
     if (!_locationConfirmed ||
         _workshopImage == null ||
         _streetCtrl.text.trim().isEmpty ||
         cap <= 0) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('جميع حقول الورشة إجبارية ما عدا رقم المبنى'),
+        SnackBar(
+          content: Text(_loc.tr(
+            'جميع حقول الورشة إجبارية ما عدا رقم المبنى',
+            'All workshop fields are required except building number',
+          )),
           backgroundColor: AppColors.orange,
         ),
       );
       return;
     }
-    if (widget.hasTowing &&
+    if (effectiveHasTowing &&
         (_driverLicense == null ||
             _winchLicense == null ||
             _winchPlateCtrl.text.trim().isEmpty)) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-            content: Text(
-                'يرجى رفع صورة رخصة السائق ورخصة الونش وكتابة نمرة الونش')),
+        SnackBar(
+          content: Text(_loc.tr(
+            'يرجى رفع صورة رخصة السائق ورخصة الونش وكتابة نمرة الونش',
+            'Please upload driver license, winch license, and enter the winch plate number',
+          )),
+        ),
       );
       return;
     }
@@ -1599,7 +1795,7 @@ class _WorkshopSetupScreenState extends State<WorkshopSetupScreen> {
       final workshopUrl = await _upload(_workshopImage!, 'workshops', uid);
       String? driverUrl;
       String? winchUrl;
-      if (widget.hasTowing) {
+      if (effectiveHasTowing) {
         driverUrl = await _upload(_driverLicense!, 'licenses', uid);
         winchUrl = await _upload(_winchLicense!, 'licenses', uid);
       }
@@ -1616,7 +1812,7 @@ class _WorkshopSetupScreenState extends State<WorkshopSetupScreen> {
         'country': widget.country,
         'age': widget.age,
         'role': 'mechanic',
-        'has_towing': widget.hasTowing,
+        'has_towing': effectiveHasTowing,
         'workshop_latitude': _workshopLatLng.latitude,
         'workshop_longitude': _workshopLatLng.longitude,
         'workshop_address': _workshopAddress,
@@ -1628,15 +1824,15 @@ class _WorkshopSetupScreenState extends State<WorkshopSetupScreen> {
         'max_car_capacity': cap,
         'opening_hours':
             '${_openTime.format(context)} - ${_closeTime.format(context)}',
-        'is_owner_winch_driver': widget.hasTowing ? _isOwnerDriver : true,
-        'winch_driver_name': (widget.hasTowing && !_isOwnerDriver)
+        'is_owner_winch_driver': effectiveHasTowing ? _isOwnerDriver : true,
+        'winch_driver_name': (effectiveHasTowing && !_isOwnerDriver)
             ? _driverNameCtrl.text.trim()
             : null,
-        'winch_driver_phone': (widget.hasTowing && !_isOwnerDriver)
+        'winch_driver_phone': (effectiveHasTowing && !_isOwnerDriver)
             ? _driverPhoneCtrl.text.trim()
             : null,
         'winch_plate_number':
-            widget.hasTowing ? _winchPlateCtrl.text.trim() : null,
+            effectiveHasTowing ? _winchPlateCtrl.text.trim() : null,
         'driver_license_url': driverUrl,
         'winch_license_url': winchUrl,
         'max_posts_limit': defaultLimit,
@@ -1653,7 +1849,10 @@ class _WorkshopSetupScreenState extends State<WorkshopSetupScreen> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('خطأ: $e'), backgroundColor: Colors.red),
+          SnackBar(
+            content: Text(_loc.tr('خطأ: $e', 'Error: $e')),
+            backgroundColor: Colors.red,
+          ),
         );
       }
     } finally {
@@ -1665,242 +1864,293 @@ class _WorkshopSetupScreenState extends State<WorkshopSetupScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('معلومات الورشة')),
-      body: Align(
-        alignment: Alignment.topCenter,
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 680),
-          child: ListView(
-            padding: const EdgeInsets.all(16),
-            children: [
-              const Text('موقع الورشة على الخريطة (إجباري)',
-                  style: TextStyle(fontWeight: FontWeight.bold)),
-              const SizedBox(height: 8),
-              SizedBox(
-                height: 220,
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(16),
-                  child: Stack(
-                    children: [
-                      FlutterMap(
-                        mapController: _mapCtrl,
-                        options: MapOptions(
-                          initialCenter: _workshopLatLng,
-                          initialZoom: 14,
-                          onTap: (_, latLng) async {
-                            setState(() {
-                              _workshopLatLng = latLng;
-                              _locationConfirmed = true;
-                            });
-                            final addr = await _locationService
-                                .getAddressFromLatLng(latLng);
-                            if (mounted) {
-                              setState(() => _workshopAddress = addr);
-                            }
-                          },
-                        ),
+    return ListenableBuilder(
+      listenable: Listenable.merge([_loc.langCode, EnvConfig.winchEnabled]),
+      builder: (context, _) {
+        final effectiveHasTowing = widget.hasTowing && EnvConfig.winchEnabled.value;
+        return Scaffold(
+          appBar: AppBar(
+            title: Text(_loc.tr('معلومات الورشة', 'Workshop Details')),
+            actions: const [_AuthLangToggleButton()],
+          ),
+          body: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 560),
+              child: ListView(
+                padding: const EdgeInsets.all(16),
+                children: [
+                  Text(
+                    _loc.tr(
+                      'موقع الورشة على الخريطة (إجباري)',
+                      'Workshop location on map (required)',
+                    ),
+                    style: const TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    height: 190,
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(16),
+                      child: Stack(
                         children: [
-                          TileLayer(
-                            urlTemplate:
-                                'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                            userAgentPackageName: 'com.autoparts.app',
-                          ),
-                          MarkerLayer(markers: [
-                            Marker(
-                              point: _workshopLatLng,
-                              width: 44,
-                              height: 44,
-                              child: const Icon(Icons.location_on,
-                                  color: AppColors.orange, size: 40),
+                          FlutterMap(
+                            mapController: _mapCtrl,
+                            options: MapOptions(
+                              initialCenter: _workshopLatLng,
+                              initialZoom: 14,
+                              onTap: (_, latLng) async {
+                                setState(() {
+                                  _workshopLatLng = latLng;
+                                  _locationConfirmed = true;
+                                });
+                                final addr =
+                                    await _locationService.getAddressFromLatLng(latLng);
+                                if (mounted) {
+                                  setState(() => _workshopAddress = addr);
+                                }
+                              },
                             ),
-                          ]),
+                            children: [
+                              TileLayer(
+                                urlTemplate:
+                                    'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                                userAgentPackageName: 'com.autoparts.app',
+                              ),
+                              MarkerLayer(markers: [
+                                Marker(
+                                  point: _workshopLatLng,
+                                  width: 44,
+                                  height: 44,
+                                  child: const Icon(Icons.location_on,
+                                      color: AppColors.orange, size: 40),
+                                ),
+                              ]),
+                            ],
+                          ),
+                          Positioned(
+                            bottom: 8,
+                            left: 8,
+                            child: FloatingActionButton.small(
+                              backgroundColor: AppColors.navy,
+                              foregroundColor: Colors.white,
+                              onPressed: _detectGps,
+                              child: const Icon(Icons.my_location),
+                            ),
+                          ),
                         ],
                       ),
-                      Positioned(
-                        bottom: 8,
-                        left: 8,
-                        child: FloatingActionButton.small(
-                          backgroundColor: AppColors.navy,
-                          foregroundColor: Colors.white,
-                          onPressed: _detectGps,
-                          child: const Icon(Icons.my_location),
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    _workshopAddress.isEmpty
+                        ? _loc.tr(
+                            'اضغط على الخريطة لتحديد الموقع',
+                            'Tap on the map to set workshop location',
+                          )
+                        : _workshopAddress,
+                    style:
+                        const TextStyle(color: AppColors.textSecondary, fontSize: 12),
+                  ),
+                  const SizedBox(height: 14),
+                  _UploadTile(
+                    title: _loc.tr(
+                      'صورة واجهة الورشة (إجباري)',
+                      'Workshop Front Photo (required)',
+                    ),
+                    media: _workshopImage,
+                    onTap: () async {
+                      final m = await _pickPhoto();
+                      if (m != null) {
+                        setState(() => _workshopImage = m);
+                      }
+                    },
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _streetCtrl,
+                    decoration: InputDecoration(
+                      labelText: _loc.tr('اسم الشارع (إجباري)', 'Street Name (required)'),
+                      filled: true,
+                      fillColor: AppColors.surface,
+                      border:
+                          OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _buildingCtrl,
+                    decoration: InputDecoration(
+                      labelText: _loc.tr('رقم المبنى (اختياري)', 'Building Number (optional)'),
+                      filled: true,
+                      fillColor: AppColors.surface,
+                      border:
+                          OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _capacityCtrl,
+                    keyboardType: TextInputType.number,
+                    decoration: InputDecoration(
+                      labelText: _loc.tr(
+                        'كم سيارة تتسع الورشة باليوم؟ (إجباري)',
+                        'Daily car capacity (required)',
+                      ),
+                      filled: true,
+                      fillColor: AppColors.surface,
+                      border:
+                          OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    _loc.tr('ساعات الدوام (إجباري)', 'Working Hours (required)'),
+                    style: const TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: () => _pickClock(true),
+                          icon: const Icon(Icons.access_time, color: AppColors.navy),
+                          label: Text(_loc.tr(
+                            'يفتح: ${_openTime.format(context)}',
+                            'Opens: ${_openTime.format(context)}',
+                          )),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: () => _pickClock(false),
+                          icon: const Icon(Icons.access_time_filled,
+                              color: AppColors.orange),
+                          label: Text(_loc.tr(
+                            'يسكر: ${_closeTime.format(context)}',
+                            'Closes: ${_closeTime.format(context)}',
+                          )),
                         ),
                       ),
                     ],
                   ),
-                ),
-              ),
-              const SizedBox(height: 6),
-              Text(
-                _workshopAddress.isEmpty
-                    ? 'اضغط على الخريطة لتحديد الموقع'
-                    : _workshopAddress,
-                style: const TextStyle(
-                    color: AppColors.textSecondary, fontSize: 12),
-              ),
-              const SizedBox(height: 14),
-              _UploadTile(
-                title: 'صورة واجهة الورشة (إجباري)',
-                media: _workshopImage,
-                onTap: () async {
-                  final m = await _pickPhoto();
-                  if (m != null) {
-                    setState(() => _workshopImage = m);
-                  }
-                },
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: _streetCtrl,
-                decoration: InputDecoration(
-                  labelText: 'اسم الشارع (إجباري)',
-                  filled: true,
-                  fillColor: AppColors.surface,
-                  border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(14)),
-                ),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: _buildingCtrl,
-                decoration: InputDecoration(
-                  labelText: 'رقم المبنى (اختياري)',
-                  filled: true,
-                  fillColor: AppColors.surface,
-                  border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(14)),
-                ),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: _capacityCtrl,
-                keyboardType: TextInputType.number,
-                decoration: InputDecoration(
-                  labelText: 'كم سيارة تتسع الورشة باليوم؟ (إجباري)',
-                  filled: true,
-                  fillColor: AppColors.surface,
-                  border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(14)),
-                ),
-              ),
-              const SizedBox(height: 12),
-              const Text('ساعات الدوام (إجباري)',
-                  style: TextStyle(fontWeight: FontWeight.bold)),
-              const SizedBox(height: 8),
-              Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      onPressed: () => _pickClock(true),
-                      icon: const Icon(Icons.access_time, color: AppColors.navy),
-                      label: Text('يفتح: ${_openTime.format(context)}'),
+                  if (effectiveHasTowing) ...[
+                    const Divider(height: 28),
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: Text(
+                        _loc.tr(
+                          'هل سائق الونش هو نفسه صاحب الحساب؟',
+                          'Is the winch driver the account owner?',
+                        ),
+                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                      ),
+                      value: _isOwnerDriver,
+                      activeTrackColor: AppColors.orange,
+                      onChanged: (v) => setState(() => _isOwnerDriver = v),
                     ),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      onPressed: () => _pickClock(false),
-                      icon: const Icon(Icons.access_time_filled,
-                          color: AppColors.orange),
-                      label: Text('يسكر: ${_closeTime.format(context)}'),
+                    if (!_isOwnerDriver) ...[
+                      TextField(
+                        controller: _driverNameCtrl,
+                        decoration: InputDecoration(
+                          labelText: _loc.tr(
+                            'اسم سائق الونش (إجباري)',
+                            'Winch Driver Name (required)',
+                          ),
+                          filled: true,
+                          fillColor: AppColors.surface,
+                          border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(14)),
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      TextField(
+                        controller: _driverPhoneCtrl,
+                        keyboardType: TextInputType.phone,
+                        decoration: InputDecoration(
+                          labelText: _loc.tr(
+                            'رقم هاتف سائق الونش (إجباري)',
+                            'Winch Driver Phone (required)',
+                          ),
+                          filled: true,
+                          fillColor: AppColors.surface,
+                          border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(14)),
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                    ],
+                    TextField(
+                      controller: _winchPlateCtrl,
+                      decoration: InputDecoration(
+                        labelText: _loc.tr(
+                          'نمرة الونش (إجباري)',
+                          'Winch Plate Number (required)',
+                        ),
+                        filled: true,
+                        fillColor: AppColors.surface,
+                        border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(14)),
+                      ),
                     ),
+                    const SizedBox(height: 10),
+                    _UploadTile(
+                      title: _loc.tr(
+                        'صورة رخصة السائق (إجباري)',
+                        'Driver License Photo (required)',
+                      ),
+                      media: _driverLicense,
+                      onTap: () async {
+                        final m = await _pickPhoto();
+                        if (m != null) {
+                          setState(() => _driverLicense = m);
+                        }
+                      },
+                    ),
+                    const SizedBox(height: 10),
+                    _UploadTile(
+                      title: _loc.tr(
+                        'صورة رخصة الونش (إجباري)',
+                        'Winch License Photo (required)',
+                      ),
+                      media: _winchLicense,
+                      onTap: () async {
+                        final m = await _pickPhoto();
+                        if (m != null) {
+                          setState(() => _winchLicense = m);
+                        }
+                      },
+                    ),
+                  ],
+                  const SizedBox(height: 22),
+                  ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.orange,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14)),
+                    ),
+                    onPressed: _saving ? null : _finishRegistration,
+                    child: _saving
+                        ? const CircularProgressIndicator(color: Colors.white)
+                        : Text(
+                            _loc.tr('إتمام التسجيل', 'Complete Registration'),
+                            style: const TextStyle(fontWeight: FontWeight.bold),
+                          ),
                   ),
                 ],
               ),
-              if (widget.hasTowing) ...[
-                const Divider(height: 28),
-                SwitchListTile(
-                  contentPadding: EdgeInsets.zero,
-                  title: const Text('هل سائق الونش هو نفسه صاحب الحساب؟',
-                      style:
-                          TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-                  value: _isOwnerDriver,
-                  activeTrackColor: AppColors.orange,
-                  onChanged: (v) => setState(() => _isOwnerDriver = v),
-                ),
-                if (!_isOwnerDriver) ...[
-                  TextField(
-                    controller: _driverNameCtrl,
-                    decoration: InputDecoration(
-                      labelText: 'اسم سائق الونش (إجباري)',
-                      filled: true,
-                      fillColor: AppColors.surface,
-                      border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(14)),
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  TextField(
-                    controller: _driverPhoneCtrl,
-                    keyboardType: TextInputType.phone,
-                    decoration: InputDecoration(
-                      labelText: 'رقم هاتف سائق الونش (إجباري)',
-                      filled: true,
-                      fillColor: AppColors.surface,
-                      border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(14)),
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                ],
-                TextField(
-                  controller: _winchPlateCtrl,
-                  decoration: InputDecoration(
-                    labelText: 'نمرة الونش (إجباري)',
-                    filled: true,
-                    fillColor: AppColors.surface,
-                    border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(14)),
-                  ),
-                ),
-                const SizedBox(height: 10),
-                _UploadTile(
-                  title: 'صورة رخصة السائق (إجباري)',
-                  media: _driverLicense,
-                  onTap: () async {
-                    final m = await _pickPhoto();
-                    if (m != null) {
-                      setState(() => _driverLicense = m);
-                    }
-                  },
-                ),
-                const SizedBox(height: 10),
-                _UploadTile(
-                  title: 'صورة رخصة الونش (إجباري)',
-                  media: _winchLicense,
-                  onTap: () async {
-                    final m = await _pickPhoto();
-                    if (m != null) {
-                      setState(() => _winchLicense = m);
-                    }
-                  },
-                ),
-              ],
-              const SizedBox(height: 22),
-              ElevatedButton(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.orange,
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(vertical: 16),
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14)),
-                ),
-                onPressed: _saving ? null : _finishRegistration,
-                child: _saving
-                    ? const CircularProgressIndicator(color: Colors.white)
-                    : const Text('إتمام التسجيل',
-                        style: TextStyle(fontWeight: FontWeight.bold)),
-              ),
-            ],
+            ),
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 }
 
-/// بطاقة عقد الشراكة والتعهد القانوني الإلزامي للتاجر والورشة والونش
+/// بطاقة عقد الشراكة والتعهد القانوني الإلزامي لمقدمي الخدمات
 class _ProviderContractCard extends StatelessWidget {
   final String role;
   final bool accepted;
@@ -1912,30 +2162,74 @@ class _ProviderContractCard extends StatelessWidget {
     required this.onChanged,
   });
 
-  static const List<(String, String)> _clauses = [
-    (
-      '1. الالتزام بسداد العمولات المستحقة',
-      'يتعهد الطرف الثاني (مقدم الخدمة) بسداد عمولة تطبيق غيارك المستحقة عن كافة الطلبات والمواعيد وطلبات الطوارئ والونش التي تتم عبر التطبيق — بما فيها العمولات المترتبة على الدفع النقدي (الكاش) المسجلة كذمم مالية في المحفظة — وفق النسبة المعتمدة لباقته الاشتراكية وفي المواعيد المحددة دون تأخير.',
-    ),
-    (
-      '2. صدق البيانات والأسعار والتراخيص',
-      'يقر مقدم الخدمة بصحة كافة البيانات والمستندات والتراخيص والأسعار المعلنة، ويلتزم بعدم نشر إعلانات وهمية أو مضللة أو قطع غير مطابقة للوصف.',
-    ),
-    (
-      '3. حظر التحايل أو تجاوز المنصة',
-      'يحظر تماماً التلاعب أو الإلغاء الصوري للطلبات أو الاتفاق الجانبي مع العملاء بغرض التهرب من احتساب عمولة تطبيق غيارك المستحقة.',
-    ),
-    (
-      '4. جودة الخدمة والمسؤولية المهنية',
-      'يلتزم مقدم الخدمة بتقديم خدماته بمهنية عالية والالتزام بالمواعيد والأسعار المتفق عليها مع العميل داخل التطبيق، ويتحمل المسؤولية القانونية الكاملة عن جودة القطع وأعمال الصيانة أو السحب.',
-    ),
-    (
-      '5. حق التعليق والمساءلة القانونية',
-      'يحق لإدارة تطبيق غيارك تعليق أو إيقاف الحساب فوراً عند التأخر في سداد الذمم المالية أو مخالفة أي بند من بنود هذا العقد، مع احتفاظها الكامل بحقها في المطالبة بالعمولات والمستحقات وفق القوانين والأنظمة المعمول بها في المملكة الأردنية الهاشمية.',
-    ),
-  ];
+  List<(String, String)> _clauses(bool showWinch) {
+    final loc = AppLocaleService.instance;
+    return [
+      (
+        loc.tr(
+          '1. الالتزام بسداد العمولات المستحقة',
+          '1. Commission Settlement Commitment',
+        ),
+        showWinch
+            ? loc.tr(
+                'يتعهد الطرف الثاني (مقدم الخدمة) بسداد عمولة تطبيق غيارك المستحقة عن كافة الطلبات والمواعيد وطلبات الطوارئ والونش التي تتم عبر التطبيق — بما فيها العمولات المترتبة على الدفع النقدي (الكاش) المسجلة كذمم مالية في المحفظة — وفق النسبة المعتمدة لباقته الاشتراكية وفي المواعيد المحددة دون تأخير.',
+                'The service provider commits to paying Ghiyarak\'s due commissions on all orders, appointments, roadside emergency, and towing requests completed via the app — including cash commissions recorded in the wallet — according to their subscription rate without delay.',
+              )
+            : loc.tr(
+                'يتعهد الطرف الثاني (مقدم الخدمة) بسداد عمولة تطبيق غيارك المستحقة عن كافة الطلبات والمواعيد وطلبات الطوارئ التي تتم عبر التطبيق — بما فيها العمولات المترتبة على الدفع النقدي (الكاش) المسجلة كذمم مالية في المحفظة — وفق النسبة المعتمدة لباقته الاشتراكية وفي المواعيد المحددة دون تأخير.',
+                'The service provider commits to paying Ghiyarak\'s due commissions on all orders, appointments, and roadside emergency requests completed via the app — including cash commissions recorded in the wallet — according to their subscription rate without delay.',
+              ),
+      ),
+      (
+        loc.tr(
+          '2. صدق البيانات والأسعار والتراخيص',
+          '2. Accuracy of Data, Pricing & Licenses',
+        ),
+        loc.tr(
+          'يقر مقدم الخدمة بصحة كافة البيانات والمستندات والتراخيص والأسعار المعلنة، ويلتزم بعدم نشر إعلانات وهمية أو مضللة أو قطع غير مطابقة للوصف.',
+          'The service provider confirms that all submitted details, documents, licenses, and listed prices are accurate and agrees not to publish misleading listings or non-matching parts.',
+        ),
+      ),
+      (
+        loc.tr(
+          '3. حظر التحايل أو تجاوز المنصة',
+          '3. Anti-Circumvention Policy',
+        ),
+        loc.tr(
+          'يحظر تماماً التلاعب أو الإلغاء الصوري للطلبات أو الاتفاق الجانبي مع العملاء بغرض التهرب من احتساب عمولة تطبيق غيارك المستحقة.',
+          'Fake cancellations or off-platform agreements with customers to avoid Ghiyarak\'s commission fees are strictly prohibited.',
+        ),
+      ),
+      (
+        loc.tr(
+          '4. جودة الخدمة والمسؤولية المهنية',
+          '4. Service Quality & Professional Responsibility',
+        ),
+        showWinch
+            ? loc.tr(
+                'يلتزم مقدم الخدمة بتقديم خدماته بمهنية عالية والالتزام بالمواعيد والأسعار المتفق عليها مع العميل داخل التطبيق، ويتحمل المسؤولية القانونية الكاملة عن جودة القطع وأعمال الصيانة أو السحب.',
+                'The service provider commits to high professional standards, honoring agreed schedules and prices in the app, and bears full legal responsibility for parts quality, repairs, and towing services.',
+              )
+            : loc.tr(
+                'يلتزم مقدم الخدمة بتقديم خدماته بمهنية عالية والالتزام بالمواعيد والأسعار المتفق عليها مع العميل داخل التطبيق، ويتحمل المسؤولية القانونية الكاملة عن جودة القطع وأعمال الصيانة.',
+                'The service provider commits to high professional standards, honoring agreed schedules and prices in the app, and bears full legal responsibility for parts quality and repair services.',
+              ),
+      ),
+      (
+        loc.tr(
+          '5. حق التعليق والمساءلة القانونية',
+          '5. Suspension Rights & Legal Accountability',
+        ),
+        loc.tr(
+          'يحق لإدارة تطبيق غيارك تعليق أو إيقاف الحساب فوراً عند التأخر في سداد الذمم المالية أو مخالفة أي بند من بنود هذا العقد، مع احتفاظها الكامل بحقها في المطالبة بالعمولات والمستحقات وفق القوانين والأنظمة المعمول بها في المملكة الأردنية الهاشمية.',
+          'Ghiyarak reserves the right to immediately suspend or terminate the account for overdue balances or breach of this agreement, while retaining full legal rights to claim due commissions under the laws of the Hashemite Kingdom of Jordan.',
+        ),
+      ),
+    ];
+  }
 
-  void _openFullContractDialog(BuildContext context) {
+  void _openFullContractDialog(BuildContext context, List<(String, String)> clauses) {
+    final loc = AppLocaleService.instance;
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -1945,54 +2239,54 @@ class _ProviderContractCard extends StatelessWidget {
             const SizedBox(width: 8),
             Expanded(
               child: Text(
-                'عقد الشراكة والتعهد (${_roleArabicTitle(role)})',
+                loc.tr(
+                  'عقد الشراكة والتعهد (${_roleArabicTitle(role)})',
+                  'Partnership Agreement (${_roleArabicTitle(role)})',
+                ),
                 style:
                     const TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
               ),
             ),
           ],
         ),
-        content: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 460),
-          child: SingleChildScrollView(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: _clauses
-                  .map(
-                    (c) => Padding(
-                      padding: const EdgeInsets.only(bottom: 12),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            c.$1,
-                            style: const TextStyle(
-                              fontWeight: FontWeight.bold,
-                              fontSize: 13,
-                              color: AppColors.navy,
-                            ),
+        content: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: clauses
+                .map(
+                  (c) => Padding(
+                    padding: const EdgeInsets.only(bottom: 12),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          c.$1,
+                          style: const TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 13,
+                            color: AppColors.navy,
                           ),
-                          const SizedBox(height: 4),
-                          Text(
-                            c.$2,
-                            style: const TextStyle(
-                              fontSize: 12.5,
-                              height: 1.5,
-                              color: AppColors.textPrimary,
-                            ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          c.$2,
+                          style: const TextStyle(
+                            fontSize: 12.5,
+                            height: 1.5,
+                            color: AppColors.textPrimary,
                           ),
-                        ],
-                      ),
+                        ),
+                      ],
                     ),
-                  )
-                  .toList(),
-            ),
+                  ),
+                )
+                .toList(),
           ),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx),
-            child: const Text('إغلاق'),
+            child: Text(loc.tr('إغلاق', 'Close')),
           ),
           ElevatedButton(
             style: ElevatedButton.styleFrom(
@@ -2003,7 +2297,7 @@ class _ProviderContractCard extends StatelessWidget {
               onChanged(true);
               Navigator.pop(ctx);
             },
-            child: const Text('أوافق وأتعهد بالالتزام'),
+            child: Text(loc.tr('أوافق وأتعهد بالالتزام', 'I Agree & Commit')),
           ),
         ],
       ),
@@ -2012,6 +2306,10 @@ class _ProviderContractCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final loc = AppLocaleService.instance;
+    final showWinch = EnvConfig.winchEnabled.value;
+    final clauses = _clauses(showWinch);
+
     return Container(
       decoration: BoxDecoration(
         color: AppColors.surface,
@@ -2039,16 +2337,22 @@ class _ProviderContractCard extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text(
-                        'عقد الشراكة والتعهد القانوني — غيارك',
-                        style: TextStyle(
+                      Text(
+                        loc.tr(
+                          'عقد الشراكة والتعهد القانوني — غيارك',
+                          'Legal Partnership Agreement — Ghiyarak',
+                        ),
+                        style: const TextStyle(
                           color: Colors.white,
                           fontWeight: FontWeight.bold,
                           fontSize: 13.5,
                         ),
                       ),
                       Text(
-                        'صفة الشريك: ${_roleArabicTitle(role)}',
+                        loc.tr(
+                          'صفة الشريك: ${_roleArabicTitle(role)}',
+                          'Partner Role: ${_roleArabicTitle(role)}',
+                        ),
                         style: const TextStyle(
                           color: Colors.white70,
                           fontSize: 11.5,
@@ -2058,10 +2362,10 @@ class _ProviderContractCard extends StatelessWidget {
                   ),
                 ),
                 TextButton(
-                  onPressed: () => _openFullContractDialog(context),
-                  child: const Text(
-                    'قراءة كاملة',
-                    style: TextStyle(
+                  onPressed: () => _openFullContractDialog(context, clauses),
+                  child: Text(
+                    loc.tr('قراءة كاملة', 'Read Full'),
+                    style: const TextStyle(
                       color: AppColors.orange,
                       fontWeight: FontWeight.bold,
                       fontSize: 12,
@@ -2078,10 +2382,10 @@ class _ProviderContractCard extends StatelessWidget {
             child: Scrollbar(
               thumbVisibility: true,
               child: ListView.separated(
-                itemCount: _clauses.length,
+                itemCount: clauses.length,
                 separatorBuilder: (_, __) => const Divider(height: 14),
                 itemBuilder: (_, i) {
-                  final c = _clauses[i];
+                  final c = clauses[i];
                   return Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
@@ -2115,9 +2419,12 @@ class _ProviderContractCard extends StatelessWidget {
             contentPadding:
                 const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
             onChanged: (v) => onChanged(v ?? false),
-            title: const Text(
-              'أقرّ وأتعهد رسمياً بقراءة هذا العقد والالتزام الكامل بدفع كافة العمولات المستحقة وبجميع شروط وأحكام تطبيق غيارك.',
-              style: TextStyle(
+            title: Text(
+              loc.tr(
+                'أقرّ وأتعهد رسمياً بقراءة هذا العقد والالتزام الكامل بدفع كافة العمولات المستحقة وبجميع شروط وأحكام تطبيق غيارك.',
+                'I officially acknowledge reading this agreement and commit to paying all due commissions and complying with Ghiyarak\'s terms.',
+              ),
+              style: const TextStyle(
                 fontSize: 12,
                 fontWeight: FontWeight.bold,
                 color: AppColors.navy,
@@ -2139,6 +2446,7 @@ class _UploadTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final loc = AppLocaleService.instance;
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(14),
@@ -2163,7 +2471,9 @@ class _UploadTile extends StatelessWidget {
             const SizedBox(width: 12),
             Expanded(
               child: Text(
-                media != null ? '$title (تم الرفع)' : title,
+                media != null
+                    ? '$title (${loc.tr('تم الرفع', 'Uploaded')})'
+                    : title,
                 style: const TextStyle(fontWeight: FontWeight.w600),
               ),
             ),

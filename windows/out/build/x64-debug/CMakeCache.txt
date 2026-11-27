@@ -349,6 +349,15 @@ jni_library_IS_TOP_LEVEL:STATIC=OFF
 jni_library_SOURCE_DIR:STATIC=D:/auto_parts_app/auto_parts_app/windows/flutter/ephemeral/.plugin_symlinks/jni/src
 
 //Value Computed by CMake
+local_auth_windows_BINARY_DIR:STATIC=D:/auto_parts_app/auto_parts_app/windows/out/build/x64-debug/plugins/local_auth_windows
+
+//Value Computed by CMake
+local_auth_windows_IS_TOP_LEVEL:STATIC=OFF
+
+//Value Computed by CMake
+local_auth_windows_SOURCE_DIR:STATIC=D:/auto_parts_app/auto_parts_app/windows/flutter/ephemeral/.plugin_symlinks/local_auth_windows/windows
+
+//Value Computed by CMake
 permission_handler_windows_BINARY_DIR:STATIC=D:/auto_parts_app/auto_parts_app/windows/out/build/x64-debug/plugins/permission_handler_windows
 
 //Value Computed by CMake
@@ -479,7 +488,7 @@ CMAKE_MODULE_LINKER_FLAGS_RELWITHDEBINFO-ADVANCED:INTERNAL=1
 //ADVANCED property for variable: CMAKE_MT
 CMAKE_MT-ADVANCED:INTERNAL=1
 //number of local generators
-CMAKE_NUMBER_OF_MAKEFILES:INTERNAL=15
+CMAKE_NUMBER_OF_MAKEFILES:INTERNAL=16
 //Platform information initialized
 CMAKE_PLATFORM_INFO_INITIALIZED:INTERNAL=1
 //noop for ranlib

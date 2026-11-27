@@ -34,54 +34,57 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
   DashboardPeriod _period = DashboardPeriod.month1;
   DateTimeRange? _customRange;
 
-  final _winchBaseFeeCtrl = TextEditingController(text: '10.0');
   final _kmPriceCtrl = TextEditingController(text: '1.5');
-  final _mechanicCalloutFeeCtrl = TextEditingController(text: '10.0');
-  final _minWithdrawCtrl = TextEditingController(text: '20.0');
+  final _minWithdrawCtrl = TextEditingController(text: '1.0');
   final _cliqAliasCtrl = TextEditingController(text: 'AUTOPARTSJO');
   final _defaultCommCtrl = TextEditingController(text: '0.15');
   final _defaultMaxPostsCtrl = TextEditingController(text: '5');
-  final _cancelPenaltyCtrl = TextEditingController(text: '5.0');
   bool _postLimitsEnabled = true;
   bool _maintenance = false;
   bool _saving = false;
 
+  // متحكمات الخصومات
   final _discTitleCtrl = TextEditingController();
   final _discCodeCtrl = TextEditingController();
   final _discPercentCtrl = TextEditingController(text: '10');
   final _discDaysCtrl = TextEditingController(text: '7');
-  String _discTargetMode = 'role';
+  String _discTargetMode = 'role'; // 'role' | 'users' | 'new_users'
   String _discTargetRole = 'all';
   String _discTargetCategory = 'الكل';
-  String? _discTargetUserId;
+  Set<String> _discSelectedUserIds = {};
+  String _discNewUsersPreset = 'today'; // 'today' | '3d' | '7d' | 'custom'
+  DateTimeRange? _discNewUsersCustomRange;
   bool _creatingDiscount = false;
 
+  // متحكمات الإشعارات
   final _notifTitleCtrl = TextEditingController();
   final _notifBodyCtrl = TextEditingController();
-  String _notifTargetMode = 'role';
+  String _notifTargetMode = 'role'; // 'role' | 'users' | 'new_users'
   String _notifTargetRole = 'all';
-  String? _notifTargetUserId;
+  Set<String> _notifSelectedUserIds = {};
+  String _notifNewUsersPreset = 'today'; // 'today' | '3d' | '7d' | 'custom'
+  DateTimeRange? _notifNewUsersCustomRange;
   bool _sendingNotif = false;
 
   List<Map<String, dynamic>> _cachedUsers = [];
+  List<Map<String, dynamic>> _discountsList = [];
+  bool _loadingDiscounts = false;
 
   @override
   void initState() {
     super.initState();
     _loadSettings();
     _loadUsersList();
+    _loadDiscounts();
   }
 
   @override
   void dispose() {
-    _winchBaseFeeCtrl.dispose();
     _kmPriceCtrl.dispose();
-    _mechanicCalloutFeeCtrl.dispose();
     _minWithdrawCtrl.dispose();
     _cliqAliasCtrl.dispose();
     _defaultCommCtrl.dispose();
     _defaultMaxPostsCtrl.dispose();
-    _cancelPenaltyCtrl.dispose();
     _discTitleCtrl.dispose();
     _discCodeCtrl.dispose();
     _discPercentCtrl.dispose();
@@ -95,13 +98,259 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
     try {
       final rows = await _db
           .from('customers')
-          .select('id, full_name, username, phone, role')
+          .select('id, full_name, username, phone, email, role, created_at')
           .order('created_at', ascending: false)
-          .limit(200);
+          .limit(500);
       if (mounted) {
         setState(() => _cachedUsers = List<Map<String, dynamic>>.from(rows));
       }
     } catch (_) {}
+  }
+
+  Future<void> _loadDiscounts() async {
+    if (mounted) setState(() => _loadingDiscounts = true);
+    try {
+      final rows = await _db
+          .from('discounts')
+          .select()
+          .order('created_at', ascending: false)
+          .limit(100);
+      if (mounted) {
+        setState(() {
+          _discountsList = List<Map<String, dynamic>>.from(rows);
+          _loadingDiscounts = false;
+        });
+      }
+    } catch (_) {
+      if (mounted) setState(() => _loadingDiscounts = false);
+    }
+  }
+
+  List<Map<String, dynamic>> _filterNewUsers(
+    String preset,
+    DateTimeRange? customRange,
+  ) {
+    final now = DateTime.now();
+    final todayStart = DateTime(now.year, now.month, now.day);
+    late final DateTime start;
+    late final DateTime end;
+
+    switch (preset) {
+      case 'today':
+        start = todayStart;
+        end = now.add(const Duration(minutes: 1));
+        break;
+      case '3d':
+        start = todayStart.subtract(const Duration(days: 2));
+        end = now.add(const Duration(minutes: 1));
+        break;
+      case '7d':
+        start = todayStart.subtract(const Duration(days: 6));
+        end = now.add(const Duration(minutes: 1));
+        break;
+      case 'custom':
+        if (customRange == null) return [];
+        start = DateTime(
+          customRange.start.year,
+          customRange.start.month,
+          customRange.start.day,
+        );
+        end = DateTime(
+          customRange.end.year,
+          customRange.end.month,
+          customRange.end.day,
+          23,
+          59,
+          59,
+        );
+        break;
+      default:
+        start = todayStart;
+        end = now.add(const Duration(minutes: 1));
+    }
+
+    return _cachedUsers.where((u) {
+      final dt = DateTime.tryParse((u['created_at'] as String?) ?? '')?.toLocal();
+      if (dt == null) return false;
+      return !dt.isBefore(start) && !dt.isAfter(end);
+    }).toList();
+  }
+
+  String _formatShortDate(DateTime d) =>
+      '${d.year}/${d.month.toString().padLeft(2, '0')}/${d.day.toString().padLeft(2, '0')}';
+
+  String _userDisplayById(String? uid) {
+    if (uid == null || uid.isEmpty) return 'مستخدم محدد';
+    final match = _cachedUsers.where((u) => u['id'] == uid);
+    if (match.isEmpty) return 'مستخدم محدد';
+    final u = match.first;
+    final name = (u['full_name'] as String?)?.trim();
+    final uname = (u['username'] as String?)?.trim();
+    if (name != null && name.isNotEmpty) {
+      return uname != null && uname.isNotEmpty ? '$name (@$uname)' : name;
+    }
+    return uname != null && uname.isNotEmpty ? '@$uname' : 'مستخدم محدد';
+  }
+
+  Future<Set<String>?> _openMultiUserPickerDialog({
+    required Set<String> initialSelected,
+    required String title,
+    required bool showWinch,
+  }) async {
+    if (_cachedUsers.isEmpty) {
+      await _loadUsersList();
+    }
+    if (!mounted) return null;
+
+    final selected = Set<String>.from(initialSelected);
+    String query = '';
+
+    return showDialog<Set<String>>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setD) {
+          final q = query.trim().toLowerCase();
+          final visibleUsers = _cachedUsers.where((u) {
+            if (!showWinch && u['role'] == 'towing') return false;
+            if (q.isEmpty) return true;
+            final name = (u['full_name'] as String? ?? '').toLowerCase();
+            final uname = (u['username'] as String? ?? '').toLowerCase();
+            final phone = (u['phone'] as String? ?? '').toLowerCase();
+            final email = (u['email'] as String? ?? '').toLowerCase();
+            return name.contains(q) ||
+                uname.contains(q) ||
+                phone.contains(q) ||
+                email.contains(q);
+          }).toList();
+
+          return AlertDialog(
+            title: Text(
+              '$title (${selected.length} محدد)',
+              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+            ),
+            content: SizedBox(
+              width: 460,
+              height: 440,
+              child: Column(
+                children: [
+                  TextField(
+                    decoration: InputDecoration(
+                      hintText: 'ابحث بالاسم، اليوزرنيم، الهاتف أو الإيميل...',
+                      prefixIcon: const Icon(Icons.search),
+                      isDense: true,
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    onChanged: (v) => setD(() => query = v),
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      TextButton.icon(
+                        onPressed: () => setD(() {
+                          for (final u in visibleUsers) {
+                            final id = u['id'] as String?;
+                            if (id != null) selected.add(id);
+                          }
+                        }),
+                        icon: const Icon(Icons.select_all, size: 17),
+                        label: const Text('تحديد الكل الظاهر',
+                            style: TextStyle(fontSize: 12)),
+                      ),
+                      const Spacer(),
+                      TextButton.icon(
+                        onPressed: () => setD(selected.clear),
+                        icon: const Icon(Icons.clear_all,
+                            size: 17, color: Colors.red),
+                        label: const Text('مسح التحديد',
+                            style:
+                                TextStyle(fontSize: 12, color: Colors.red)),
+                      ),
+                    ],
+                  ),
+                  const Divider(height: 8),
+                  Expanded(
+                    child: visibleUsers.isEmpty
+                        ? const Center(
+                            child: Text('لا توجد حسابات مطابقة للبحث'),
+                          )
+                        : ListView.builder(
+                            itemCount: visibleUsers.length,
+                            itemBuilder: (_, i) {
+                              final u = visibleUsers[i];
+                              final id = u['id'] as String? ?? '';
+                              final checked = selected.contains(id);
+                              final roleStr =
+                                  (u['role'] as String?) ?? 'user';
+                              final roleLabel = (!showWinch &&
+                                      roleStr == 'towing')
+                                  ? 'مقدم خدمة'
+                                  : StatusLabels.role(roleStr);
+                              return CheckboxListTile(
+                                dense: true,
+                                value: checked,
+                                activeColor: AppColors.orange,
+                                title: Text(
+                                  '${u['full_name'] ?? "بدون اسم"} (@${u['username'] ?? "-"})',
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 13,
+                                  ),
+                                ),
+                                subtitle: Text(
+                                  '${u['phone'] ?? "-"} · $roleLabel',
+                                  style: const TextStyle(fontSize: 11.5),
+                                ),
+                                onChanged: (v) => setD(() {
+                                  if (v == true) {
+                                    selected.add(id);
+                                  } else {
+                                    selected.remove(id);
+                                  }
+                                }),
+                              );
+                            },
+                          ),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('إلغاء'),
+              ),
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.orange,
+                  foregroundColor: Colors.white,
+                ),
+                onPressed: () => Navigator.pop(ctx, selected),
+                child: Text('تأكيد (${selected.length})'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  Future<void> _sendNotificationToUserIds({
+    required List<String> userIds,
+    required String title,
+    required String body,
+    required String type,
+  }) async {
+    for (final uid in userIds) {
+      await NotificationsService.instance.sendBroadcastNotification(
+        title: title,
+        body: body,
+        targetRole: 'all',
+        targetUserId: uid,
+        type: type,
+      );
+    }
   }
 
   bool _inPeriod(String? createdAt) {
@@ -113,7 +362,9 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
   }
 
   void _goHome({bool closeDrawerFirst = false}) {
-    if (closeDrawerFirst && Navigator.canPop(context)) Navigator.pop(context);
+    if (closeDrawerFirst && Navigator.canPop(context)) {
+      Navigator.pop(context);
+    }
     if (Navigator.canPop(context)) {
       Navigator.popUntil(context, (r) => r.isFirst);
     } else {
@@ -133,26 +384,20 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
   Future<void> _loadSettings() async {
     try {
       final rows = await _db.from('system_settings').select();
-      final map = {for (final r in rows) r['key'] as String: r['value'] as String};
+      final map = {
+        for (final r in rows) r['key'] as String: r['value'] as String
+      };
       if (!mounted) return;
       setState(() {
-        _winchBaseFeeCtrl.text = map['winch_base_fee'] ?? '10.0';
         _kmPriceCtrl.text = map['winch_price_per_km'] ?? '1.5';
-        _mechanicCalloutFeeCtrl.text = map['mechanic_callout_fee'] ?? '10.0';
-        _minWithdrawCtrl.text = map['min_withdrawal_amount'] ?? '20.0';
+        _minWithdrawCtrl.text = map['min_withdrawal_amount'] ?? '1.0';
         _cliqAliasCtrl.text = map['cliq_alias'] ?? 'AUTOPARTSJO';
         _defaultCommCtrl.text = map['default_parts_commission'] ?? '0.15';
         _defaultMaxPostsCtrl.text = map['default_max_posts'] ?? '5';
-        _cancelPenaltyCtrl.text = map['cancel_penalty_jod'] ?? '5.0';
         _postLimitsEnabled = map['enable_post_limits'] != 'false';
         _maintenance = map['maintenance_mode'] == 'true';
-        EnvConfig.maintenanceMode.value = _maintenance;
         if (map['enable_payments'] != null) {
           EnvConfig.paymentsEnabled.value = map['enable_payments'] == 'true';
-        }
-        if (map['enable_subscriptions'] != null) {
-          EnvConfig.subscriptionsEnabled.value =
-              map['enable_subscriptions'] == 'true';
         }
         if (map['enable_winch'] != null) {
           EnvConfig.winchEnabled.value = map['enable_winch'] == 'true';
@@ -180,40 +425,33 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
     FocusScope.of(context).unfocus();
     setState(() => _saving = true);
     try {
-      final newDefaultLimit = int.tryParse(_defaultMaxPostsCtrl.text.trim()) ?? 5;
-      final winchBaseFee = double.tryParse(_winchBaseFeeCtrl.text.trim()) ?? 10.0;
+      final newDefaultLimit =
+          int.tryParse(_defaultMaxPostsCtrl.text.trim()) ?? 5;
       final kmRate = double.tryParse(_kmPriceCtrl.text.trim()) ?? 1.5;
-      final mechanicCalloutFee =
-          double.tryParse(_mechanicCalloutFeeCtrl.text.trim()) ?? 10.0;
-      final cancelPenalty =
-          double.tryParse(_cancelPenaltyCtrl.text.trim()) ?? 5.0;
-
-      EnvConfig.maintenanceMode.value = _maintenance;
-
       final updates = [
-        {'key': 'winch_base_fee', 'value': winchBaseFee.toString()},
         {'key': 'winch_price_per_km', 'value': kmRate.toString()},
-        {'key': 'mechanic_callout_fee', 'value': mechanicCalloutFee.toString()},
         {'key': 'min_withdrawal_amount', 'value': _minWithdrawCtrl.text.trim()},
         {'key': 'cliq_alias', 'value': _cliqAliasCtrl.text.trim()},
-        {'key': 'default_parts_commission', 'value': _defaultCommCtrl.text.trim()},
-        {'key': 'cancel_penalty_jod', 'value': cancelPenalty.toString()},
+        {
+          'key': 'default_parts_commission',
+          'value': _defaultCommCtrl.text.trim()
+        },
         {'key': 'enable_post_limits', 'value': _postLimitsEnabled.toString()},
         {'key': 'default_max_posts', 'value': '$newDefaultLimit'},
         {'key': 'maintenance_mode', 'value': _maintenance.toString()},
-        {'key': 'enable_payments', 'value': EnvConfig.paymentsEnabled.value.toString()},
         {
-          'key': 'enable_subscriptions',
-          'value': EnvConfig.subscriptionsEnabled.value.toString(),
+          'key': 'enable_payments',
+          'value': EnvConfig.paymentsEnabled.value.toString()
         },
-        {'key': 'enable_winch', 'value': EnvConfig.winchEnabled.value.toString()},
+        {
+          'key': 'enable_winch',
+          'value': EnvConfig.winchEnabled.value.toString()
+        },
         {'key': 'enable_ads', 'value': EnvConfig.adsEnabled.value.toString()},
       ];
       await _db.from('system_settings').upsert(updates);
-      await _db
-          .from('customers')
-          .update({'max_posts_limit': newDefaultLimit})
-          .eq('subscription_plan', 'free');
+      await _db.from('customers').update(
+          {'max_posts_limit': newDefaultLimit}).eq('subscription_plan', 'free');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -225,7 +463,9 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('خطأ أثناء الحفظ: $e'), backgroundColor: Colors.red),
+          SnackBar(
+              content: Text('خطأ أثناء الحفظ: $e'),
+              backgroundColor: Colors.red),
         );
       }
     } finally {
@@ -238,14 +478,11 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
     return ListenableBuilder(
       listenable: Listenable.merge([
         EnvConfig.paymentsEnabled,
-        EnvConfig.subscriptionsEnabled,
         EnvConfig.winchEnabled,
         EnvConfig.adsEnabled,
-        EnvConfig.maintenanceMode,
       ]),
       builder: (context, _) {
         final showPayments = EnvConfig.paymentsEnabled.value;
-        final showSubscriptions = EnvConfig.subscriptionsEnabled.value;
         final showWinch = EnvConfig.winchEnabled.value;
         final showAds = EnvConfig.adsEnabled.value;
         final isWide = MediaQuery.of(context).size.width >= 850;
@@ -257,11 +494,13 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
           (id: 4, icon: Icons.inventory_2, title: 'جميع منشورات القطع'),
           (id: 5, icon: Icons.car_crash, title: 'مراقبة الطوارئ والمواعيد'),
           (id: 7, icon: Icons.local_offer, title: 'الخصومات والإشعارات'),
-          if (showPayments || showSubscriptions)
+          if (showPayments)
             (id: 6, icon: Icons.account_balance, title: 'الاشتراكات والمالية'),
           (id: 8, icon: Icons.flag_outlined, title: 'بلاغات المستخدمين'),
         ];
-        if (!showPayments && !showSubscriptions && _tab == 6) _tab = 0;
+        if (!showPayments && _tab == 6) {
+          _tab = 0;
+        }
         final currentTitle = menu
             .firstWhere((m) => m.id == _tab, orElse: () => menu.first)
             .title;
@@ -280,14 +519,14 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
                       onPressed: () => Scaffold.of(ctx).openDrawer(),
                     ),
                   ),
-                  title: Text(
-                    currentTitle,
-                    style: const TextStyle(color: Colors.white, fontSize: 16),
-                  ),
+                  title: Text(currentTitle,
+                      style:
+                          const TextStyle(color: Colors.white, fontSize: 16)),
                   actions: [
                     IconButton(
                       tooltip: 'العودة للرئيسية',
-                      icon: const Icon(Icons.grid_view_rounded, color: Colors.white),
+                      icon: const Icon(Icons.grid_view_rounded,
+                          color: Colors.white),
                       onPressed: _goHome,
                     ),
                     IconButton(
@@ -312,16 +551,15 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
                   duration: const Duration(milliseconds: 240),
                   child: KeyedSubtree(
                     key: ValueKey(
-                        'tab_${_tab}_${showPayments}_${showSubscriptions}_${showWinch}_$showAds'),
+                        'tab_${_tab}_${showPayments}_${showWinch}_$showAds'),
                     child: switch (_tab) {
                       1 => const AdminAdSettingsView(),
                       2 => _accountsControlView(showPayments, showWinch),
-                      3 => _settingsView(
-                          showPayments, showSubscriptions, showWinch, showAds),
+                      3 => _settingsView(showPayments, showWinch, showAds),
                       4 => _allProductsControlView(),
                       5 => _operationsMonitorView(showWinch),
-                      6 => _financeAndSubscriptionsView(),
-                      7 => _discountsAndNotificationsView(),
+                      6 => _financeAndSubscriptionsView(showWinch),
+                      7 => _discountsAndNotificationsView(showWinch),
                       8 => _reportsModerationView(),
                       _ => _overviewView(showPayments, showWinch, isWide),
                     },
@@ -337,90 +575,86 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
 
   Widget _sidebar(
       List<({int id, IconData icon, String title})> menu, bool isDrawer) {
-    return Material(
+    return Container(
       color: AppColors.navy,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 24),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                const Row(
-                  children: [
-                    GhiyarakLogo(size: 32),
-                    SizedBox(width: 8),
-                    Text(
-                      'لوحة غيارك',
-                      style: TextStyle(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 24),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Row(
+                children: [
+                  GhiyarakLogo(size: 32),
+                  SizedBox(width: 8),
+                  Text(
+                    'لوحة غيارك',
+                    style: TextStyle(
                         color: Colors.white,
                         fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ],
-                ),
-                IconButton(
-                  icon: const Icon(Icons.logout, color: Colors.white, size: 20),
-                  onPressed: () async {
-                    await _db.auth.signOut();
-                    if (mounted) Navigator.popUntil(context, (r) => r.isFirst);
-                    widget.onSignedOut();
-                  },
-                ),
-              ],
-            ),
-            const SizedBox(height: 6),
-            ListTile(
-              contentPadding: EdgeInsets.zero,
-              leading: const Icon(Icons.grid_view_rounded, color: Colors.white),
-              title: const Text(
-                'العودة للرئيسية (الاختصارات)',
-                style: TextStyle(color: Colors.white, fontSize: 13),
+                        fontWeight: FontWeight.bold),
+                  ),
+                ],
               ),
-              onTap: () => _goHome(closeDrawerFirst: isDrawer),
-            ),
-            const Divider(color: Colors.white24),
-            Expanded(
-              child: ListView.builder(
-                itemCount: menu.length,
-                itemBuilder: (_, i) {
-                  final item = menu[i];
-                  final active = _tab == item.id;
-                  return Padding(
-                    padding: const EdgeInsets.only(bottom: 6),
-                    child: ListTile(
-                      dense: true,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      tileColor: active ? AppColors.orange : Colors.transparent,
-                      leading: Icon(
-                        item.icon,
-                        color: active ? Colors.white : Colors.white70,
-                        size: 20,
-                      ),
-                      title: Text(
-                        item.title,
-                        style: TextStyle(
-                          color: active ? Colors.white : Colors.white70,
-                          fontWeight:
-                              active ? FontWeight.bold : FontWeight.normal,
-                          fontSize: 13,
-                        ),
-                      ),
-                      onTap: () {
-                        setState(() => _tab = item.id);
-                        if (isDrawer) Navigator.pop(context);
-                      },
-                    ),
-                  );
+              IconButton(
+                icon: const Icon(Icons.logout, color: Colors.white, size: 20),
+                onPressed: () async {
+                  await _db.auth.signOut();
+                  if (mounted) Navigator.popUntil(context, (r) => r.isFirst);
+                  widget.onSignedOut();
                 },
               ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: const Icon(Icons.grid_view_rounded, color: Colors.white),
+            title: const Text('العودة للرئيسية (الاختصارات)',
+                style: TextStyle(color: Colors.white, fontSize: 13)),
+            onTap: () => _goHome(closeDrawerFirst: isDrawer),
+          ),
+          const Divider(color: Colors.white24),
+          Expanded(
+            child: ListView.builder(
+              itemCount: menu.length,
+              itemBuilder: (_, i) {
+                final item = menu[i];
+                final active = _tab == item.id;
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 6),
+                  child: ListTile(
+                    dense: true,
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12)),
+                    tileColor: active ? AppColors.orange : Colors.transparent,
+                    leading: Icon(item.icon,
+                        color: active ? Colors.white : Colors.white70,
+                        size: 20),
+                    title: Text(
+                      item.title,
+                      style: TextStyle(
+                        color: active ? Colors.white : Colors.white70,
+                        fontWeight:
+                            active ? FontWeight.bold : FontWeight.normal,
+                        fontSize: 13,
+                      ),
+                    ),
+                    onTap: () {
+                      setState(() => _tab = item.id);
+                      if (item.id == 7) {
+                        _loadDiscounts();
+                        _loadUsersList();
+                      }
+                      if (isDrawer) Navigator.pop(context);
+                    },
+                  ),
+                );
+              },
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
@@ -429,15 +663,21 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
     return StreamBuilder<List<Map<String, dynamic>>>(
       stream: _db.from('products').stream(primaryKey: ['id']).limit(150),
       builder: (_, prodSnap) => StreamBuilder<List<Map<String, dynamic>>>(
-        stream: _db.from('mechanic_requests').stream(primaryKey: ['id']).limit(150),
+        stream:
+            _db.from('mechanic_requests').stream(primaryKey: ['id']).limit(150),
         builder: (_, reqSnap) => StreamBuilder<List<Map<String, dynamic>>>(
-          stream:
-              _db.from('workshop_appointments').stream(primaryKey: ['id']).limit(150),
+          stream: _db
+              .from('workshop_appointments')
+              .stream(primaryKey: ['id']).limit(150),
           builder: (_, apptSnap) => StreamBuilder<List<Map<String, dynamic>>>(
-            stream:
-                _db.from('wallet_transactions').stream(primaryKey: ['id']).limit(150),
+            stream: _db
+                .from('wallet_transactions')
+                .stream(primaryKey: ['id']).limit(150),
             builder: (_, txSnap) => FutureBuilder<List<Map<String, dynamic>>>(
-              future: _db.from('customers').select('id, role, created_at').limit(300),
+              future: _db
+                  .from('customers')
+                  .select('id, role, created_at')
+                  .limit(300),
               builder: (_, userSnap) {
                 final users = (userSnap.data ?? [])
                     .where((u) => _inPeriod(u['created_at'] as String?))
@@ -467,30 +707,79 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
                 final merchantsCount =
                     users.where((u) => u['role'] == 'merchant').length;
                 final totalGross = txs.fold(0.0, (s, t) => s + t.grossAmount);
-                final totalComm = txs.fold(0.0, (s, t) => s + t.commissionAmount);
+                final totalComm =
+                    txs.fold(0.0, (s, t) => s + t.commissionAmount);
 
                 final cards = [
-                  (title: 'إجمالي الحسابات', val: users.length, icon: Icons.people),
-                  (title: 'الورش والميكانيكيين', val: workshopsCount, icon: Icons.build),
-                  (title: 'تجار قطع الغيار', val: merchantsCount, icon: Icons.storefront),
-                  (title: 'منشورات القطع', val: prods.length, icon: Icons.inventory_2),
-                  (title: 'إجمالي المشاهدات', val: totalViews, icon: Icons.visibility),
-                  (title: 'إجمالي النقرات', val: totalClicks, icon: Icons.touch_app),
-                  (title: 'طلبات الطوارئ', val: reqs.length, icon: Icons.car_crash),
-                  (title: 'مواعيد الورش', val: appts.length, icon: Icons.event_available),
+                  (
+                    title: 'إجمالي الحسابات',
+                    val: users.length,
+                    icon: Icons.people
+                  ),
+                  (
+                    title: 'الورش والميكانيكيين',
+                    val: workshopsCount,
+                    icon: Icons.build
+                  ),
+                  (
+                    title: 'تجار قطع الغيار',
+                    val: merchantsCount,
+                    icon: Icons.storefront
+                  ),
+                  (
+                    title: 'منشورات القطع',
+                    val: prods.length,
+                    icon: Icons.inventory_2
+                  ),
+                  (
+                    title: 'إجمالي المشاهدات',
+                    val: totalViews,
+                    icon: Icons.visibility
+                  ),
+                  (
+                    title: 'إجمالي النقرات',
+                    val: totalClicks,
+                    icon: Icons.touch_app
+                  ),
+                  (
+                    title: 'طلبات الطوارئ',
+                    val: reqs.length,
+                    icon: Icons.car_crash
+                  ),
+                  (
+                    title: 'مواعيد الورش',
+                    val: appts.length,
+                    icon: Icons.event_available
+                  ),
                   if (showPayments) ...[
-                    (title: 'إجمالي المبيعات (د.أ)', val: totalGross.toInt(), icon: Icons.payments),
-                    (title: 'عمولات المنصة (د.أ)', val: totalComm.toInt(), icon: Icons.trending_up),
+                    (
+                      title: 'إجمالي المبيعات (د.أ)',
+                      val: totalGross.toInt(),
+                      icon: Icons.payments
+                    ),
+                    (
+                      title: 'عمولات المنصة (د.أ)',
+                      val: totalComm.toInt(),
+                      icon: Icons.trending_up
+                    ),
                   ],
+                ];
+
+                final chartData = [
+                  (label: 'حسابات', value: users.length.toDouble()),
+                  (label: 'ورش', value: workshopsCount.toDouble()),
+                  (label: 'تجار', value: merchantsCount.toDouble()),
+                  (label: 'منشورات', value: prods.length.toDouble()),
+                  (label: 'طوارئ', value: reqs.length.toDouble()),
+                  (label: 'مواعيد', value: appts.length.toDouble()),
                 ];
 
                 return ListView(
                   padding: const EdgeInsets.all(16),
                   children: [
-                    const Text(
-                      'الرؤية الشاملة للمنصة',
-                      style: TextStyle(fontSize: 21, fontWeight: FontWeight.bold),
-                    ),
+                    const Text('الرؤية الشاملة للمنصة',
+                        style: TextStyle(
+                            fontSize: 21, fontWeight: FontWeight.bold)),
                     const SizedBox(height: 8),
                     DateRangeFilterBar(
                       period: _period,
@@ -513,21 +802,13 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
                       ),
                       itemBuilder: (_, i) => FadeSlideIn(
                         index: i,
-                        child: _kpi(cards[i].title, cards[i].val, cards[i].icon),
+                        child:
+                            _kpi(cards[i].title, cards[i].val, cards[i].icon),
                       ),
                     ),
                     const SizedBox(height: 16),
                     InteractiveAnimatedChart(
-                      title: 'تحليل نشاط المنصة التفاعلي',
-                      data: [
-                        (label: 'حسابات', value: users.length.toDouble()),
-                        (label: 'ورش', value: workshopsCount.toDouble()),
-                        (label: 'تجار', value: merchantsCount.toDouble()),
-                        (label: 'منشورات', value: prods.length.toDouble()),
-                        (label: 'طوارئ', value: reqs.length.toDouble()),
-                        (label: 'مواعيد', value: appts.length.toDouble()),
-                      ],
-                    ),
+                        title: 'تحليل نشاط المنصة التفاعلي', data: chartData),
                     if (showPayments) ...[
                       const SizedBox(height: 16),
                       InteractiveAnimatedChart(
@@ -554,6 +835,9 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
   }
 
   Widget _accountsControlView(bool showPayments, bool showWinch) {
+    if (!showWinch && _roleFilter == 'towing') {
+      _roleFilter = 'all';
+    }
     return FutureBuilder<List<Map<String, dynamic>>>(
       future: _db
           .from('customers')
@@ -561,8 +845,11 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
           .order('created_at', ascending: false)
           .limit(150),
       builder: (_, snap) {
-        if (!snap.hasData) return const Center(child: CircularProgressIndicator());
-        final filtered = snap.data!.where((u) {
+        if (!snap.hasData) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        final allUsers = snap.data!;
+        final filtered = allUsers.where((u) {
           if (!showWinch && u['role'] == 'towing') return false;
           if (_roleFilter == 'all') return true;
           return u['role'] == _roleFilter;
@@ -571,10 +858,8 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
         return ListView(
           padding: const EdgeInsets.all(20),
           children: [
-            const Text(
-              'التحكم الكامل بالحسابات والمنشورات',
-              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-            ),
+            const Text('التحكم الكامل بالحسابات والمنشورات',
+                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
             const SizedBox(height: 12),
             SingleChildScrollView(
               scrollDirection: Axis.horizontal,
@@ -594,7 +879,6 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
               final m = CustomerProfile.fromMap(raw);
               final postsUsed = (raw['free_posts_count'] as int?) ?? 0;
               final postsLimit = (raw['max_posts_limit'] as int?) ?? 5;
-              final warnings = (raw['warnings_count'] as int?) ?? 0;
               return Card(
                 margin: const EdgeInsets.only(bottom: 10),
                 child: Padding(
@@ -608,17 +892,19 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
                             child: Text(
                               '${m.fullName ?? "بدون اسم"} (@${m.username ?? "-"})',
                               style: const TextStyle(
-                                fontWeight: FontWeight.bold,
-                                fontSize: 15,
-                              ),
+                                  fontWeight: FontWeight.bold, fontSize: 15),
                             ),
                           ),
                           if (m.isTrustedMerchant)
-                            const Icon(Icons.verified, color: Colors.blue, size: 20),
+                            const Icon(Icons.verified,
+                                color: Colors.blue, size: 20),
                           const SizedBox(width: 6),
                           Chip(
                             label: Text(
-                              StatusLabels.role(m.isAdmin ? 'admin' : m.role),
+                              (!showWinch && m.role == 'towing' && !m.isAdmin)
+                                  ? 'مقدم خدمة'
+                                  : StatusLabels.role(
+                                      m.isAdmin ? 'admin' : m.role),
                             ),
                           ),
                         ],
@@ -626,18 +912,15 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
                       Text(
                         'الإيميل: ${m.email ?? "-"} | الهاتف: ${m.phone ?? "-"}',
                         style: const TextStyle(
-                          color: AppColors.textSecondary,
-                          fontSize: 12,
-                        ),
+                            color: AppColors.textSecondary, fontSize: 12),
                       ),
                       const SizedBox(height: 4),
                       Text(
-                        'المنشورات: $postsUsed / ${postsLimit < 0 ? "غير محدود" : "$postsLimit"} · الباقة: ${m.subscriptionPlan}${warnings > 0 ? " · إنذارات: $warnings" : ""}',
+                        'المنشورات المستخدمة: $postsUsed / الحد الأقصى: $postsLimit منشور · الباقة: ${m.subscriptionPlan}',
                         style: const TextStyle(
-                          color: AppColors.orange,
-                          fontWeight: FontWeight.bold,
-                          fontSize: 12,
-                        ),
+                            color: AppColors.orange,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 12),
                       ),
                       const Divider(),
                       Wrap(
@@ -648,38 +931,40 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
                           Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              const Text('تاجر موثوق:', style: TextStyle(fontSize: 12)),
+                              const Text('تاجر موثوق:',
+                                  style: TextStyle(fontSize: 12)),
                               Switch(
                                 value: m.isTrustedMerchant,
                                 activeTrackColor: AppColors.orange,
                                 onChanged: (val) async {
                                   await _db
                                       .from('customers')
-                                      .update({'is_trusted_merchant': val})
-                                      .eq('id', m.id);
+                                      .update({'is_trusted_merchant': val}).eq(
+                                          'id', m.id);
                                   if (mounted) setState(() {});
                                 },
                               ),
                             ],
                           ),
                           OutlinedButton.icon(
-                            onPressed: () =>
-                                _editAccountDialog(raw, showPayments, showWinch),
+                            onPressed: () => _editAccountDialog(
+                                raw, showPayments, showWinch),
                             icon: const Icon(Icons.edit, size: 16),
                             label: const Text('تعديل الدور والباقة والحد'),
                           ),
                           OutlinedButton.icon(
                             style: OutlinedButton.styleFrom(
-                              foregroundColor: AppColors.orange,
-                            ),
+                                foregroundColor: AppColors.orange),
                             onPressed: () {
                               setState(() {
-                                _discTargetMode = 'user';
-                                _discTargetUserId = m.id;
+                                _discTargetMode = 'users';
+                                _discSelectedUserIds = {m.id};
                                 _tab = 7;
                               });
+                              _loadDiscounts();
                             },
-                            icon: const Icon(Icons.local_offer_outlined, size: 16),
+                            icon: const Icon(Icons.local_offer_outlined,
+                                size: 16),
                             label: const Text('إعطاء خصم خاص'),
                           ),
                         ],
@@ -703,7 +988,8 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
         label: Text(label),
         selected: active,
         selectedColor: AppColors.navy,
-        labelStyle: TextStyle(color: active ? Colors.white : AppColors.textPrimary),
+        labelStyle:
+            TextStyle(color: active ? Colors.white : AppColors.textPrimary),
         onSelected: (_) => setState(() => _roleFilter = key),
       ),
     );
@@ -712,9 +998,12 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
   Future<void> _editAccountDialog(
       Map<String, dynamic> raw, bool showPayments, bool showWinch) async {
     String role = (raw['role'] as String?) ?? 'user';
+    if (!showWinch && role == 'towing') role = 'user';
     String plan = (raw['subscription_plan'] as String?) ?? 'free';
-    final limitCtrl = TextEditingController(text: '${raw['max_posts_limit'] ?? 5}');
-    final commCtrl = TextEditingController(text: '${raw['commission_rate'] ?? 0.15}');
+    final limitCtrl =
+        TextEditingController(text: '${raw['max_posts_limit'] ?? 5}');
+    final commCtrl =
+        TextEditingController(text: '${raw['commission_rate'] ?? 0.15}');
 
     await showDialog(
       context: context,
@@ -729,12 +1018,17 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
                   initialValue: role,
                   decoration: const InputDecoration(labelText: 'الدور'),
                   items: [
-                    const DropdownMenuItem(value: 'user', child: Text('مستخدم عادي')),
-                    const DropdownMenuItem(value: 'merchant', child: Text('تاجر قطع غيار')),
-                    const DropdownMenuItem(value: 'mechanic', child: Text('ميكانيكي / ورشة')),
+                    const DropdownMenuItem(
+                        value: 'user', child: Text('مستخدم عادي')),
+                    const DropdownMenuItem(
+                        value: 'merchant', child: Text('تاجر قطع غيار')),
+                    const DropdownMenuItem(
+                        value: 'mechanic', child: Text('ميكانيكي / ورشة')),
                     if (showWinch)
-                      const DropdownMenuItem(value: 'towing', child: Text('صاحب ونش')),
-                    const DropdownMenuItem(value: 'admin', child: Text('مدير نظام')),
+                      const DropdownMenuItem(
+                          value: 'towing', child: Text('صاحب ونش')),
+                    const DropdownMenuItem(
+                        value: 'admin', child: Text('مدير نظام')),
                   ],
                   onChanged: (v) {
                     if (v != null) setD(() => role = v);
@@ -744,7 +1038,6 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
                 DropdownButtonFormField<String>(
                   initialValue: [
                     'free',
-                    'provider_1m',
                     'provider_3m',
                     'provider_6m',
                     'provider_12m',
@@ -752,65 +1045,57 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
                   ].contains(plan)
                       ? plan
                       : 'free',
-                  decoration: const InputDecoration(labelText: 'الباقة / الاشتراك'),
+                  decoration:
+                      const InputDecoration(labelText: 'الباقة / الاشتراك'),
                   items: const [
-                    DropdownMenuItem(value: 'free', child: Text('مجاني (5 منشورات)')),
-                    DropdownMenuItem(value: 'provider_1m', child: Text('مزود شهر (15 منشور)')),
-                    DropdownMenuItem(value: 'provider_3m', child: Text('مزود 3 شهور (30 منشور · SEO +1)')),
-                    DropdownMenuItem(value: 'provider_6m', child: Text('مزود 6 شهور (45 منشور · SEO +2)')),
-                    DropdownMenuItem(value: 'provider_12m', child: Text('مزود سنوي (لا نهائي · 0% عمولة)')),
-                    DropdownMenuItem(value: 'customer_pro', child: Text('مستخدم برو (Pro)')),
+                    DropdownMenuItem(
+                        value: 'free', child: Text('مجاني (free)')),
+                    DropdownMenuItem(
+                        value: 'provider_3m',
+                        child: Text('مزود 3 شهور (SEO +1)')),
+                    DropdownMenuItem(
+                        value: 'provider_6m',
+                        child: Text('مزود 6 شهور (SEO +2)')),
+                    DropdownMenuItem(
+                        value: 'provider_12m',
+                        child: Text('مزود سنوي 0% عمولة (SEO +3)')),
+                    DropdownMenuItem(
+                        value: 'customer_pro', child: Text('مستخدم برو (Pro)')),
                   ],
                   onChanged: (v) {
-                    if (v != null) {
-                      setD(() {
-                        plan = v;
-                        switch (v) {
-                          case 'free':
-                            limitCtrl.text = '5';
-                          case 'provider_1m':
-                            limitCtrl.text = '15';
-                          case 'provider_3m':
-                            limitCtrl.text = '30';
-                          case 'provider_6m':
-                            limitCtrl.text = '45';
-                          case 'provider_12m':
-                            limitCtrl.text = '-1';
-                        }
-                      });
-                    }
+                    if (v != null) setD(() => plan = v);
                   },
                 ),
                 const SizedBox(height: 10),
                 TextField(
                   controller: limitCtrl,
-                  keyboardType: const TextInputType.numberWithOptions(signed: true),
+                  keyboardType: TextInputType.number,
                   decoration: const InputDecoration(
-                    labelText: 'عدد المنشورات المسموح (-1 = غير محدود)',
-                  ),
+                      labelText: 'عدد المنشورات المسموح لهذا الحساب'),
                 ),
                 if (showPayments) ...[
                   const SizedBox(height: 10),
                   TextField(
                     controller: commCtrl,
-                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    keyboardType:
+                        const TextInputType.numberWithOptions(decimal: true),
                     decoration: const InputDecoration(
-                      labelText: 'نسبة العمولة (مثال: 0.10 = 10%)',
-                    ),
+                        labelText: 'نسبة العمولة (مثال: 0.10 = 10%)'),
                   ),
                 ],
               ],
             ),
           ),
           actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('إلغاء')),
+            TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('إلغاء')),
             ElevatedButton(
               style: ElevatedButton.styleFrom(
                 backgroundColor: AppColors.orange,
                 foregroundColor: Colors.white,
               ),
               onPressed: () async {
-                final nowIso = DateTime.now().toUtc().toIso8601String();
                 final expiresAt = plan == 'free'
                     ? null
                     : DateTime.now()
@@ -819,9 +1104,7 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
                               ? 365
                               : plan == 'provider_6m'
                                   ? 180
-                                  : plan == 'provider_3m'
-                                      ? 90
-                                      : 30,
+                                  : 90,
                         ))
                         .toUtc()
                         .toIso8601String();
@@ -829,7 +1112,6 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
                   'role': role,
                   'is_admin': role == 'admin',
                   'subscription_plan': plan,
-                  'subscription_started_at': plan == 'free' ? null : nowIso,
                   'subscription_expires_at': expiresAt,
                   'max_posts_limit': int.tryParse(limitCtrl.text) ?? 5,
                   if (showPayments)
@@ -856,25 +1138,19 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
     commCtrl.dispose();
   }
 
-  Widget _settingsView(
-      bool showPayments, bool showSubscriptions, bool showWinch, bool showAds) {
+  Widget _settingsView(bool showPayments, bool showWinch, bool showAds) {
     return ListView(
       padding: const EdgeInsets.all(20),
       children: [
-        const Text(
-          'إعدادات السوبر أدمن والتحكم العام',
-          style: TextStyle(fontSize: 21, fontWeight: FontWeight.bold),
-        ),
+        const Text('إعدادات السوبر أدمن والتحكم العام',
+            style: TextStyle(fontSize: 21, fontWeight: FontWeight.bold)),
         const SizedBox(height: 16),
         Card(
           child: SwitchListTile(
-            title: const Text(
-              'تفعيل قيود عدد المنشورات',
-              style: TextStyle(fontWeight: FontWeight.bold),
-            ),
+            title: const Text('تفعيل قيود عدد المنشورات',
+                style: TextStyle(fontWeight: FontWeight.bold)),
             subtitle: const Text(
-              'عند التفعيل يلتزم التجار والورش بعدد المنشورات المحدد، وعند الإيقاف يكون النشر مفتوحاً',
-            ),
+                'عند التفعيل يلتزم التجار والورش بعدد المنشورات المحدد، وعند الإيقاف يكون النشر مفتوحاً'),
             value: _postLimitsEnabled,
             activeTrackColor: AppColors.orange,
             onChanged: (v) async {
@@ -899,10 +1175,8 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
         const SizedBox(height: 12),
         Card(
           child: SwitchListTile(
-            title: const Text(
-              'تفعيل خدمات الونش والسحب',
-              style: TextStyle(fontWeight: FontWeight.bold),
-            ),
+            title: const Text('تفعيل خدمات الونش والسحب',
+                style: TextStyle(fontWeight: FontWeight.bold)),
             value: showWinch,
             activeTrackColor: AppColors.orange,
             onChanged: (v) async {
@@ -913,115 +1187,24 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
         ),
         if (showWinch) ...[
           const SizedBox(height: 10),
-          Card(
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(14),
-              side: BorderSide(color: AppColors.orange.withValues(alpha: 0.35)),
-            ),
-            child: Padding(
-              padding: const EdgeInsets.all(14),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Row(
-                    children: [
-                      Icon(Icons.local_shipping_outlined, color: AppColors.orange),
-                      SizedBox(width: 8),
-                      Text(
-                        'تسعيرة الونش والسحب (مستقلة)',
-                        style: TextStyle(
-                          fontWeight: FontWeight.bold,
-                          fontSize: 15,
-                          color: AppColors.navy,
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: _winchBaseFeeCtrl,
-                    keyboardType:
-                        const TextInputType.numberWithOptions(decimal: true),
-                    decoration: const InputDecoration(
-                      labelText: 'رسوم فتحة الونش الأساسية (د.أ)',
-                      filled: true,
-                      fillColor: AppColors.surface,
-                      border: OutlineInputBorder(),
-                      prefixIcon: Icon(Icons.flag_outlined, color: AppColors.orange),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: _kmPriceCtrl,
-                    keyboardType:
-                        const TextInputType.numberWithOptions(decimal: true),
-                    decoration: const InputDecoration(
-                      labelText: 'تسعيرة الونش لكل كيلومتر (د.أ)',
-                      filled: true,
-                      fillColor: AppColors.surface,
-                      border: OutlineInputBorder(),
-                      prefixIcon: Icon(Icons.local_shipping, color: AppColors.orange),
-                    ),
-                  ),
-                ],
-              ),
+          TextField(
+            controller: _kmPriceCtrl,
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            decoration: const InputDecoration(
+              labelText:
+                  'تسعيرة الونش لكل كيلومتر (د.أ) — مطبّقة 100% على الطلبات',
+              filled: true,
+              fillColor: AppColors.surface,
+              border: OutlineInputBorder(),
+              prefixIcon: Icon(Icons.local_shipping, color: AppColors.orange),
             ),
           ),
         ],
         const SizedBox(height: 12),
         Card(
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(14),
-            side: BorderSide(color: AppColors.navy.withValues(alpha: 0.25)),
-          ),
-          child: Padding(
-            padding: const EdgeInsets.all(14),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Row(
-                  children: [
-                    Icon(Icons.build_circle_outlined, color: AppColors.navy),
-                    SizedBox(width: 8),
-                    Text(
-                      'تسعيرة ميكانيكي الطوارئ (مستقلة)',
-                      style: TextStyle(
-                        fontWeight: FontWeight.bold,
-                        fontSize: 15,
-                        color: AppColors.navy,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: _mechanicCalloutFeeCtrl,
-                  keyboardType:
-                      const TextInputType.numberWithOptions(decimal: true),
-                  decoration: const InputDecoration(
-                    labelText: 'رسوم حضور وكشفية ميكانيكي الطوارئ (د.أ)',
-                    filled: true,
-                    fillColor: AppColors.surface,
-                    border: OutlineInputBorder(),
-                    prefixIcon: Icon(Icons.handyman_outlined, color: AppColors.navy),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-        const SizedBox(height: 12),
-
-        // زر المعاملات المالية (منفصل تماماً عن الاشتراكات)
-        Card(
           child: SwitchListTile(
-            title: const Text(
-              'تفعيل المعاملات المالية والمحفظة والدفع الإلكتروني',
-              style: TextStyle(fontWeight: FontWeight.bold),
-            ),
-            subtitle: const Text(
-              'يتحكم بالمحفظة، الفواتير، سحب الأرباح والدفع عبر MEPS / CliQ بشكل مستقل',
-            ),
+            title: const Text('تفعيل المعاملات المالية والدفع والاشتراكات',
+                style: TextStyle(fontWeight: FontWeight.bold)),
             value: showPayments,
             activeTrackColor: AppColors.orange,
             onChanged: (v) async {
@@ -1031,36 +1214,12 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
           ),
         ),
         const SizedBox(height: 10),
-
-        // زر الباقات والاشتراكات (منفصل تماماً عن المعاملات المالية)
         Card(
           child: SwitchListTile(
-            title: const Text(
-              'تفعيل الباقات والاشتراكات',
-              style: TextStyle(fontWeight: FontWeight.bold),
-            ),
+            title: const Text('تفعيل إعلان Google AdMob المنظّم (المتجر)',
+                style: TextStyle(fontWeight: FontWeight.bold)),
             subtitle: const Text(
-              'إظهار أو إخفاء باقات المستخدمين والتجار والورش بشكل منفصل عن المعاملات المالية',
-            ),
-            value: showSubscriptions,
-            activeTrackColor: AppColors.navy,
-            onChanged: (v) async {
-              EnvConfig.subscriptionsEnabled.value = v;
-              await _updateSingleSetting('enable_subscriptions', v.toString());
-            },
-          ),
-        ),
-        const SizedBox(height: 10),
-
-        Card(
-          child: SwitchListTile(
-            title: const Text(
-              'تفعيل إعلان Google AdMob المنظّم (المتجر)',
-              style: TextStyle(fontWeight: FontWeight.bold),
-            ),
-            subtitle: const Text(
-              'يظهر بانر إعلاني واحد مرتب ومخصص للسيارات داخل المتجر',
-            ),
+                'يظهر بانر إعلاني واحد مرتب ومخصص للسيارات والمال داخل المتجر'),
             value: showAds,
             activeTrackColor: AppColors.orange,
             onChanged: (v) async {
@@ -1081,15 +1240,6 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
           ),
           const SizedBox(height: 12),
           TextField(
-            controller: _minWithdrawCtrl,
-            keyboardType: const TextInputType.numberWithOptions(decimal: true),
-            decoration: const InputDecoration(
-              labelText: 'الحد الأدنى لسحب الأرباح (د.أ)',
-              border: OutlineInputBorder(),
-            ),
-          ),
-          const SizedBox(height: 12),
-          TextField(
             controller: _cliqAliasCtrl,
             decoration: const InputDecoration(
               labelText: 'حساب CliQ الرسمي لتسديد الاشتراكات والعمولات',
@@ -1098,51 +1248,11 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
           ),
         ],
         const SizedBox(height: 12),
-        TextField(
-          controller: _cancelPenaltyCtrl,
-          keyboardType: const TextInputType.numberWithOptions(decimal: true),
-          decoration: const InputDecoration(
-            labelText: 'غرامة الإلغاء المتكرر للورش (د.أ)',
-            helperText:
-                'تُفرض تلقائياً مع إنذار عند تجاوز الطلبات الملغية للطلبات المنتهية بفاتورة',
-            border: OutlineInputBorder(),
-          ),
-        ),
-        const SizedBox(height: 12),
-
-        // زر الصيانة الفوري (يقفل التطبيق للجميع ما عدا الأدمن)
-        Card(
-          color: _maintenance ? const Color(0xFFFEF2F2) : null,
-          child: SwitchListTile(
-            title: const Text(
-              'وضع الصيانة (إغلاق التطبيق للجميع ما عدا الأدمن)',
-              style: TextStyle(fontWeight: FontWeight.bold),
-            ),
-            subtitle: Text(
-              _maintenance
-                  ? 'مفعّل الآن: التطبيق مغلق للجميع ومفتوح للأدمن فقط'
-                  : 'التطبيق يعمل بشكل طبيعي للجميع',
-            ),
-            value: _maintenance,
-            activeTrackColor: Colors.red,
-            onChanged: (v) async {
-              setState(() => _maintenance = v);
-              EnvConfig.maintenanceMode.value = v;
-              await _updateSingleSetting('maintenance_mode', v.toString());
-              if (mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text(
-                      v
-                          ? 'تم تفعيل وضع الصيانة فوراً للجميع ما عدا الأدمن'
-                          : 'تم إيقاف وضع الصيانة وإعادة فتح التطبيق للجميع ✓',
-                    ),
-                    backgroundColor: v ? Colors.red : AppColors.success,
-                  ),
-                );
-              }
-            },
-          ),
+        SwitchListTile(
+          title: const Text('وضع الصيانة (إغلاق مؤقت للمستخدمين)'),
+          value: _maintenance,
+          activeTrackColor: Colors.red,
+          onChanged: (v) => setState(() => _maintenance = v),
         ),
         const SizedBox(height: 16),
         ElevatedButton(
@@ -1154,10 +1264,8 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
           onPressed: _saving ? null : _saveSettings,
           child: _saving
               ? const CircularProgressIndicator(color: Colors.white)
-              : const Text(
-                  'حفظ جميع الإعدادات',
-                  style: TextStyle(fontWeight: FontWeight.bold),
-                ),
+              : const Text('حفظ جميع الإعدادات',
+                  style: TextStyle(fontWeight: FontWeight.bold)),
         ),
       ],
     );
@@ -1171,7 +1279,9 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
           .order('created_at', ascending: false)
           .limit(150),
       builder: (_, snap) {
-        if (!snap.hasData) return const Center(child: CircularProgressIndicator());
+        if (!snap.hasData) {
+          return const Center(child: CircularProgressIndicator());
+        }
         final prods = snap.data!
             .where((p) => _inPeriod(p['created_at'] as String?))
             .toList();
@@ -1222,10 +1332,9 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
                         child: const Text(
                           'مخفي',
                           style: TextStyle(
-                            fontSize: 10,
-                            color: Colors.deepOrange,
-                            fontWeight: FontWeight.bold,
-                          ),
+                              fontSize: 10,
+                              color: Colors.deepOrange,
+                              fontWeight: FontWeight.bold),
                         ),
                       ),
                     if (discount > 0) ...[
@@ -1240,10 +1349,9 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
                         child: Text(
                           '-$discount%',
                           style: const TextStyle(
-                            fontSize: 10,
-                            color: Colors.white,
-                            fontWeight: FontWeight.bold,
-                          ),
+                              fontSize: 10,
+                              color: Colors.white,
+                              fontWeight: FontWeight.bold),
                         ),
                       ),
                     ],
@@ -1264,17 +1372,35 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
                       ),
                       onPressed: () async {
                         try {
-                          await _db
+                          final updated = await _db
                               .from('products')
                               .update({'is_hidden': !isHidden})
-                              .eq('id', p['id']);
+                              .eq('id', p['id'])
+                              .select('id, is_hidden');
+                          if (updated.isEmpty) {
+                            throw Exception(
+                                'تحقق من صلاحيات الأدمن في قاعدة البيانات (SQL الدفعة 1)');
+                          }
+                          if (mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text(
+                                  !isHidden
+                                      ? 'تم إخفاء المنشور ✓'
+                                      : 'تم إظهار المنشور ✓',
+                                ),
+                                backgroundColor: !isHidden
+                                    ? AppColors.navy
+                                    : AppColors.success,
+                              ),
+                            );
+                          }
                         } catch (e) {
                           if (mounted) {
                             ScaffoldMessenger.of(context).showSnackBar(
                               SnackBar(
-                                content: Text('فشل التحديث: $e'),
-                                backgroundColor: Colors.red,
-                              ),
+                                  content: Text('فشل التحديث: $e'),
+                                  backgroundColor: Colors.red),
                             );
                           }
                         }
@@ -1288,17 +1414,16 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
                           context: context,
                           builder: (ctx) => AlertDialog(
                             title: const Text('حذف المنشور'),
-                            content: Text('هل تريد حذف "${p['title']}" نهائياً؟'),
+                            content:
+                                Text('هل تريد حذف "${p['title']}" نهائياً؟'),
                             actions: [
                               TextButton(
-                                onPressed: () => Navigator.pop(ctx, false),
-                                child: const Text('إلغاء'),
-                              ),
+                                  onPressed: () => Navigator.pop(ctx, false),
+                                  child: const Text('إلغاء')),
                               ElevatedButton(
                                 style: ElevatedButton.styleFrom(
-                                  backgroundColor: Colors.red,
-                                  foregroundColor: Colors.white,
-                                ),
+                                    backgroundColor: Colors.red,
+                                    foregroundColor: Colors.white),
                                 onPressed: () => Navigator.pop(ctx, true),
                                 child: const Text('حذف'),
                               ),
@@ -1306,7 +1431,25 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
                           ),
                         );
                         if (ok != true) return;
-                        await _db.from('products').delete().eq('id', p['id']);
+                        try {
+                          await _db.from('products').delete().eq('id', p['id']);
+                          if (mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text('تم حذف المنشور ✓'),
+                                backgroundColor: AppColors.navy,
+                              ),
+                            );
+                          }
+                        } catch (e) {
+                          if (mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                  content: Text('تعذر الحذف: $e'),
+                                  backgroundColor: Colors.red),
+                            );
+                          }
+                        }
                       },
                     ),
                   ],
@@ -1327,10 +1470,14 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
         'cancelled' => 'cancelled',
         _ => 'pending',
       };
-      await _db
+      final updated = await _db
           .from('mechanic_requests')
           .update({'status': nextStatus, 'progress_step': nextStep})
-          .eq('id', id);
+          .eq('id', id)
+          .select('id, status');
+      if (updated.isEmpty) {
+        throw Exception('لم يتم تعديل السجل — تأكد من تنفيذ SQL الدفعة 1');
+      }
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -1344,7 +1491,9 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('تعذر تغيير الحالة: $e'), backgroundColor: Colors.red),
+          SnackBar(
+              content: Text('تعذر تغيير الحالة: $e'),
+              backgroundColor: Colors.red),
         );
       }
     }
@@ -1358,16 +1507,19 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
         'cancelled' => 'cancelled',
         _ => 'pending',
       };
-      await _db
+      final updated = await _db
           .from('workshop_appointments')
           .update({'status': nextStatus, 'progress_step': nextStep})
-          .eq('id', id);
+          .eq('id', id)
+          .select('id, status');
+      if (updated.isEmpty) {
+        throw Exception('لم يتم تعديل الموعد — تأكد من تنفيذ SQL الدفعة 1');
+      }
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              'تم تحديث الموعد إلى: ${StatusLabels.appointment(nextStatus, progressStep: nextStep)} ✓',
-            ),
+                'تم تحديث الموعد إلى: ${StatusLabels.appointment(nextStatus, progressStep: nextStep)} ✓'),
             backgroundColor: AppColors.success,
           ),
         );
@@ -1375,7 +1527,9 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('تعذر تغيير الحالة: $e'), backgroundColor: Colors.red),
+          SnackBar(
+              content: Text('تعذر تغيير الحالة: $e'),
+              backgroundColor: Colors.red),
         );
       }
     }
@@ -1385,10 +1539,8 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
-        const Text(
-          'مراقبة طلبات الطوارئ ومواعيد الورش (مباشر)',
-          style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-        ),
+        const Text('مراقبة طلبات الطوارئ ومواعيد الورش (مباشر)',
+            style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
         const SizedBox(height: 10),
         DateRangeFilterBar(
           period: _period,
@@ -1417,9 +1569,8 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
             if (reqs.isEmpty) {
               return const Card(
                 child: Padding(
-                  padding: EdgeInsets.all(16),
-                  child: Text('لا توجد طلبات طوارئ'),
-                ),
+                    padding: EdgeInsets.all(16),
+                    child: Text('لا توجد طلبات طوارئ')),
               );
             }
             return Column(
@@ -1433,19 +1584,43 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
                   margin: const EdgeInsets.only(bottom: 8),
                   child: ListTile(
                     title: Text(
-                      '${isWinch ? "طلب ونش" : "ميكانيكي طوارئ"} · ${r['car_details'] ?? ""}',
-                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                      '${(isWinch && showWinch) ? "طلب ونش" : "ميكانيكي طوارئ"} · ${r['car_details'] ?? ""}',
+                      style: const TextStyle(
+                          fontWeight: FontWeight.bold, fontSize: 14),
                     ),
-                    subtitle: Text(
-                      'المشكلة: ${r['description'] ?? "-"}\nالحالة: $arabicStatus',
+                    subtitle: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('المشكلة: ${r['description'] ?? "-"}'),
+                        const SizedBox(height: 4),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: AppColors.orangeLight,
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Text(
+                            arabicStatus,
+                            style: const TextStyle(
+                              color: AppColors.navy,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 11.5,
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                     trailing: PopupMenuButton<String>(
+                      tooltip: 'تغيير حالة الطلب',
                       icon: const Icon(Icons.more_vert, color: AppColors.navy),
                       onSelected: (val) =>
                           _updateEmergencyStatus(r['id'] as String, val),
                       itemBuilder: (_) => const [
-                        PopupMenuItem(value: 'pending', child: Text('بانتظار مزود')),
-                        PopupMenuItem(value: 'accepted', child: Text('في الطريق')),
+                        PopupMenuItem(
+                            value: 'pending', child: Text('بانتظار مزود')),
+                        PopupMenuItem(
+                            value: 'accepted', child: Text('في الطريق')),
                         PopupMenuItem(value: 'completed', child: Text('مكتمل')),
                         PopupMenuItem(value: 'cancelled', child: Text('ملغي')),
                       ],
@@ -1473,9 +1648,8 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
             if (appts.isEmpty) {
               return const Card(
                 child: Padding(
-                  padding: EdgeInsets.all(16),
-                  child: Text('لا توجد مواعيد ورش'),
-                ),
+                    padding: EdgeInsets.all(16),
+                    child: Text('لا توجد مواعيد ورش')),
               );
             }
             return Column(
@@ -1489,18 +1663,44 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
                   child: ListTile(
                     title: Text(
                       '${a['appointment_date']} · ${a['appointment_time']}',
-                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                      style: const TextStyle(
+                          fontWeight: FontWeight.bold, fontSize: 14),
                     ),
-                    subtitle: Text(
-                      '${a['service_description'] ?? ""}\nالحالة: $arabicStatus',
+                    subtitle: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text((a['service_description'] as String?) ?? ''),
+                        const SizedBox(height: 4),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: AppColors.orangeLight,
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Text(
+                            arabicStatus,
+                            style: const TextStyle(
+                              color: AppColors.navy,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 11.5,
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                     trailing: PopupMenuButton<String>(
+                      tooltip: 'تغيير حالة الموعد',
                       icon: const Icon(Icons.more_vert, color: AppColors.navy),
                       onSelected: (val) =>
                           _updateAppointmentStatus(a['id'] as String, val),
                       itemBuilder: (_) => const [
-                        PopupMenuItem(value: 'pending', child: Text('بانتظار موافقة الورشة')),
-                        PopupMenuItem(value: 'accepted', child: Text('مقبول / في الطريق')),
+                        PopupMenuItem(
+                            value: 'pending',
+                            child: Text('بانتظار موافقة الورشة')),
+                        PopupMenuItem(
+                            value: 'accepted',
+                            child: Text('مقبول / في الطريق')),
                         PopupMenuItem(value: 'completed', child: Text('مكتمل')),
                         PopupMenuItem(value: 'cancelled', child: Text('ملغي')),
                       ],
@@ -1513,6 +1713,115 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
         ),
       ],
     );
+  }
+
+  Future<void> _toggleDiscountActive(
+      Map<String, dynamic> d, bool nextVal) async {
+    final id = d['id'];
+    final prevVal = d['is_active'] == true;
+    setState(() {
+      final idx = _discountsList.indexWhere((x) => x['id'] == id);
+      if (idx != -1) {
+        _discountsList[idx] = {..._discountsList[idx], 'is_active': nextVal};
+      }
+    });
+    try {
+      final updated = await _db
+          .from('discounts')
+          .update({'is_active': nextVal})
+          .eq('id', id)
+          .select('id');
+      if (updated.isEmpty) {
+        throw Exception(
+          'تم حظر التعديل بواسطة صلاحيات قاعدة البيانات (شغّل كود SQL صلاحيات جدول discounts)',
+        );
+      }
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content:
+                Text(nextVal ? 'تم تفعيل الخصم ✓' : 'تم إيقاف تفعيل الخصم ✓'),
+            backgroundColor: nextVal ? AppColors.success : AppColors.navy,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          final idx = _discountsList.indexWhere((x) => x['id'] == id);
+          if (idx != -1) {
+            _discountsList[idx] = {
+              ..._discountsList[idx],
+              'is_active': prevVal
+            };
+          }
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('تعذر تحديث حالة الخصم: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _deleteDiscount(Map<String, dynamic> d) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('حذف الخصم'),
+        content: Text('هل تريد حذف الخصم "${d['title']}" (${d['code']}) نهائياً؟'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('إلغاء'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('حذف'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+
+    try {
+      final deleted = await _db
+          .from('discounts')
+          .delete()
+          .eq('id', d['id'])
+          .select('id');
+      if (deleted.isEmpty) {
+        throw Exception(
+          'تم حظر الحذف بواسطة صلاحيات قاعدة البيانات (شغّل كود SQL صلاحيات جدول discounts)',
+        );
+      }
+      if (mounted) {
+        setState(() {
+          _discountsList.removeWhere((x) => x['id'] == d['id']);
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('تم حذف الخصم بنجاح ✓'),
+            backgroundColor: AppColors.navy,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('تعذر حذف الخصم: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
   }
 
   Future<void> _createAdminDiscount() async {
@@ -1531,57 +1840,120 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
       );
       return;
     }
-    if (_discTargetMode == 'user' &&
-        (_discTargetUserId == null || _discTargetUserId!.isEmpty)) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('يرجى اختيار المستخدم المستهدف للخصم الخاص'),
-          backgroundColor: AppColors.orange,
-        ),
-      );
-      return;
+
+    List<String> targetUserIds = [];
+    if (_discTargetMode == 'users') {
+      if (_discSelectedUserIds.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('يرجى تحديد حساب واحد على الأقل لإرسال الخصم'),
+            backgroundColor: AppColors.orange,
+          ),
+        );
+        return;
+      }
+      targetUserIds = _discSelectedUserIds.toList();
+    } else if (_discTargetMode == 'new_users') {
+      if (_discNewUsersPreset == 'custom' && _discNewUsersCustomRange == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('يرجى تحديد الفترة المخصصة (Custom) أولاً'),
+            backgroundColor: AppColors.orange,
+          ),
+        );
+        return;
+      }
+      final matched =
+          _filterNewUsers(_discNewUsersPreset, _discNewUsersCustomRange);
+      if (matched.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('لا يوجد مستخدمين جدد مسجلين ضمن الفترة المختارة'),
+            backgroundColor: AppColors.orange,
+          ),
+        );
+        return;
+      }
+      targetUserIds = matched.map((u) => u['id'] as String).toList();
     }
 
     setState(() => _creatingDiscount = true);
     try {
       final expiresAt =
           DateTime.now().add(Duration(days: days)).toUtc().toIso8601String();
-      await _db.from('discounts').insert({
-        'title': title,
-        'code': code,
-        'discount_percent': percent,
-        'target_role':
-            _discTargetMode == 'user' ? 'specific_user' : _discTargetRole,
-        'target_category': _discTargetCategory,
-        'target_user_id': _discTargetMode == 'user' ? _discTargetUserId : null,
-        'is_active': true,
-        'expires_at': expiresAt,
-      });
-
       final notifBody =
           'احصل على خصم $percent% على ${_discTargetCategory == "الكل" ? "جميع القطع" : _discTargetCategory} — كود الخصم: $code';
-      await NotificationsService.instance.sendBroadcastNotification(
-        title: '🎁 $title',
-        body: notifBody,
-        targetRole: _discTargetMode == 'role' ? _discTargetRole : 'all',
-        targetUserId: _discTargetMode == 'user' ? _discTargetUserId : null,
-        type: 'discount',
-      );
+
+      if (_discTargetMode == 'role') {
+        await _db.from('discounts').insert({
+          'title': title,
+          'code': code,
+          'discount_percent': percent,
+          'target_role': _discTargetRole,
+          'target_category': _discTargetCategory,
+          'target_user_id': null,
+          'is_active': true,
+          'expires_at': expiresAt,
+        });
+        await NotificationsService.instance.sendBroadcastNotification(
+          title: '🎁 $title',
+          body: notifBody,
+          targetRole: _discTargetRole,
+          targetUserId: null,
+          type: 'discount',
+        );
+      } else {
+        final rowsToInsert = targetUserIds
+            .map((uid) => {
+                  'title': title,
+                  'code': code,
+                  'discount_percent': percent,
+                  'target_role': 'specific_user',
+                  'target_category': _discTargetCategory,
+                  'target_user_id': uid,
+                  'is_active': true,
+                  'expires_at': expiresAt,
+                })
+            .toList();
+        await _db.from('discounts').insert(rowsToInsert);
+        await _sendNotificationToUserIds(
+          userIds: targetUserIds,
+          title: '🎁 $title',
+          body: notifBody,
+          type: 'discount',
+        );
+      }
 
       _discTitleCtrl.clear();
       _discCodeCtrl.clear();
+      await _loadDiscounts();
       if (mounted) {
+        final msg = _discTargetMode == 'role'
+            ? 'تم إنشاء الخصم وإرسال الإشعار للفئة المختارة ✓'
+            : 'تم إنشاء الخصم وإرساله إلى ${targetUserIds.length} حساب بنجاح ✓';
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('تم إنشاء الخصم وإشعار المستهدفين! ✓'),
-            backgroundColor: AppColors.success,
+          SnackBar(content: Text(msg), backgroundColor: AppColors.success),
+        );
+      }
+    } on PostgrestException catch (e) {
+      if (mounted) {
+        final hint = e.code == '23505'
+            ? 'كود الخصم مكرر بسبب قيد UNIQUE على عمود code في جدول discounts — نفّذ في Supabase:\nALTER TABLE public.discounts DROP CONSTRAINT IF EXISTS discounts_code_key;'
+            : 'تعذر إنشاء الخصم: ${e.message}';
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(hint),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 6),
           ),
         );
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('تعذر إنشاء الخصم: $e'), backgroundColor: Colors.red),
+          SnackBar(
+              content: Text('تعذر إنشاء الخصم: $e'),
+              backgroundColor: Colors.red),
         );
       }
     } finally {
@@ -1599,36 +1971,71 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
       );
       return;
     }
-    if (_notifTargetMode == 'user' &&
-        (_notifTargetUserId == null || _notifTargetUserId!.isEmpty)) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('يرجى اختيار المستخدم أولاً')),
-      );
-      return;
+
+    List<String> targetUserIds = [];
+    if (_notifTargetMode == 'users') {
+      if (_notifSelectedUserIds.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+              content: Text('يرجى تحديد حساب واحد على الأقل لإرسال الإشعار')),
+        );
+        return;
+      }
+      targetUserIds = _notifSelectedUserIds.toList();
+    } else if (_notifTargetMode == 'new_users') {
+      if (_notifNewUsersPreset == 'custom' &&
+          _notifNewUsersCustomRange == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+              content: Text('يرجى تحديد الفترة المخصصة (Custom) أولاً')),
+        );
+        return;
+      }
+      final matched =
+          _filterNewUsers(_notifNewUsersPreset, _notifNewUsersCustomRange);
+      if (matched.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+              content: Text('لا يوجد مستخدمين جدد مسجلين ضمن الفترة المختارة')),
+        );
+        return;
+      }
+      targetUserIds = matched.map((u) => u['id'] as String).toList();
     }
+
     setState(() => _sendingNotif = true);
     try {
-      await NotificationsService.instance.sendBroadcastNotification(
-        title: title,
-        body: body,
-        targetRole: _notifTargetMode == 'role' ? _notifTargetRole : 'all',
-        targetUserId: _notifTargetMode == 'user' ? _notifTargetUserId : null,
-        type: 'announcement',
-      );
+      if (_notifTargetMode == 'role') {
+        await NotificationsService.instance.sendBroadcastNotification(
+          title: title,
+          body: body,
+          targetRole: _notifTargetRole,
+          targetUserId: null,
+          type: 'announcement',
+        );
+      } else {
+        await _sendNotificationToUserIds(
+          userIds: targetUserIds,
+          title: title,
+          body: body,
+          type: 'announcement',
+        );
+      }
       _notifTitleCtrl.clear();
       _notifBodyCtrl.clear();
       if (mounted) {
+        final msg = _notifTargetMode == 'role'
+            ? 'تم إرسال الإشعار بنجاح ✓'
+            : 'تم إرسال الإشعار إلى ${targetUserIds.length} حساب بنجاح ✓';
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('تم إرسال الإشعار بنجاح ✓'),
-            backgroundColor: AppColors.success,
-          ),
+          SnackBar(content: Text(msg), backgroundColor: AppColors.success),
         );
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('فشل الإرسال: $e'), backgroundColor: Colors.red),
+          SnackBar(
+              content: Text('فشل الإرسال: $e'), backgroundColor: Colors.red),
         );
       }
     } finally {
@@ -1636,32 +2043,272 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
     }
   }
 
-  Widget _discountsAndNotificationsView() {
+  Widget _buildNewUsersRangeSelector({
+    required String preset,
+    required DateTimeRange? customRange,
+    required ValueChanged<String> onPresetChanged,
+    required ValueChanged<DateTimeRange> onCustomRangePicked,
+  }) {
+    final matched = _filterNewUsers(preset, customRange);
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'اختر فترة تسجيل المستخدمين الجدد:',
+            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+          ),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 6,
+            children: [
+              ChoiceChip(
+                label: const Text('سجلوا اليوم'),
+                selected: preset == 'today',
+                selectedColor: AppColors.navy,
+                labelStyle: TextStyle(
+                  color: preset == 'today'
+                      ? Colors.white
+                      : AppColors.textPrimary,
+                  fontSize: 12,
+                ),
+                onSelected: (_) => onPresetChanged('today'),
+              ),
+              ChoiceChip(
+                label: const Text('آخر 3 أيام'),
+                selected: preset == '3d',
+                selectedColor: AppColors.navy,
+                labelStyle: TextStyle(
+                  color: preset == '3d' ? Colors.white : AppColors.textPrimary,
+                  fontSize: 12,
+                ),
+                onSelected: (_) => onPresetChanged('3d'),
+              ),
+              ChoiceChip(
+                label: const Text('آخر أسبوع'),
+                selected: preset == '7d',
+                selectedColor: AppColors.navy,
+                labelStyle: TextStyle(
+                  color: preset == '7d' ? Colors.white : AppColors.textPrimary,
+                  fontSize: 12,
+                ),
+                onSelected: (_) => onPresetChanged('7d'),
+              ),
+              ChoiceChip(
+                label: const Text('Custom (تاريخ مخصص)'),
+                selected: preset == 'custom',
+                selectedColor: AppColors.orange,
+                labelStyle: TextStyle(
+                  color: preset == 'custom'
+                      ? Colors.white
+                      : AppColors.textPrimary,
+                  fontSize: 12,
+                ),
+                onSelected: (_) async {
+                  onPresetChanged('custom');
+                  final picked = await showDateRangePicker(
+                    context: context,
+                    firstDate: DateTime(2024),
+                    lastDate: DateTime.now(),
+                    initialDateRange: customRange ??
+                        DateTimeRange(
+                          start:
+                              DateTime.now().subtract(const Duration(days: 7)),
+                          end: DateTime.now(),
+                        ),
+                  );
+                  if (picked != null) {
+                    onCustomRangePicked(picked);
+                  }
+                },
+              ),
+            ],
+          ),
+          if (preset == 'custom') ...[
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                const Icon(Icons.date_range,
+                    size: 16, color: AppColors.orange),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    customRange == null
+                        ? 'لم يتم تحديد تاريخ بعد'
+                        : 'من ${_formatShortDate(customRange.start)} إلى ${_formatShortDate(customRange.end)}',
+                    style: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                      color: AppColors.navy,
+                    ),
+                  ),
+                ),
+                TextButton(
+                  onPressed: () async {
+                    final picked = await showDateRangePicker(
+                      context: context,
+                      firstDate: DateTime(2024),
+                      lastDate: DateTime.now(),
+                      initialDateRange: customRange ??
+                          DateTimeRange(
+                            start: DateTime.now()
+                                .subtract(const Duration(days: 7)),
+                            end: DateTime.now(),
+                          ),
+                    );
+                    if (picked != null) {
+                      onCustomRangePicked(picked);
+                    }
+                  },
+                  child: const Text('تغيير التاريخ'),
+                ),
+              ],
+            ),
+          ],
+          const SizedBox(height: 8),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            decoration: BoxDecoration(
+              color: matched.isNotEmpty
+                  ? AppColors.success.withValues(alpha: 0.12)
+                  : Colors.orange.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Text(
+              'عدد الحسابات المطابقة: ${matched.length} حساب',
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.bold,
+                color: matched.isNotEmpty ? AppColors.success : AppColors.navy,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMultiUsersPickerBox({
+    required Set<String> selectedIds,
+    required String buttonLabel,
+    required VoidCallback onOpenPicker,
+    required ValueChanged<String> onRemoveId,
+  }) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: onOpenPicker,
+              icon: const Icon(Icons.checklist_rtl, color: AppColors.orange),
+              label: Text(
+                selectedIds.isEmpty
+                    ? buttonLabel
+                    : '$buttonLabel (تم تحديد ${selectedIds.length} حساب)',
+                style: const TextStyle(fontWeight: FontWeight.bold),
+              ),
+            ),
+          ),
+          if (selectedIds.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              children: selectedIds
+                  .take(8)
+                  .map(
+                    (uid) => InputChip(
+                      label: Text(
+                        _userDisplayById(uid),
+                        style: const TextStyle(fontSize: 11.5),
+                      ),
+                      onDeleted: () => onRemoveId(uid),
+                    ),
+                  )
+                  .toList(),
+            ),
+            if (selectedIds.length > 8)
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Text(
+                  '+ ${selectedIds.length - 8} حسابات أخرى محددة',
+                  style: const TextStyle(
+                      fontSize: 11.5, color: AppColors.textSecondary),
+                ),
+              ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _discountsAndNotificationsView(bool showWinch) {
+    if (!showWinch && _discTargetRole == 'towing') {
+      _discTargetRole = 'all';
+    }
+    if (!showWinch && _notifTargetRole == 'towing') {
+      _notifTargetRole = 'all';
+    }
     final cats = ['الكل', ...CarPartsCatalogAZ.mainCategories];
+
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
+        const Text('إدارة الخصومات والعروض والإشعارات',
+            style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+        const SizedBox(height: 6),
         const Text(
-          'إدارة الخصومات والعروض والإشعارات',
-          style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+          'الخصم المُنشأ هنا يُطبَّق تلقائياً على بطاقات القطع ضمن الصنف المختار ويمكن استخدام الكود عند الدفع.',
+          style: TextStyle(color: AppColors.textSecondary, fontSize: 12.5),
         ),
-        const SizedBox(height: 12),
+        const SizedBox(height: 14),
         Card(
           child: Padding(
             padding: const EdgeInsets.all(16),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text('إنشاء خصم جديد (لفئة أو لمستخدم معين)',
-                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+                const Text('إنشاء خصم جديد',
+                    style:
+                        TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
                 const SizedBox(height: 12),
                 SegmentedButton<String>(
                   segments: const [
-                    ButtonSegment(value: 'role', label: Text('لفئة حسابات'), icon: Icon(Icons.groups)),
-                    ButtonSegment(value: 'user', label: Text('لمستخدم معين'), icon: Icon(Icons.person)),
+                    ButtonSegment(
+                      value: 'role',
+                      label: Text('فئة', style: TextStyle(fontSize: 12)),
+                      icon: Icon(Icons.groups, size: 17),
+                    ),
+                    ButtonSegment(
+                      value: 'users',
+                      label:
+                          Text('حسابات محددة', style: TextStyle(fontSize: 12)),
+                      icon: Icon(Icons.person_search, size: 17),
+                    ),
+                    ButtonSegment(
+                      value: 'new_users',
+                      label: Text('الجدد', style: TextStyle(fontSize: 12)),
+                      icon: Icon(Icons.fiber_new, size: 17),
+                    ),
                   ],
                   selected: {_discTargetMode},
-                  onSelectionChanged: (s) => setState(() => _discTargetMode = s.first),
+                  onSelectionChanged: (s) =>
+                      setState(() => _discTargetMode = s.first),
                 ),
                 const SizedBox(height: 12),
                 if (_discTargetMode == 'role')
@@ -1671,50 +2318,65 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
                       labelText: 'الفئة المستهدفة',
                       border: OutlineInputBorder(),
                     ),
-                    items: const [
-                      DropdownMenuItem(value: 'all', child: Text('جميع المستخدمين')),
-                      DropdownMenuItem(value: 'user', child: Text('المستخدمين العاديين')),
-                      DropdownMenuItem(value: 'merchant', child: Text('تجار القطع')),
-                      DropdownMenuItem(value: 'mechanic', child: Text('الميكانيكيين والورش')),
-                      DropdownMenuItem(value: 'towing', child: Text('أصحاب الونشات')),
+                    items: [
+                      const DropdownMenuItem(
+                          value: 'all', child: Text('جميع المستخدمين')),
+                      const DropdownMenuItem(
+                          value: 'user', child: Text('المستخدمين العاديين')),
+                      const DropdownMenuItem(
+                          value: 'merchant', child: Text('تجار القطع')),
+                      const DropdownMenuItem(
+                          value: 'mechanic',
+                          child: Text('الميكانيكيين والورش')),
+                      if (showWinch)
+                        const DropdownMenuItem(
+                            value: 'towing', child: Text('أصحاب الونشات')),
                     ],
                     onChanged: (v) {
                       if (v != null) setState(() => _discTargetRole = v);
                     },
                   )
+                else if (_discTargetMode == 'users')
+                  _buildMultiUsersPickerBox(
+                    selectedIds: _discSelectedUserIds,
+                    buttonLabel: 'تحديد الحسابات المستهدفة للخصم',
+                    onOpenPicker: () async {
+                      final picked = await _openMultiUserPickerDialog(
+                        initialSelected: _discSelectedUserIds,
+                        title: 'اختر الحسابات للخصم',
+                        showWinch: showWinch,
+                      );
+                      if (picked != null && mounted) {
+                        setState(() => _discSelectedUserIds = picked);
+                      }
+                    },
+                    onRemoveId: (uid) =>
+                        setState(() => _discSelectedUserIds.remove(uid)),
+                  )
                 else
-                  DropdownButtonFormField<String>(
-                    initialValue: _cachedUsers.any((u) => u['id'] == _discTargetUserId)
-                        ? _discTargetUserId
-                        : null,
-                    isExpanded: true,
-                    decoration: const InputDecoration(
-                      labelText: 'اختر المستخدم المستهدف',
-                      border: OutlineInputBorder(),
-                    ),
-                    items: _cachedUsers
-                        .map((u) => DropdownMenuItem<String>(
-                              value: u['id'] as String,
-                              child: Text(
-                                '${u['full_name'] ?? "بدون اسم"} (@${u['username'] ?? "-"})',
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ))
-                        .toList(),
-                    onChanged: (v) => setState(() => _discTargetUserId = v),
+                  _buildNewUsersRangeSelector(
+                    preset: _discNewUsersPreset,
+                    customRange: _discNewUsersCustomRange,
+                    onPresetChanged: (p) =>
+                        setState(() => _discNewUsersPreset = p),
+                    onCustomRangePicked: (r) =>
+                        setState(() => _discNewUsersCustomRange = r),
                   ),
                 const SizedBox(height: 10),
                 DropdownButtonFormField<String>(
-                  initialValue:
-                      cats.contains(_discTargetCategory) ? _discTargetCategory : 'الكل',
+                  initialValue: cats.contains(_discTargetCategory)
+                      ? _discTargetCategory
+                      : 'الكل',
                   isExpanded: true,
                   decoration: const InputDecoration(
-                    labelText: 'الصنف المشمول بالخصم',
+                    labelText:
+                        'الصنف المشمول بالخصم (يُطبَّق مباشرة على بطاقات القطع)',
                     border: OutlineInputBorder(),
                   ),
                   items: cats
                       .map((c) => DropdownMenuItem(
-                          value: c, child: Text(c, overflow: TextOverflow.ellipsis)))
+                          value: c,
+                          child: Text(c, overflow: TextOverflow.ellipsis)))
                       .toList(),
                   onChanged: (v) {
                     if (v != null) setState(() => _discTargetCategory = v);
@@ -1723,8 +2385,9 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
                 const SizedBox(height: 10),
                 TextField(
                   controller: _discTitleCtrl,
+                  textInputAction: TextInputAction.next,
                   decoration: const InputDecoration(
-                    labelText: 'عنوان العرض',
+                    labelText: 'عنوان العرض (مثال: خصم نهاية الأسبوع)',
                     border: OutlineInputBorder(),
                   ),
                 ),
@@ -1735,8 +2398,9 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
                       flex: 2,
                       child: TextField(
                         controller: _discCodeCtrl,
+                        textInputAction: TextInputAction.next,
                         decoration: const InputDecoration(
-                          labelText: 'كود الخصم',
+                          labelText: 'كود الخصم (مثال: GHYAR15)',
                           border: OutlineInputBorder(),
                         ),
                       ),
@@ -1746,8 +2410,9 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
                       child: TextField(
                         controller: _discPercentCtrl,
                         keyboardType: TextInputType.number,
+                        textInputAction: TextInputAction.next,
                         decoration: const InputDecoration(
-                          labelText: '%',
+                          labelText: 'النسبة %',
                           border: OutlineInputBorder(),
                         ),
                       ),
@@ -1757,6 +2422,7 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
                       child: TextField(
                         controller: _discDaysCtrl,
                         keyboardType: TextInputType.number,
+                        textInputAction: TextInputAction.done,
                         decoration: const InputDecoration(
                           labelText: 'أيام',
                           border: OutlineInputBorder(),
@@ -1777,7 +2443,9 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
                     onPressed: _creatingDiscount ? null : _createAdminDiscount,
                     icon: const Icon(Icons.local_offer),
                     label: Text(
-                      _creatingDiscount ? 'جاري النشر...' : 'إنشاء الخصم وإشعار المستهدفين',
+                      _creatingDiscount
+                          ? 'جاري النشر...'
+                          : 'إنشاء الخصم وإشعار المستهدفين',
                       style: const TextStyle(fontWeight: FontWeight.bold),
                     ),
                   ),
@@ -1787,57 +2455,75 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
           ),
         ),
         const SizedBox(height: 14),
-        const Text('الخصومات الحالية',
-            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-        const SizedBox(height: 8),
-        StreamBuilder<List<Map<String, dynamic>>>(
-          stream: _db
-              .from('discounts')
-              .stream(primaryKey: ['id'])
-              .order('created_at', ascending: false)
-              .limit(50),
-          builder: (_, snap) {
-            final list = snap.data ?? [];
-            if (list.isEmpty) {
-              return const Card(
-                child: Padding(padding: EdgeInsets.all(16), child: Text('لا توجد خصومات مسجلة')),
-              );
-            }
-            return Column(
-              children: list.map((d) {
-                final active = d['is_active'] == true;
-                return Card(
-                  margin: const EdgeInsets.only(bottom: 8),
-                  child: ListTile(
-                    title: Text(
-                      '${d['title']} (${d['discount_percent']}%) — كود: ${d['code']}',
-                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13.5),
-                    ),
-                    subtitle: Text('الصنف: ${d['target_category'] ?? "الكل"}'),
-                    trailing: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Switch(
-                          value: active,
-                          activeTrackColor: AppColors.orange,
-                          onChanged: (v) => _db
-                              .from('discounts')
-                              .update({'is_active': v})
-                              .eq('id', d['id']),
-                        ),
-                        IconButton(
-                          icon: const Icon(Icons.delete_outline, color: Colors.red),
-                          onPressed: () =>
-                              _db.from('discounts').delete().eq('id', d['id']),
-                        ),
-                      ],
-                    ),
-                  ),
-                );
-              }).toList(),
-            );
-          },
+        Row(
+          children: [
+            const Text('الخصومات الحالية',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+            const Spacer(),
+            IconButton(
+              tooltip: 'تحديث الخصومات',
+              onPressed: _loadDiscounts,
+              icon: const Icon(Icons.refresh, color: AppColors.navy),
+            ),
+          ],
         ),
+        const SizedBox(height: 6),
+        if (_loadingDiscounts)
+          const Center(
+            child: Padding(
+              padding: EdgeInsets.all(16),
+              child: CircularProgressIndicator(),
+            ),
+          )
+        else if (_discountsList.isEmpty)
+          const Card(
+            child: Padding(
+              padding: EdgeInsets.all(16),
+              child: Text('لا توجد خصومات مسجلة'),
+            ),
+          )
+        else
+          ..._discountsList.map((d) {
+            final active = d['is_active'] == true;
+            final targetUid = d['target_user_id'] as String?;
+            final targetRoleStr = (d['target_role'] as String?) ?? 'all';
+            final targetLabel = targetUid != null
+                ? 'حساب خاص: ${_userDisplayById(targetUid)}'
+                : (targetRoleStr == 'all'
+                    ? 'الجميع'
+                    : (!showWinch && targetRoleStr == 'towing'
+                        ? 'مقدمي خدمات'
+                        : StatusLabels.role(targetRoleStr)));
+            return Card(
+              margin: const EdgeInsets.only(bottom: 8),
+              child: ListTile(
+                title: Text(
+                  '${d['title']} (${d['discount_percent']}%) — كود: ${d['code']}',
+                  style: const TextStyle(
+                      fontWeight: FontWeight.bold, fontSize: 13.5),
+                ),
+                subtitle: Text(
+                  'الصنف: ${d['target_category'] ?? "الكل"} · المستهدف: $targetLabel',
+                  style: const TextStyle(fontSize: 12),
+                ),
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Switch(
+                      value: active,
+                      activeTrackColor: AppColors.orange,
+                      onChanged: (v) => _toggleDiscountActive(d, v),
+                    ),
+                    IconButton(
+                      tooltip: 'حذف الخصم',
+                      icon: const Icon(Icons.delete_outline, color: Colors.red),
+                      onPressed: () => _deleteDiscount(d),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          }),
         const Divider(height: 30),
         Card(
           child: Padding(
@@ -1845,16 +2531,32 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text('إرسال إشعار مباشر (لفئة أو لمستخدم معين)',
-                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+                const Text('إرسال إشعار مباشر',
+                    style:
+                        TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
                 const SizedBox(height: 10),
                 SegmentedButton<String>(
                   segments: const [
-                    ButtonSegment(value: 'role', label: Text('لفئة'), icon: Icon(Icons.groups)),
-                    ButtonSegment(value: 'user', label: Text('لمستخدم معين'), icon: Icon(Icons.person)),
+                    ButtonSegment(
+                      value: 'role',
+                      label: Text('فئة', style: TextStyle(fontSize: 12)),
+                      icon: Icon(Icons.groups, size: 17),
+                    ),
+                    ButtonSegment(
+                      value: 'users',
+                      label:
+                          Text('حسابات محددة', style: TextStyle(fontSize: 12)),
+                      icon: Icon(Icons.person_search, size: 17),
+                    ),
+                    ButtonSegment(
+                      value: 'new_users',
+                      label: Text('الجدد', style: TextStyle(fontSize: 12)),
+                      icon: Icon(Icons.fiber_new, size: 17),
+                    ),
                   ],
                   selected: {_notifTargetMode},
-                  onSelectionChanged: (s) => setState(() => _notifTargetMode = s.first),
+                  onSelectionChanged: (s) =>
+                      setState(() => _notifTargetMode = s.first),
                 ),
                 const SizedBox(height: 10),
                 if (_notifTargetMode == 'role')
@@ -1862,40 +2564,53 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
                     initialValue: _notifTargetRole,
                     decoration: const InputDecoration(
                         labelText: 'الفئة', border: OutlineInputBorder()),
-                    items: const [
-                      DropdownMenuItem(value: 'all', child: Text('الجميع')),
-                      DropdownMenuItem(value: 'user', child: Text('المستخدمين')),
-                      DropdownMenuItem(value: 'merchant', child: Text('التجار')),
-                      DropdownMenuItem(value: 'mechanic', child: Text('الورش')),
-                      DropdownMenuItem(value: 'towing', child: Text('أصحاب الونشات')),
+                    items: [
+                      const DropdownMenuItem(
+                          value: 'all', child: Text('الجميع')),
+                      const DropdownMenuItem(
+                          value: 'user', child: Text('المستخدمين')),
+                      const DropdownMenuItem(
+                          value: 'merchant', child: Text('التجار')),
+                      const DropdownMenuItem(
+                          value: 'mechanic', child: Text('الورش')),
+                      if (showWinch)
+                        const DropdownMenuItem(
+                            value: 'towing', child: Text('أصحاب الونشات')),
                     ],
                     onChanged: (v) {
                       if (v != null) setState(() => _notifTargetRole = v);
                     },
                   )
+                else if (_notifTargetMode == 'users')
+                  _buildMultiUsersPickerBox(
+                    selectedIds: _notifSelectedUserIds,
+                    buttonLabel: 'تحديد الحسابات المستهدفة للإشعار',
+                    onOpenPicker: () async {
+                      final picked = await _openMultiUserPickerDialog(
+                        initialSelected: _notifSelectedUserIds,
+                        title: 'اختر الحسابات للإشعار',
+                        showWinch: showWinch,
+                      );
+                      if (picked != null && mounted) {
+                        setState(() => _notifSelectedUserIds = picked);
+                      }
+                    },
+                    onRemoveId: (uid) =>
+                        setState(() => _notifSelectedUserIds.remove(uid)),
+                  )
                 else
-                  DropdownButtonFormField<String>(
-                    initialValue:
-                        _cachedUsers.any((u) => u['id'] == _notifTargetUserId)
-                            ? _notifTargetUserId
-                            : null,
-                    isExpanded: true,
-                    decoration: const InputDecoration(
-                        labelText: 'اختر المستخدم', border: OutlineInputBorder()),
-                    items: _cachedUsers
-                        .map((u) => DropdownMenuItem<String>(
-                              value: u['id'] as String,
-                              child: Text(
-                                '${u['full_name'] ?? ""} (@${u['username'] ?? "-"})',
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ))
-                        .toList(),
-                    onChanged: (v) => setState(() => _notifTargetUserId = v),
+                  _buildNewUsersRangeSelector(
+                    preset: _notifNewUsersPreset,
+                    customRange: _notifNewUsersCustomRange,
+                    onPresetChanged: (p) =>
+                        setState(() => _notifNewUsersPreset = p),
+                    onCustomRangePicked: (r) =>
+                        setState(() => _notifNewUsersCustomRange = r),
                   ),
                 const SizedBox(height: 10),
                 TextField(
                   controller: _notifTitleCtrl,
+                  textInputAction: TextInputAction.next,
                   decoration: const InputDecoration(
                     labelText: 'عنوان الإشعار',
                     border: OutlineInputBorder(),
@@ -1921,8 +2636,9 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
                     ),
                     onPressed: _sendingNotif ? null : _sendAdminBroadcast,
                     icon: const Icon(Icons.send),
-                    label: Text(
-                        _sendingNotif ? 'جاري الإرسال...' : 'إرسال الإشعار الآن'),
+                    label: Text(_sendingNotif
+                        ? 'جاري الإرسال...'
+                        : 'إرسال الإشعار الآن'),
                   ),
                 ),
               ],
@@ -1933,15 +2649,26 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
     );
   }
 
-  Widget _financeAndSubscriptionsView() {
+  Widget _financeAndSubscriptionsView(bool showWinch) {
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
-        const Text(
-          'الاشتراكات والمعاملات المالية وطلبات السحب',
-          style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+        const Text('الاشتراكات والمعاملات المالية (ملخص مبسّط)',
+            style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+        const SizedBox(height: 6),
+        Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: AppColors.orangeLight,
+            borderRadius: BorderRadius.circular(14),
+          ),
+          child: const Text(
+            'آلية الربح المبسطة: 1) اشتراكات الباقات (تجار/ورش/مستخدمين) تُفعّل فور الدفع عبر PayTabs/MEPS أو CliQ.\n'
+            '2) عمولة المنصة تُحتسب تلقائياً على المبيعات والخدمات داخل التطبيق ويمكن للتاجر تسديدها من محفظته.',
+            style: TextStyle(fontSize: 12, color: AppColors.navy, height: 1.5),
+          ),
         ),
-        const SizedBox(height: 10),
+        const SizedBox(height: 12),
         DateRangeFilterBar(
           period: _period,
           customRange: _customRange,
@@ -1951,198 +2678,7 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
           }),
         ),
         const SizedBox(height: 14),
-
-        // 1) طلبات سحب الأرباح البنكية (IBAN / CliQ)
-        FutureBuilder<List<Map<String, dynamic>>>(
-          future: _db
-              .from('withdrawal_requests')
-              .select()
-              .eq('status', 'pending')
-              .order('created_at', ascending: false)
-              .limit(50),
-          builder: (_, wdSnap) {
-            final reqs = wdSnap.data ?? [];
-            if (reqs.isEmpty) return const SizedBox.shrink();
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'طلبات سحب الأرباح المعلّقة (${reqs.length})',
-                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15.5),
-                ),
-                const SizedBox(height: 8),
-                ...reqs.map((w) {
-                  final amt = ((w['amount'] as num?) ?? 0).toDouble();
-                  final method =
-                      (w['payout_method'] as String? ?? 'cliq').toUpperCase();
-                  final bank = w['bank_name'] as String? ?? '';
-                  final holder = w['account_holder'] as String? ?? '';
-                  final target = w['iban_or_alias'] as String? ?? '';
-                  return Card(
-                    margin: const EdgeInsets.only(bottom: 8),
-                    child: Padding(
-                      padding: const EdgeInsets.all(12),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            '$holder · ${amt.toStringAsFixed(2)} د.أ ($method)',
-                            style: const TextStyle(fontWeight: FontWeight.bold),
-                          ),
-                          const SizedBox(height: 4),
-                          Text('البنك: $bank · الحساب/Alias: $target',
-                              style: const TextStyle(fontSize: 12)),
-                          const SizedBox(height: 8),
-                          Row(
-                            children: [
-                              Expanded(
-                                child: ElevatedButton(
-                                  style: ElevatedButton.styleFrom(
-                                    backgroundColor: AppColors.success,
-                                    foregroundColor: Colors.white,
-                                  ),
-                                  onPressed: () async {
-                                    await _db
-                                        .from('withdrawal_requests')
-                                        .update({'status': 'paid'})
-                                        .eq('id', w['id']);
-                                    if (mounted) {
-                                      setState(() {});
-                                      ScaffoldMessenger.of(context).showSnackBar(
-                                        const SnackBar(
-                                          content: Text('تم تأكيد التحويل البنكي ✓'),
-                                          backgroundColor: AppColors.success,
-                                        ),
-                                      );
-                                    }
-                                  },
-                                  child: const Text('تم التحويل ✓'),
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                child: OutlinedButton(
-                                  style: OutlinedButton.styleFrom(
-                                    foregroundColor: Colors.red,
-                                    side: const BorderSide(color: Colors.red),
-                                  ),
-                                  onPressed: () async {
-                                    await _db
-                                        .from('withdrawal_requests')
-                                        .update({'status': 'rejected'})
-                                        .eq('id', w['id']);
-                                    final uid = w['user_id'];
-                                    if (uid != null) {
-                                      final cur = await _db
-                                          .from('customers')
-                                          .select('wallet_balance')
-                                          .eq('id', uid)
-                                          .maybeSingle();
-                                      final bal =
-                                          ((cur?['wallet_balance'] as num?) ?? 0)
-                                              .toDouble();
-                                      await _db.from('customers').update({
-                                        'wallet_balance': bal + amt,
-                                      }).eq('id', uid);
-                                    }
-                                    if (mounted) {
-                                      setState(() {});
-                                      ScaffoldMessenger.of(context).showSnackBar(
-                                        const SnackBar(
-                                          content:
-                                              Text('تم رفض الطلب وإعادة المبلغ للمحفظة'),
-                                        ),
-                                      );
-                                    }
-                                  },
-                                  child: const Text('رفض وإرجاع'),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
-                    ),
-                  );
-                }),
-                const SizedBox(height: 12),
-              ],
-            );
-          },
-        ),
-
-        // 2) طلبات استرجاع الباقات (Refund خلال 24 ساعة)
-        FutureBuilder<List<Map<String, dynamic>>>(
-          future: _db
-              .from('subscription_refund_requests')
-              .select()
-              .eq('status', 'pending')
-              .order('created_at', ascending: false)
-              .limit(50),
-          builder: (_, refSnap) {
-            final refs = refSnap.data ?? [];
-            if (refs.isEmpty) return const SizedBox.shrink();
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'طلبات استرجاع الباقات — 24 ساعة (${refs.length})',
-                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15.5),
-                ),
-                const SizedBox(height: 8),
-                ...refs.map((r) => Card(
-                      margin: const EdgeInsets.only(bottom: 8),
-                      child: ListTile(
-                        title: Text(
-                          'باقة: ${r['plan_code'] ?? '-'}',
-                          style: const TextStyle(fontWeight: FontWeight.bold),
-                        ),
-                        subtitle: Text('السبب: ${r['reason'] ?? '-'}'),
-                        trailing: Wrap(
-                          spacing: 6,
-                          children: [
-                            ElevatedButton(
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: AppColors.success,
-                                foregroundColor: Colors.white,
-                              ),
-                              onPressed: () async {
-                                await _db
-                                    .from('subscription_refund_requests')
-                                    .update({'status': 'approved'})
-                                    .eq('id', r['id']);
-                                if (r['user_id'] != null) {
-                                  await _db.from('customers').update({
-                                    'subscription_plan': 'free',
-                                    'subscription_expires_at': null,
-                                  }).eq('id', r['user_id']);
-                                }
-                                if (mounted) setState(() {});
-                              },
-                              child: const Text('موافقة'),
-                            ),
-                            TextButton(
-                              onPressed: () async {
-                                await _db
-                                    .from('subscription_refund_requests')
-                                    .update({'status': 'rejected'})
-                                    .eq('id', r['id']);
-                                if (mounted) setState(() {});
-                              },
-                              child: const Text('رفض',
-                                  style: TextStyle(color: Colors.red)),
-                            ),
-                          ],
-                        ),
-                      ),
-                    )),
-                const SizedBox(height: 12),
-              ],
-            );
-          },
-        ),
-
-        // 3) العمولات المستحقة والمشتركين
+        // قسم العمولات المستحقة والاشتراكات النشطة
         FutureBuilder<List<Map<String, dynamic>>>(
           future: _db
               .from('customers')
@@ -2159,6 +2695,7 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
                 .where((c) =>
                     (c['subscription_plan'] as String? ?? 'free') != 'free')
                 .toList();
+
             return Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -2170,19 +2707,20 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
                     ),
                     const SizedBox(width: 10),
                     Expanded(
-                      child: _kpi(
-                          'حسابات عليها عمولة', debtors.length, Icons.receipt_long),
+                      child: _kpi('حسابات عليها عمولة', debtors.length,
+                          Icons.receipt_long),
                     ),
                   ],
                 ),
                 if (debtors.isNotEmpty) ...[
                   const SizedBox(height: 14),
-                  const Text('عمولات وغرامات مستحقة على التجار والورش',
-                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+                  const Text('عمولات مستحقة على التجار والورش',
+                      style:
+                          TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
                   const SizedBox(height: 8),
                   ...debtors.map((d) {
-                    final debt =
-                        ((d['pending_commission_debt'] as num?) ?? 0).toDouble();
+                    final debt = ((d['pending_commission_debt'] as num?) ?? 0)
+                        .toDouble();
                     return Card(
                       margin: const EdgeInsets.only(bottom: 8),
                       child: ListTile(
@@ -2203,13 +2741,14 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
                           onPressed: () async {
                             await _db
                                 .from('customers')
-                                .update({'pending_commission_debt': 0})
-                                .eq('id', d['id']);
+                                .update({'pending_commission_debt': 0}).eq(
+                                    'id', d['id']);
                             if (mounted) {
                               setState(() {});
                               ScaffoldMessenger.of(context).showSnackBar(
                                 const SnackBar(
-                                  content: Text('تم تأكيد السداد وتصفير الرصيد ✓'),
+                                  content: Text(
+                                      'تم تأكيد استلام العمولة وتصفير الرصيد ✓'),
                                   backgroundColor: AppColors.success,
                                 ),
                               );
@@ -2226,8 +2765,6 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
           },
         ),
         const SizedBox(height: 14),
-
-        // 4) سجل الحركات المالية
         StreamBuilder<List<Map<String, dynamic>>>(
           stream: _db
               .from('wallet_transactions')
@@ -2239,6 +2776,7 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
                 .where((t) => _inPeriod(t['created_at'] as String?))
                 .map(DbWalletTransaction.fromMap)
                 .toList();
+
             final totalGross = txs.fold(0.0, (s, t) => s + t.grossAmount);
             final totalComm = txs.fold(0.0, (s, t) => s + t.commissionAmount);
             final totalNet = txs.fold(0.0, (s, t) => s + t.netAmount);
@@ -2247,7 +2785,8 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
                     t.transactionType.contains('part') ||
                     t.transactionType == 'order')
                 .fold(0.0, (s, t) => s + t.grossAmount);
-            final servicesTotal = (totalGross - partsTotal).clamp(0.0, totalGross);
+            final servicesTotal =
+                (totalGross - partsTotal).clamp(0.0, totalGross);
 
             return Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -2255,19 +2794,16 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
                 Row(
                   children: [
                     Expanded(
-                      child: _kpi('إجمالي المبيعات (د.أ)', totalGross.toInt(),
-                          Icons.payments),
-                    ),
+                        child: _kpi('إجمالي المبيعات (د.أ)', totalGross.toInt(),
+                            Icons.payments)),
                     const SizedBox(width: 8),
                     Expanded(
-                      child: _kpi('ربح المنصة (د.أ)', totalComm.toInt(),
-                          Icons.trending_up),
-                    ),
+                        child: _kpi('ربح المنصة (د.أ)', totalComm.toInt(),
+                            Icons.trending_up)),
                     const SizedBox(width: 8),
                     Expanded(
-                      child: _kpi('صافي المزودين (د.أ)', totalNet.toInt(),
-                          Icons.account_balance_wallet),
-                    ),
+                        child: _kpi('صافي المزودين (د.أ)', totalNet.toInt(),
+                            Icons.account_balance_wallet)),
                   ],
                 ),
                 const SizedBox(height: 14),
@@ -2279,19 +2815,22 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
                     (label: 'ربح المنصة', value: totalComm),
                     (label: 'للمزودين', value: totalNet),
                     (label: 'القطع', value: partsTotal),
-                    (label: 'الورش/ونش', value: servicesTotal),
+                    (
+                      label: showWinch ? 'الورش/ونش' : 'الورش/طوارئ',
+                      value: servicesTotal,
+                    ),
                   ],
                 ),
                 const SizedBox(height: 16),
                 const Text('سجل الحركات المالية',
-                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+                    style:
+                        TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
                 const SizedBox(height: 8),
                 if (txs.isEmpty)
                   const Card(
                     child: Padding(
-                      padding: EdgeInsets.all(16),
-                      child: Text('لا توجد حركات مالية'),
-                    ),
+                        padding: EdgeInsets.all(16),
+                        child: Text('لا توجد حركات مالية')),
                   )
                 else
                   ...txs.map((t) => Card(
@@ -2320,10 +2859,13 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
           .order('created_at', ascending: false)
           .limit(100),
       builder: (_, snap) {
-        if (!snap.hasData) return const Center(child: CircularProgressIndicator());
+        if (!snap.hasData) {
+          return const Center(child: CircularProgressIndicator());
+        }
         final reports = snap.data!;
         if (reports.isEmpty) {
-          return const Center(child: Text('لا توجد بلاغات من المستخدمين حالياً'));
+          return const Center(
+              child: Text('لا توجد بلاغات من المستخدمين حالياً'));
         }
         return ListView.builder(
           padding: const EdgeInsets.all(16),
@@ -2343,8 +2885,7 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
                   style: const TextStyle(fontWeight: FontWeight.bold),
                 ),
                 subtitle: Text(
-                  'السبب: ${r['reason'] ?? "-"}\nالحالة الإدارية: ${status == 'resolved' ? 'تمت المعالجة' : 'قيد المراجعة'}',
-                ),
+                    'السبب: ${r['reason'] ?? "-"}\nالحالة الإدارية: ${status == 'resolved' ? 'تمت المعالجة' : 'قيد المراجعة'}'),
                 trailing: status == 'resolved'
                     ? const Icon(Icons.check_circle, color: AppColors.success)
                     : ElevatedButton(
@@ -2355,8 +2896,7 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
                         onPressed: () async {
                           await _db
                               .from('content_reports')
-                              .update({'status': 'resolved'})
-                              .eq('id', r['id']);
+                              .update({'status': 'resolved'}).eq('id', r['id']);
                           if (mounted) setState(() {});
                         },
                         child: const Text('تمت المعالجة'),
@@ -2371,11 +2911,13 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
 
   String _txArabicType(String raw) => switch (raw.toLowerCase()) {
         'order' || 'part_order' => 'طلب قطعة غيار',
-        'workshop' || 'appointment' => 'خدمة ورشة',
-        'winch_towing' || 'winch' || 'emergency' || 'mechanic' => 'طلب ونش / طوارئ',
+        'workshop' || 'workshop_invoice' || 'appointment' => 'فاتورة ورشة صيانة',
+        'emergency_mechanic' => 'ميكانيكي طوارئ',
+        'winch_towing' || 'winch' || 'emergency' => EnvConfig.winchEnabled.value
+            ? 'طلب ونش / طوارئ'
+            : 'طلب طوارئ',
         'sub' || 'subscription' => 'اشتراك باقة',
         'debt' => 'تسديد عمولات',
-        'cancellation_penalty' => 'غرامة إلغاء متكرر',
         _ => raw,
       };
 
@@ -2397,7 +2939,8 @@ class _SuperAdminDashboardScreenState extends State<SuperAdminDashboardScreen> {
             title,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(color: AppColors.textSecondary, fontSize: 11.5),
+            style:
+                const TextStyle(color: AppColors.textSecondary, fontSize: 11.5),
           ),
           const SizedBox(height: 4),
           AnimatedCounter(
