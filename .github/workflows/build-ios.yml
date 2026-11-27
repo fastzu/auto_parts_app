@@ -66,7 +66,7 @@ jobs:
             cd ios && pod install --repo-update
           fi
 
-      - name: Disable Codesigning on Runner & Pods (No Developer Account)
+      - name: Harden Release Settings & Disable Codesigning (No Developer Account)
         run: |
           ruby -rxcodeproj -e '
             ["ios/Runner.xcodeproj", "ios/Pods/Pods.xcodeproj"].each do |path|
@@ -81,6 +81,24 @@ jobs:
                   c.build_settings["EXPANDED_CODE_SIGN_IDENTITY"] = ""
                   c.build_settings["DEVELOPMENT_TEAM"] = ""
                   c.build_settings["PROVISIONING_PROFILE_SPECIFIER"] = ""
+
+                  if c.name == "Release"
+                    c.build_settings["DEPLOYMENT_POSTPROCESSING"] = "YES"
+                    c.build_settings["STRIP_INSTALLED_PRODUCT"] = "YES"
+                    c.build_settings["COPY_PHASE_STRIP"] = "YES"
+                    c.build_settings["STRIP_STYLE"] = "non-global"
+                    c.build_settings["GCC_GENERATE_DEBUGGING_SYMBOLS"] = "NO"
+
+                    existing = c.build_settings["OTHER_CFLAGS"]
+                    if existing.is_a?(Array)
+                      existing << "-fstack-protector-all" unless existing.include?("-fstack-protector-all")
+                      c.build_settings["OTHER_CFLAGS"] = existing
+                    else
+                      str = (existing || "$(inherited)").to_s
+                      str = "#{str} -fstack-protector-all" unless str.include?("-fstack-protector-all")
+                      c.build_settings["OTHER_CFLAGS"] = str
+                    end
+                  end
                 end
               end
               if proj.root_object.attributes["TargetAttributes"]
@@ -90,7 +108,7 @@ jobs:
                 end
               end
               proj.save
-              puts "Disabled codesigning in #{path}"
+              puts "Hardened and disabled codesigning in #{path}"
             end
           '
 
